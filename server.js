@@ -1,17 +1,26 @@
 const express = require('express');
+const cors = require('cors');
 const nodemailer = require('nodemailer');
 const bodyParser = require('body-parser');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware
+// === CORS for frontend connection ===
+app.use(cors({
+  origin: 'https://fundasmile.netlify.app',
+  methods: ['POST', 'GET'],
+  credentials: false
+}));
+
+// === Middleware ===
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-    
-    app.post('/api/waitlist', async (req, res) => {
+// === Waitlist Email Route ===
+app.post('/api/waitlist', async (req, res) => {
   const { name, email, reason } = req.body;
 
   if (!name || !email || !reason) {
@@ -21,14 +30,14 @@ app.use(bodyParser.urlencoded({ extended: true }));
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-      user: process.env.GMAIL_USER,     // your Gmail (same as verification email)
-      pass: process.env.GMAIL_PASS      // your App Password
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_PASS
     }
   });
 
   const mailOptions = {
     from: process.env.GMAIL_USER,
-    to: process.env.GMAIL_USER, // Send to yourself
+    to: process.env.GMAIL_USER,
     subject: 'New Campaign Waitlist Signup',
     text: `Name: ${name}\nEmail: ${email}\nReason: ${reason}`
   };
@@ -41,8 +50,8 @@ app.use(bodyParser.urlencoded({ extended: true }));
     res.status(500).json({ error: 'Something went wrong.' });
   }
 });
-    const fs = require('fs'); // Only add this ONCE at the top if it's not already there
 
+// === Optional: Also write to local file ===
 app.post('/join-waitlist', (req, res) => {
   const { name, email, idea } = req.body;
   const entry = { name, email, idea, date: new Date().toISOString() };
@@ -56,6 +65,7 @@ app.post('/join-waitlist', (req, res) => {
   });
 });
 
+// === Verification Email Route ===
 app.post('/send-verification', async (req, res) => {
   const { email } = req.body;
 
@@ -63,7 +73,7 @@ app.post('/send-verification', async (req, res) => {
     service: 'gmail',
     auth: {
       user: 'verify.fundasmile365@gmail.com',
-      pass: 'opmxqmfxbxlryayb' // Not your normal password!
+      pass: 'opmxqmfxbxlryayb'
     }
   });
 
@@ -82,6 +92,6 @@ app.post('/send-verification', async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log('Server running on http://localhost:3000');
+app.listen(port, () => {
+  console.log(`Server running on http://localhost:${port}`);
 });
