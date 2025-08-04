@@ -6,7 +6,7 @@ const fs = require('fs');
 require('dotenv').config();
 
 const key = require('./google-credentials.json');
-const { google } = require('googleapis');  // <-- Added Google API import
+const { google } = require('googleapis');  // Google API import
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -28,30 +28,21 @@ const auth = new google.auth.GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
 });
 
-const sheets = google.sheets({ version: 'v4', auth });
+const spreadsheetId = '16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ'; // Your Sheet ID
+const range = 'FunDMe Waitlist';  // Your sheet name or range
 
-// === Your Google Sheet ID and range ===
-const spreadsheetId = '16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ'; // 
-const range = 'FunDMe Waitlist';  //
-
-// === Endpoint to get live waitlist data from Google Sheets ===
-app.get('/api/waitlist/count', async (req, res) => {
+// === Endpoint to get live waitlist count from Google Sheets ===
+app.get('/api/waitlist/live', async (req, res) => {
   try {
-    // Authorize client
     const client = await auth.getClient();
-
-    // Sheets API instance
     const sheets = google.sheets({ version: 'v4', auth: client });
 
-    // Fetch data from sheet
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range,
     });
 
     const rows = response.data.values || [];
-
-    // Count entries (each row is an entry)
     const count = rows.length;
 
     res.json({ count });
@@ -60,6 +51,7 @@ app.get('/api/waitlist/count', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch waitlist count.' });
   }
 });
+
 // === Waitlist Email Route ===
 app.post('/api/waitlist', async (req, res) => {
   const { name, email, reason } = req.body;
@@ -78,7 +70,7 @@ app.post('/api/waitlist', async (req, res) => {
 
   const mailOptions = {
     from: process.env.GMAIL_USER,
-    to: process.env.GMAIL_USER, // Send notification email to yourself
+    to: process.env.GMAIL_USER, // Notification email to yourself
     subject: 'New Campaign Waitlist Signup',
     text: `Name: ${name}\nEmail: ${email}\nReason: ${reason}`
   };
@@ -134,12 +126,11 @@ app.post('/send-verification', async (req, res) => {
   }
 });
 
-// === Waitlist Count Endpoint (local JSON fallback) ===
-app.get('/api/waitlist/count', (req, res) => {
+// === Local JSON fallback for waitlist count ===
+app.get('/api/waitlist/count/local', (req, res) => {
   try {
     const raw = fs.readFileSync('waitlist.json', 'utf-8');
 
-    // Fix: Wrap with [] and remove trailing comma
     const fixedJson = `[${raw.trim().replace(/,\s*$/, '')}]`;
     const waitlist = JSON.parse(fixedJson);
 
