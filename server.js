@@ -95,7 +95,7 @@ app.post('/send-verification', async (req, res) => {
   }
 });
 
-   // === Waitlist Count Endpoint ===
+// === Waitlist Count Endpoint ===
 app.get('/api/waitlist/count', (req, res) => {
   try {
     const raw = fs.readFileSync('waitlist.json', 'utf-8');
