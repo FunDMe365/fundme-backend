@@ -37,7 +37,7 @@ app.post('/api/waitlist', async (req, res) => {
 
   const mailOptions = {
     from: process.env.GMAIL_USER,
-    to: process.env.GMAIL_USER,
+    to: process.env.GMAIL_USER, // Send notification email to yourself
     subject: 'New Campaign Waitlist Signup',
     text: `Name: ${name}\nEmail: ${email}\nReason: ${reason}`
   };
@@ -51,7 +51,7 @@ app.post('/api/waitlist', async (req, res) => {
   }
 });
 
-// === Optional: Also write to local file ===
+// === Optional: Also write to local file (be cautious on cloud hosts) ===
 app.post('/join-waitlist', (req, res) => {
   const { name, email, idea } = req.body;
   const entry = { name, email, idea, date: new Date().toISOString() };
@@ -72,13 +72,13 @@ app.post('/send-verification', async (req, res) => {
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-      user: 'verify.fundasmile365@gmail.com',
-      pass: 'opmxqmfxbxlryayb'
+      user: process.env.VERIFY_USER,
+      pass: process.env.VERIFY_PASS
     }
   });
 
   const mailOptions = {
-    from: 'FunDMe <YOUR_EMAIL@gmail.com>',
+    from: `FunDMe <${process.env.VERIFY_USER}>`,
     to: email,
     subject: 'Please verify your email address',
     text: `Hi there, please verify your email by clicking the link below:\n\nhttp://localhost:5500/verify-email.html`
@@ -88,7 +88,25 @@ app.post('/send-verification', async (req, res) => {
     await transporter.sendMail(mailOptions);
     res.status(200).send({ message: 'Verification email sent!' });
   } catch (err) {
+    console.error('Verification email error:', err);
     res.status(500).send({ message: 'Failed to send email', error: err });
+  }
+});
+
+   // === Waitlist Count Endpoint ===
+app.get('/api/waitlist/count', (req, res) => {
+  try {
+    const raw = fs.readFileSync('waitlist.json', 'utf-8');
+
+    // Fix: Wrap with [] and remove trailing comma
+    const fixedJson = `[${raw.trim().replace(/,\s*$/, '')}]`;
+    const waitlist = JSON.parse(fixedJson);
+
+    const count = waitlist.length;
+    res.json({ count });
+  } catch (error) {
+    console.error('Error counting waitlist entries:', error);
+    res.status(500).json({ error: 'Failed to read or count waitlist entries.' });
   }
 });
 
