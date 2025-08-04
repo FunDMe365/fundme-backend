@@ -5,6 +5,8 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 require('dotenv').config();
 
+const key = require('./google-credentials.json');
+
 const app = express();
 const port = process.env.PORT || 3000;
 
