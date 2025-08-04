@@ -6,6 +6,7 @@ const fs = require('fs');
 require('dotenv').config();
 
 const key = require('./google-credentials.json');
+const { google } = require('googleapis');  // <-- Added Google API import
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -21,6 +22,44 @@ app.use(cors({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// === Set up Google Sheets auth client ===
+const auth = new google.auth.GoogleAuth({
+  credentials: key,
+  scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+});
+
+const sheets = google.sheets({ version: 'v4', auth });
+
+// === Your Google Sheet ID and range ===
+const spreadsheetId = '16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ'; // 
+const range = 'FunDMe Waitlist';  //
+
+// === Endpoint to get live waitlist data from Google Sheets ===
+app.get('/api/waitlist/count', async (req, res) => {
+  try {
+    // Authorize client
+    const client = await auth.getClient();
+
+    // Sheets API instance
+    const sheets = google.sheets({ version: 'v4', auth: client });
+
+    // Fetch data from sheet
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range,
+    });
+
+    const rows = response.data.values || [];
+
+    // Count entries (each row is an entry)
+    const count = rows.length;
+
+    res.json({ count });
+  } catch (error) {
+    console.error('Error fetching waitlist count from Google Sheets:', error);
+    res.status(500).json({ error: 'Failed to fetch waitlist count.' });
+  }
+});
 // === Waitlist Email Route ===
 app.post('/api/waitlist', async (req, res) => {
   const { name, email, reason } = req.body;
@@ -95,7 +134,7 @@ app.post('/send-verification', async (req, res) => {
   }
 });
 
-// === Waitlist Count Endpoint ===
+// === Waitlist Count Endpoint (local JSON fallback) ===
 app.get('/api/waitlist/count', (req, res) => {
   try {
     const raw = fs.readFileSync('waitlist.json', 'utf-8');
