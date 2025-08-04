@@ -6,10 +6,15 @@ const fs = require('fs');
 require('dotenv').config();
 
 const key = require('./google-credentials.json');
-const { google } = require('googleapis');  // Google API import
+const { google } = require('googleapis');
 
-const app = express();
-const port = process.env.PORT || 3000;
+// Set up authentication with the service account JSON file
+const auth = new google.auth.GoogleAuth({
+  keyFile: 'google-credentials.json', // <- this must match your file name
+  scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+});
+
+const sheets = google.sheets({ version: 'v4', auth });
 
 // === CORS for frontend connection ===
 app.use(cors({
