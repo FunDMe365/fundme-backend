@@ -3,20 +3,12 @@ const cors = require('cors');
 const nodemailer = require('nodemailer');
 const bodyParser = require('body-parser');
 const fs = require('fs');
+const { google } = require('googleapis');
 require('dotenv').config();
 
-const key = require('./google-credentials.json');
-const { google } = require('googleapis');
+const app = express();
 
-// Set up authentication with the service account JSON file
-const auth = new google.auth.GoogleAuth({
-  keyFile: 'google-credentials.json', // <- this must match your file name
-  scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-});
-
-const sheets = google.sheets({ version: 'v4', auth });
-
-// === CORS for frontend connection ===
+// === CORS ===
 app.use(cors({
   origin: 'https://fundasmile.netlify.app',
   methods: ['POST', 'GET'],
@@ -27,16 +19,23 @@ app.use(cors({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// === Set up Google Sheets auth client ===
+// === Google Sheets Setup ===
+const key = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+
 const auth = new google.auth.GoogleAuth({
   credentials: key,
   scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
 });
 
 const spreadsheetId = '16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ'; // Your Sheet ID
-const range = 'FunDMe Waitlist';  // Your sheet name or range
+const range = 'FunDMe Waitlist'; // Your sheet name or range
 
-// === Endpoint to get live waitlist count from Google Sheets ===
+// === Test route returning fake count ===
+app.get('/api/waitlist-count', (req, res) => {
+  res.json({ count: 42 });
+});
+
+// === Live waitlist count from Google Sheets ===
 app.get('/api/waitlist/live', async (req, res) => {
   try {
     const client = await auth.getClient();
@@ -75,7 +74,7 @@ app.post('/api/waitlist', async (req, res) => {
 
   const mailOptions = {
     from: process.env.GMAIL_USER,
-    to: process.env.GMAIL_USER, // Notification email to yourself
+    to: process.env.GMAIL_USER,
     subject: 'New Campaign Waitlist Signup',
     text: `Name: ${name}\nEmail: ${email}\nReason: ${reason}`
   };
@@ -89,7 +88,22 @@ app.post('/api/waitlist', async (req, res) => {
   }
 });
 
-// === Optional: Also write to local file (be cautious on cloud hosts) ===
+// === Local JSON fallback count ===
+app.get('/api/waitlist/count/local', (req, res) => {
+  try {
+    const raw = fs.readFileSync('waitlist.json', 'utf-8');
+    const fixedJson = `[${raw.trim().replace(/,\s*$/, '')}]`;
+    const waitlist = JSON.parse(fixedJson);
+    const count = waitlist.length;
+
+    res.json({ count });
+  } catch (error) {
+    console.error('Error counting waitlist entries:', error);
+    res.status(500).json({ error: 'Failed to read or count waitlist entries.' });
+  }
+});
+
+// === Join waitlist (save to local file) ===
 app.post('/join-waitlist', (req, res) => {
   const { name, email, idea } = req.body;
   const entry = { name, email, idea, date: new Date().toISOString() };
@@ -103,7 +117,7 @@ app.post('/join-waitlist', (req, res) => {
   });
 });
 
-// === Verification Email Route ===
+// === Verification Email ===
 app.post('/send-verification', async (req, res) => {
   const { email } = req.body;
 
@@ -131,22 +145,8 @@ app.post('/send-verification', async (req, res) => {
   }
 });
 
-// === Local JSON fallback for waitlist count ===
-app.get('/api/waitlist/count/local', (req, res) => {
-  try {
-    const raw = fs.readFileSync('waitlist.json', 'utf-8');
-
-    const fixedJson = `[${raw.trim().replace(/,\s*$/, '')}]`;
-    const waitlist = JSON.parse(fixedJson);
-
-    const count = waitlist.length;
-    res.json({ count });
-  } catch (error) {
-    console.error('Error counting waitlist entries:', error);
-    res.status(500).json({ error: 'Failed to read or count waitlist entries.' });
-  }
-});
-
-app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
+// === Start server ===
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
