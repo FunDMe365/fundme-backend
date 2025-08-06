@@ -1,5 +1,5 @@
 # Ignore Google service account key file
-google-credentials.json
+credentials.json
 
 # Ignore environment variable files
 .env
