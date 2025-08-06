@@ -41,27 +41,4 @@ app.post('/signin', (req, res) => {
     req.session.user = { email };
     return res.status(200).json({ message: 'Login successful' });
   } else {
-    return res.status(401).json({ message: 'Invalid credentials' });
-  }
-});
-
-// ✅ Protected Dashboard API
-app.get('/dashboard-data', (req, res) => {
-  if (!req.session.user) {
-    return res.status(401).json({ message: 'Not logged in' });
-  }
-  // Send back the fullname for display
-  res.json({ fullname: req.session.user.fullname || req.session.user.email });
-});
-
-
-// ✅ Logout
-app.post('/logout', (req, res) => {
-  req.session.destroy();
-  res.json({ message: 'Logged out' });
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
- 
+    return res.status(401).j
