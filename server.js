@@ -12,7 +12,7 @@ const app = express();
 
 // === Middleware ===
 app.use(cors({
-  origin: 'https://fundasmile.net',
+  origin: 'https://fundasmile.net;ify.app',
   methods: ['POST', 'GET'],
   credentials: false
 }));
@@ -20,7 +20,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // === Google Sheets Setup ===
-const key = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+const key = require('./google-credentials.json');
 const auth = new google.auth.GoogleAuth({
   credentials: key,
   scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
@@ -78,6 +78,11 @@ app.get('/api/waitlist/live', async (req, res) => {
   }
 });
 
+// === Start Server ===
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
 // === Start Server ===
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
