@@ -6,7 +6,6 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 // 1. Enable CORS to allow your frontend (Netlify domain)
 app.use(cors({
@@ -17,14 +16,21 @@ app.use(cors({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Your GET for live count (keep unchanged)
+// GET for live count
 app.get('/api/waitlist/live', (req, res) => {
-  // existing logic...
+  try {
+    const data = fs.existsSync('waitlist.json') ? fs.readFileSync('waitlist.json', 'utf8') : '[]';
+    const list = JSON.parse(data);
+    res.status(200).json({ count: list.length });
+  } catch (error) {
+    console.error('❌ Error reading waitlist:', error);
+    res.status(500).json({ error: 'Unable to fetch waitlist count.' });
+  }
 });
 
 // 2. POST route with logging
 app.post('/api/waitlist', (req, res) => {
-  console.log('➡ Received waitlist POST:', req.body); // <-- Logs incoming submission
+  console.log('➡ Received waitlist POST:', req.body);
 
   const { name, email, reason } = req.body;
   if (!name || !email) {
@@ -45,4 +51,5 @@ app.post('/api/waitlist', (req, res) => {
   }
 });
 
+// ✅ Only one listen call
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
