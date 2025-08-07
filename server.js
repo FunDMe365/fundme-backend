@@ -15,12 +15,20 @@ app.use(cors({
 
 app.use(bodyParser.json());
 
-// Setup nodemailer transporter
+// ✅ Clean and validate email env
+const EMAIL_USER = process.env.EMAIL_USER?.trim();
+const EMAIL_PASS = process.env.EMAIL_PASS?.trim();
+
+if (!EMAIL_USER || !EMAIL_PASS) {
+  console.error('❌ Missing EMAIL_USER or EMAIL_PASS in .env file');
+  process.exit(1);
+}
+
 const transporter = nodemailer.createTransport({
-  service: 'gmail', // or use another provider if needed
+  service: 'gmail',
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    user: EMAIL_USER,
+    pass: EMAIL_PASS,
   },
 });
 
@@ -46,14 +54,13 @@ app.post('/api/waitlist', (req, res) => {
     fs.writeFileSync('waitlist.json', JSON.stringify(list, null, 2));
     console.log('✨ New entry saved:', entry);
 
-    // Send email notification
+    // ✅ Send email notification
     const mailOptions = {
-  from: process.env.EMAIL_USER,
-  to: process.env.EMAIL_USER, // ✅ Send to yourself (same as your Gmail address)
-  subject: 'New Waitlist Submission',
-  text: `Name: ${name}\nEmail: ${email}\nReason: ${reason || 'N/A'}`
-};
-
+      from: `"FunDMe Waitlist" <${EMAIL_USER}>`,
+      to: EMAIL_USER,
+      subject: 'New Waitlist Submission',
+      text: `Name: ${name}\nEmail: ${email}\nReason: ${reason || 'N/A'}\nDate: ${entry.date}`,
+    };
 
     transporter.sendMail(mailOptions, (error, info) => {
       if (error) {
@@ -70,4 +77,4 @@ app.post('/api/waitlist', (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
