@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors({
-  origin: 'https://fundasmile.netlify.app',
+  origin: 'https://fundasmile.net',
   methods: ['GET', 'POST'],
 }));
 
