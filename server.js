@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 
 // 1. Enable CORS to allow your frontend (Netlify domain)
 app.use(cors({
-  origin: 'https://fundasmile.netlify.app',
+  origin: ['https://fundasmile.netlify.app', 'https://fundasmile.net'],
   methods: ['GET', 'POST'],
 }));
 
