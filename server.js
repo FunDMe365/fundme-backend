@@ -1,88 +1,51 @@
-// === Dependencies ===
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
 const bodyParser = require('body-parser');
 const fs = require('fs');
-const { google } = require('googleapis');
 require('dotenv').config();
 
-// === Init app ===
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// === Middleware ===
+// 1. Enable CORS to allow your frontend (Netlify domain)
 app.use(cors({
-  origin: 'https://fundasmile.net;ify.app',
-  methods: ['POST', 'GET'],
-  credentials: false
+  origin: 'https://fundasmile.netlify.app',
+  methods: ['GET', 'POST'],
 }));
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// === Google Sheets Setup ===
-const key = require('./google-credentials.json');
-const auth = new google.auth.GoogleAuth({
-  credentials: key,
-  scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+// Your GET for live count (keep unchanged)
+app.get('/api/waitlist/live', (req, res) => {
+  // existing logic...
 });
-const sheets = google.sheets({ version: 'v4', auth });
-const spreadsheetId = '16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ';
-const range = 'FunDMe Waitlist!A2:A';
 
-// === Route: Waitlist Signup ===
+// 2. POST route with logging
 app.post('/api/waitlist', (req, res) => {
-  const { name, email, reason } = req.body;
+  console.log('➡ Received waitlist POST:', req.body); // <-- Logs incoming submission
 
+  const { name, email, reason } = req.body;
   if (!name || !email) {
     return res.status(400).json({ error: 'Name and email are required.' });
   }
 
-  const waitlistEntry = {
-    name,
-    email,
-    reason: reason || '',
-    date: new Date().toISOString()
-  };
-
-  let waitlist = [];
-
+  const entry = { name, email, reason: reason || '', date: new Date().toISOString() };
   try {
-    if (fs.existsSync('waitlist.json')) {
-      const data = fs.readFileSync('waitlist.json', 'utf8');
-      waitlist = JSON.parse(data);
-    }
-    waitlist.push(waitlistEntry);
-    fs.writeFileSync('waitlist.json', JSON.stringify(waitlist, null, 2));
-    res.status(200).json({ message: 'Waitlist submission successful.' });
+    const data = fs.existsSync('waitlist.json') ? fs.readFileSync('waitlist.json', 'utf8') : '[]';
+    const list = JSON.parse(data);
+    list.push(entry);
+    fs.writeFileSync('waitlist.json', JSON.stringify(list, null, 2));
+    console.log('✨ New entry saved:', entry);
+    return res.status(200).json({ message: 'Waitlist entry saved!' });
   } catch (err) {
-    console.error('Error writing to waitlist.json:', err);
-    res.status(500).json({ error: 'Failed to save waitlist entry.' });
+    console.error('❌ Error saving entry:', err);
+    return res.status(500).json({ error: 'Server error saving entry.' });
   }
 });
 
-// === Route: Live Waitlist Count from Google Sheets ===
-app.get('/api/waitlist/live', async (req, res) => {
-  try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range
-    });
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-    const rows = response.data.values;
-    const count = rows ? rows.filter(row => row[0]?.trim()).length : 0;
-
-    res.json({ count });
-  } catch (error) {
-    console.error('Google Sheets fetch error:', error);
-    res.status(500).json({ error: 'Failed to fetch live waitlist count.' });
-  }
-});
-
-// === Start Server ===
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
 // === Start Server ===
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
