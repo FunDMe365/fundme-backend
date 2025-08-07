@@ -9,7 +9,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors({
-  origin: 'https://fundasmile.net',
+  origin: 'https://fundasmile.netlify.app',
   methods: ['GET', 'POST'],
 }));
 
@@ -48,18 +48,12 @@ app.post('/api/waitlist', (req, res) => {
 
     // Send email notification
     const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_RECEIVER, // your email address
-      subject: 'New FunDMe Waitlist Entry',
-      text: `
-        New person joined the waitlist!
+  from: process.env.EMAIL_USER,
+  to: process.env.EMAIL_USER, // ✅ Send to yourself (same as your Gmail address)
+  subject: 'New Waitlist Submission',
+  text: `Name: ${name}\nEmail: ${email}\nReason: ${reason || 'N/A'}`
+};
 
-        Name: ${name}
-        Email: ${email}
-        Reason: ${reason || 'Not provided'}
-        Date: ${entry.date}
-      `,
-    };
 
     transporter.sendMail(mailOptions, (error, info) => {
       if (error) {
