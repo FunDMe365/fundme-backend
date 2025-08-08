@@ -7,61 +7,74 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// CORS - allow your frontend domain and credentials for cookies
 app.use(cors({
-  origin: 'https://fundasmile.net', // your frontend domain
+  origin: 'https://fundasmile.net', // replace with your actual frontend URL
   credentials: true
 }));
+
 app.use(bodyParser.json());
 
+// Session setup - adjust secure for your environment
 app.use(session({
-  secret: 'super-secret-key', // change this to something long/random
+  secret: process.env.SESSION_SECRET || 'super-secret-key',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false } // secure: true if using HTTPS only
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production', // true in prod (https), false in dev
+    httpOnly: true,
+    maxAge: 1000 * 60 * 60 * 24 // 1 day session
+  }
 }));
 
-// ✅ SIGNUP (pretend create account)
+// Middleware to check if user is logged in
+function requireAuth(req, res, next) {
+  if (!req.session.user) {
+    return res.status(401).json({ message: 'Not logged in' });
+  }
+  next();
+}
+
+// Signup route - pretend create user & start session
 app.post('/signup', (req, res) => {
   const { fullname, email, password } = req.body;
   console.log(`New signup: ${fullname} (${email})`);
-  
-  // Store user session
+
+  // TODO: Add real user creation & password hashing here
+
+  // Save user info in session
   req.session.user = { fullname, email };
-  
-  return res.status(201).json({ message: 'Signup successful' });
+  res.status(201).json({ message: 'Signup successful' });
 });
 
-// ✅ SIGNIN (pretend login)
+// Signin route - pretend login & start session
 app.post('/signin', (req, res) => {
   const { email, password } = req.body;
   console.log(`Login attempt: ${email}`);
 
-  // Pretend check credentials
+  // TODO: Add real credential validation here
+
   if (email && password) {
     req.session.user = { email };
-    return res.status(200).json({ message: 'Login successful' });
+    res.status(200).json({ message: 'Login successful' });
   } else {
-    return res.status(401).json({ message: 'Invalid credentials' });
+    res.status(401).json({ message: 'Invalid credentials' });
   }
 });
 
-// ✅ Protected Dashboard API
-app.get('/dashboard-data', (req, res) => {
-  if (!req.session.user) {
-    return res.status(401).json({ message: 'Not logged in' });
-  }
-  // Send back the fullname for display
+// Protected dashboard data route
+app.get('/dashboard-data', requireAuth, (req, res) => {
   res.json({ fullname: req.session.user.fullname || req.session.user.email });
 });
 
-
-// ✅ Logout
+// Logout route
 app.post('/logout', (req, res) => {
-  req.session.destroy();
-  res.json({ message: 'Logged out' });
+  req.session.destroy(err => {
+    if (err) return res.status(500).json({ message: 'Logout failed' });
+    res.clearCookie('connect.sid'); // clear session cookie on client
+    res.json({ message: 'Logged out' });
+  });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
- 
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
