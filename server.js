@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const session = require('express-session');
+const nodemailer = require('nodemailer');  // <-- Added here
 require('dotenv').config();
 
 const app = express();
@@ -76,13 +77,24 @@ app.post('/logout', (req, res) => {
 
 const waitlist = [];
 
+// Create Nodemailer transporter (update with your SMTP info in .env)
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: parseInt(process.env.SMTP_PORT || "587"),
+  secure: process.env.SMTP_SECURE === "true", // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
 // Get current waitlist count
 app.get('/api/waitlist/live', (req, res) => {
   res.json({ count: waitlist.length });
 });
 
 // Add a new person to the waitlist
-app.post('/api/waitlist', (req, res) => {
+app.post('/api/waitlist', async (req, res) => {
   const { name, email, reason } = req.body;
 
   if (!name || !email || !reason) {
@@ -96,10 +108,31 @@ app.post('/api/waitlist', (req, res) => {
   }
 
   waitlist.push({ name, email, reason, joinedAt: new Date() });
+
+  // Send notification email to your admin/support email
+  try {
+    await transporter.sendMail({
+      from: `"FunDMe Waitlist" <${process.env.SMTP_USER}>`, // sender address
+      to: process.env.NOTIFY_EMAIL, // your notification email address
+      subject: "New Waitlist Signup",
+      text: `New waitlist signup:\n\nName: ${name}\nEmail: ${email}\nReason: ${reason}`,
+      html: `<p>New waitlist signup:</p>
+             <ul>
+               <li><strong>Name:</strong> ${name}</li>
+               <li><strong>Email:</strong> ${email}</li>
+               <li><strong>Reason:</strong> ${reason}</li>
+             </ul>`
+    });
+  } catch (error) {
+    console.error('Error sending notification email:', error);
+    // You can decide if you want to fail the request or still succeed:
+    // return res.status(500).json({ error: 'Failed to send notification email.' });
+    // Here, we let it succeed but log the error
+  }
+
   res.json({ message: 'Successfully joined the waitlist!' });
 });
 
 // --- START SERVER ---
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-});
