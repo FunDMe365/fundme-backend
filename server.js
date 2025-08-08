@@ -1,62 +1,70 @@
+// server.js
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const session = require('express-session');
 require('dotenv').config();
-
 const sgMail = require('@sendgrid/mail');
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS, bodyParser, session setup here (same as before)...
+// Middleware
+app.use(cors());
+app.use(bodyParser.json());
 
-// --- WAITLIST ROUTES ---
+// Initialize SendGrid
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+// Temporary in-memory waitlist
 const waitlist = [];
 
+// Get current waitlist count
 app.get('/api/waitlist/live', (req, res) => {
   res.json({ count: waitlist.length });
 });
 
+// Add to waitlist + send email notification
 app.post('/api/waitlist', async (req, res) => {
   const { name, email, reason } = req.body;
 
+  // Validate fields
   if (!name || !email || !reason) {
     return res.status(400).json({ error: 'All fields are required.' });
   }
 
+  // Prevent duplicate signups
   const exists = waitlist.find(item => item.email.toLowerCase() === email.toLowerCase());
   if (exists) {
     return res.status(400).json({ error: 'Email already on waitlist.' });
   }
 
+  // Add user to waitlist
   waitlist.push({ name, email, reason, joinedAt: new Date() });
 
+  // Prepare email
+  const msg = {
+    to: process.env.NOTIFY_EMAIL, // recipient of notification
+    from: process.env.VERIFIED_SENDER, // must match a verified SendGrid sender
+    subject: 'New Waitlist Signup',
+    text: `Name: ${name}\nEmail: ${email}\nReason: ${reason}`,
+    html: `<p>New waitlist signup:</p>
+           <ul>
+             <li><strong>Name:</strong> ${name}</li>
+             <li><strong>Email:</strong> ${email}</li>
+             <li><strong>Reason:</strong> ${reason}</li>
+           </ul>`
+  };
+
   try {
-    const msg = {
-      to: process.env.NOTIFY_EMAIL,
-      from: process.env.NOTIFY_EMAIL, // must be verified in SendGrid
-      subject: 'New Waitlist Signup',
-      text: `New waitlist signup:\n\nName: ${name}\nEmail: ${email}\nReason: ${reason}`,
-      html: `<p>New waitlist signup:</p>
-             <ul>
-               <li><strong>Name:</strong> ${name}</li>
-               <li><strong>Email:</strong> ${email}</li>
-               <li><strong>Reason:</strong> ${reason}</li>
-             </ul>`
-    };
-
     await sgMail.send(msg);
+    res.status(200).json({ success: true, message: 'Signup successful and email sent!' });
   } catch (error) {
-    console.error('Error sending notification email:', error);
-    return res.status(500).json({ error: 'Failed to send notification email.' });
+    console.error('SendGrid Error:', error.response ? error.response.body : error.message);
+    res.status(500).json({ success: false, message: 'Signup saved but email failed to send.' });
   }
-
-  res.json({ message: 'Successfully joined the waitlist!' });
 });
 
-// --- START SERVER ---
+// Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
