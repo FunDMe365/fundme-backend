@@ -5,6 +5,14 @@ const session = require('express-session');
 const nodemailer = require('nodemailer');  // <-- Added here
 require('dotenv').config();
 
+require('dotenv').config();
+
+console.log('SMTP_HOST:', process.env.SMTP_HOST);
+console.log('SMTP_PORT:', process.env.SMTP_PORT);
+console.log('SMTP_SECURE:', process.env.SMTP_SECURE);
+console.log('SMTP_USER:', process.env.SMTP_USER);
+
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -80,8 +88,8 @@ const waitlist = [];
 // Create Nodemailer transporter (update with your SMTP info in .env)
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT || "587"),
-  secure: process.env.SMTP_SECURE === "true", // true for 465, false for other ports
+  port: Number(process.env.SMTP_PORT),
+  secure: process.env.SMTP_SECURE === 'true', // convert string to boolean
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
