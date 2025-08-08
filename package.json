@@ -2,33 +2,18 @@
   "name": "fundme-backend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
+  "type": "commonjs",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-  "dependencies": {
-  "express-session": "^1.17.3",
     "@sendgrid/mail": "^8.1.5",
+    "better-sqlite3": "^12.2.0",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
-
-    "express-session": "^1.17.3",
-    "googleapis": "^154.1.0",
-    "nodemailer": "^7.0.5"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/FunDMe365/fundme-backend.git"
-  },
-  "bugs": {
-    "url": "https://github.com/FunDMe365/fundme-backend/issues"
-  },
-  "homepage": "https://github.com/FunDMe365/fundme-backend#readme"
+    "express-session": "^1.18.2"
+  }
 }
