@@ -130,9 +130,11 @@ app.post('/api/waitlist', async (req, res) => {
     // Here, we let it succeed but log the error
   }
 
-  res.json({ message: 'Successfully joined the waitlist!' });
+res.json({ message: 'Successfully joined the waitlist!' });
 });
+
 
 // --- START SERVER ---
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+});
