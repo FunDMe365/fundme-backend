@@ -7,27 +7,28 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS - allow your frontend domain and credentials for cookies
+// Allow requests from your frontend domain with credentials (for session/cookies if needed)
 app.use(cors({
-  origin: 'https://fundasmile.net', // replace with your actual frontend URL
-  credentials: true
+  origin: 'https://fundasmile.net', // Make sure this matches your frontend URL exactly
+  credentials: true,
 }));
 
 app.use(bodyParser.json());
 
-// Session setup - adjust secure for your environment
+// Session setup - adjust secure flag for production
 app.use(session({
   secret: process.env.SESSION_SECRET || 'super-secret-key',
   resave: false,
   saveUninitialized: false,
-  cookie: { 
-    secure: process.env.NODE_ENV === 'production', // true in prod (https), false in dev
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // true in production (HTTPS), false in dev
     httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24 // 1 day session
-  }
+    maxAge: 1000 * 60 * 60 * 24, // 1 day
+  },
 }));
 
-// Middleware to check if user is logged in
+// --- USER AUTH ROUTES (signup/signin) ---
+
 function requireAuth(req, res, next) {
   if (!req.session.user) {
     return res.status(401).json({ message: 'Not logged in' });
@@ -35,48 +36,21 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// Simple in-memory waitlist storage (replace with DB in production)
-const waitlist = [];
-
-// Waitlist API routes
-
-// Get waitlist count
-app.get('/api/waitlist/live', (req, res) => {
-  res.json({ count: waitlist.length });
-});
-
-// Add new waitlist entry
-app.post('/api/waitlist', (req, res) => {
-  const { name, email, reason } = req.body;
-  if (!name || !email || !reason) {
-    return res.status(400).json({ error: 'All fields are required.' });
-  }
-  // Check if email already exists on waitlist
-  if (waitlist.find(entry => entry.email.toLowerCase() === email.toLowerCase())) {
-    return res.status(400).json({ error: 'This email is already on the waitlist.' });
-  }
-  waitlist.push({ name, email, reason, joinedAt: new Date() });
-  res.json({ message: 'Successfully joined the waitlist!' });
-});
-
-// Signup route - pretend create user & start session
 app.post('/signup', (req, res) => {
   const { fullname, email, password } = req.body;
   console.log(`New signup: ${fullname} (${email})`);
 
-  // TODO: Add real user creation & password hashing here
+  // TODO: Add actual user creation & password hashing
 
-  // Save user info in session
   req.session.user = { fullname, email };
   res.status(201).json({ message: 'Signup successful' });
 });
 
-// Signin route - pretend login & start session
 app.post('/signin', (req, res) => {
   const { email, password } = req.body;
   console.log(`Login attempt: ${email}`);
 
-  // TODO: Add real credential validation here
+  // TODO: Add actual credential verification
 
   if (email && password) {
     req.session.user = { email };
@@ -86,18 +60,46 @@ app.post('/signin', (req, res) => {
   }
 });
 
-// Protected dashboard data route
 app.get('/dashboard-data', requireAuth, (req, res) => {
   res.json({ fullname: req.session.user.fullname || req.session.user.email });
 });
 
-// Logout route
 app.post('/logout', (req, res) => {
   req.session.destroy(err => {
     if (err) return res.status(500).json({ message: 'Logout failed' });
-    res.clearCookie('connect.sid'); // clear session cookie on client
+    res.clearCookie('connect.sid');
     res.json({ message: 'Logged out' });
   });
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// --- WAITLIST ROUTES ---
+
+const waitlist = [];
+
+// Get current waitlist count
+app.get('/api/waitlist/live', (req, res) => {
+  res.json({ count: waitlist.length });
+});
+
+// Add a new person to the waitlist
+app.post('/api/waitlist', (req, res) => {
+  const { name, email, reason } = req.body;
+
+  if (!name || !email || !reason) {
+    return res.status(400).json({ error: 'All fields are required.' });
+  }
+
+  // Check if email is already on the waitlist (case-insensitive)
+  const exists = waitlist.find(item => item.email.toLowerCase() === email.toLowerCase());
+  if (exists) {
+    return res.status(400).json({ error: 'Email already on waitlist.' });
+  }
+
+  waitlist.push({ name, email, reason, joinedAt: new Date() });
+  res.json({ message: 'Successfully joined the waitlist!' });
+});
+
+// --- START SERVER ---
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
