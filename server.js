@@ -41,6 +41,7 @@ app.post('/signin', (req, res) => {
     req.session.user = { email };
     return res.status(200).json({ message: 'Login successful' });
   } else {
+
     return res.status(401).j
 
 
@@ -54,6 +55,7 @@ app.post('/signin', (req, res) => {
     req.session.user = { email };
     return res.status(200).json({ message: 'Login successful' });
   } else {
+
     return res.status(401).json({ message: 'Invalid credentials' });
   }
 });
@@ -74,6 +76,6 @@ app.post('/logout', (req, res) => {
   res.json({ message: 'Logged out' });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on backend`));
+
+
