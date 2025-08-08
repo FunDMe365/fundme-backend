@@ -7,15 +7,10 @@ require('dotenv').config();
 
 require('dotenv').config();
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT),
-  secure: process.env.SMTP_SECURE === 'true', // true for 465, false for 587
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+console.log('SMTP_HOST:', process.env.SMTP_HOST);
+console.log('SMTP_PORT:', process.env.SMTP_PORT);
+console.log('SMTP_SECURE:', process.env.SMTP_SECURE);
+console.log('SMTP_USER:', process.env.SMTP_USER);
 
 
 const app = express();
@@ -151,3 +146,4 @@ res.json({ message: 'Successfully joined the waitlist!' });
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
