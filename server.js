@@ -16,6 +16,13 @@ app.use(session({
   resave: false,
   saveUninitialized: true,
   cookie: { secure: process.env.NODE_ENV === 'production' }, // true if using HTTPS in prod
+app.use(cors());
+app.use(bodyParser.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'super-secret-key',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false }, // Set to true if using HTTPS in production
 }));
 
 // Initialize SendGrid
@@ -40,6 +47,8 @@ app.post('/api/waitlist', async (req, res) => {
 
   // Check if email already exists in the database
   const exists = db.prepare('SELECT 1 FROM waitlist WHERE LOWER(email) = LOWER(?)').get(email);
+  // Check if email is already on the waitlist
+  const exists = waitlist.find(item => item.email.toLowerCase() === email.toLowerCase());
   if (exists) {
     return res.status(400).json({ error: 'Email already on waitlist.' });
   }
@@ -48,6 +57,11 @@ app.post('/api/waitlist', async (req, res) => {
   const msg = {
     to: process.env.NOTIFY_EMAIL,
     from: process.env.VERIFIED_SENDER,
+
+  // Prepare email message
+  const msg = {
+    to: process.env.NOTIFY_EMAIL,
+    from: process.env.VERIFIED_SENDER, // Must be a verified sender in SendGrid
     subject: 'New Waitlist Signup',
     text: `New waitlist signup:\n\nName: ${name}\nEmail: ${email}\nReason: ${reason}`,
     html: `<p>New waitlist signup:</p>
@@ -69,6 +83,7 @@ app.post('/api/waitlist', async (req, res) => {
       new Date().toISOString()
     );
 
+    waitlist.push({ name, email, reason, joinedAt: new Date() });
     res.status(200).json({ success: true, message: 'Signup successful and email sent!' });
   } catch (error) {
     console.error('SendGrid Error:', error.response ? error.response.body : error.message);
