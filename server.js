@@ -35,6 +35,30 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// Simple in-memory waitlist storage (replace with DB in production)
+const waitlist = [];
+
+// Waitlist API routes
+
+// Get waitlist count
+app.get('/api/waitlist/live', (req, res) => {
+  res.json({ count: waitlist.length });
+});
+
+// Add new waitlist entry
+app.post('/api/waitlist', (req, res) => {
+  const { name, email, reason } = req.body;
+  if (!name || !email || !reason) {
+    return res.status(400).json({ error: 'All fields are required.' });
+  }
+  // Check if email already exists on waitlist
+  if (waitlist.find(entry => entry.email.toLowerCase() === email.toLowerCase())) {
+    return res.status(400).json({ error: 'This email is already on the waitlist.' });
+  }
+  waitlist.push({ name, email, reason, joinedAt: new Date() });
+  res.json({ message: 'Successfully joined the waitlist!' });
+});
+
 // Signup route - pretend create user & start session
 app.post('/signup', (req, res) => {
   const { fullname, email, password } = req.body;
@@ -77,4 +101,3 @@ app.post('/logout', (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
