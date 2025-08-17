@@ -3,3 +3,6 @@ credentials.json
 
 # Ignore environment variable files
 .env
+
+node_modules/
+.env
