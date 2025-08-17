@@ -1,126 +1,118 @@
-// server.js
-const db = require('./db'); // Import SQLite database instance
+// === Dependencies ===
 const express = require('express');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 const bodyParser = require('body-parser');
-const session = require('express-session');
+const fs = require('fs');
 require('dotenv').config();
-const sgMail = require('@sendgrid/mail');
+const { google } = require('googleapis');
 
+// === Init app ===
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
-// Middleware
+// === Middleware ===
 app.use(cors({
-  origin: ['https://fundasmile.net', 'https://fundasmile.netlify.app'], // add your frontend URLs here
-  methods: ['GET', 'POST', 'OPTIONS'],
-  credentials: true,
+  origin: 'https://fundasmile.netlify.app',
+  methods: ['POST', 'GET'],
+  credentials: false
 }));
 app.use(bodyParser.json());
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'super-secret-key',
-  resave: false,
-  saveUninitialized: true,
-  cookie: { secure: process.env.NODE_ENV === 'production' }, // true if using HTTPS in production
-}));
+app.use(bodyParser.urlencoded({ extended: true }));
 
-// Initialize SendGrid
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+// === Google Sheets Setup ===
+const key = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+const auth = new google.auth.GoogleAuth({
+  credentials: key,
+  scopes: ['https://www.googleapis.com/auth/spreadsheets']
+});
+const spreadsheetId = process.env.SPREADSHEET_ID;
+const range = process.env.SHEET_RANGE;
 
-// Temporary in-memory waitlist (can remove if using DB exclusively)
-const waitlist = [];
-
-// Get current waitlist count from DB
-app.get('/api/waitlist/live', (req, res) => {
-  try {
-    const countRow = db.prepare('SELECT COUNT(*) AS count FROM waitlist').get();
-    res.json({ count: countRow.count });
-  } catch (err) {
-    console.error('DB error on /api/waitlist/live:', err);
-    res.status(500).json({ error: 'Failed to get waitlist count' });
-  }
+// === Test route ===
+app.get('/', (req, res) => {
+  res.send('Server is running!');
 });
 
-// Add to waitlist + send email notification
+// === Endpoint: Waitlist submission ===
 app.post('/api/waitlist', async (req, res) => {
   const { name, email, reason } = req.body;
-
   if (!name || !email || !reason) {
-    console.log('Waitlist submission missing fields:', req.body);
-    return res.status(400).json({ error: 'All fields are required.' });
+    return res.status(400).json({ error: 'Please provide name, email, and reason.' });
   }
+
+  console.log('New waitlist submission:', { name, email, reason });
+
+  // === Append to Google Sheet ===
+  try {
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range,
+      valueInputOption: 'RAW',
+      resource: { values: [[name, email, reason, new Date().toISOString()]] }
+    });
+  } catch (err) {
+    console.error('Error writing to Google Sheets:', err);
+    return res.status(500).json({ error: 'Failed to save to Google Sheets.' });
+  }
+
+  // === Send notification email ===
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.VERIFY_USER,
+      pass: process.env.VERIFY_PASS
+    }
+  });
+
+  const mailOptions = {
+    from: process.env.VERIFY_USER,
+    to: process.env.VERIFY_USER,
+    subject: 'New Campaign Waitlist Signup',
+    text: `Name: ${name}\nEmail: ${email}\nReason: ${reason}`
+  };
 
   try {
-    // Check if email already exists in the database
-    const exists = db.prepare('SELECT 1 FROM waitlist WHERE LOWER(email) = LOWER(?)').get(email);
-    if (exists) {
-      console.log('Waitlist submission duplicate email:', email);
-      return res.status(400).json({ error: 'Email already on waitlist.' });
-    }
+    await transporter.sendMail(mailOptions);
+  } catch (err) {
+    console.error('Error sending email:', err);
+  }
 
-    // Prepare email message
-    const msg = {
-      to: process.env.NOTIFY_EMAIL,
-      from: process.env.VERIFIED_SENDER, // Must be verified sender in SendGrid
-      subject: 'New Waitlist Signup',
-      text: `New waitlist signup:\n\nName: ${name}\nEmail: ${email}\nReason: ${reason}`,
-      html: `<p>New waitlist signup:</p>
-             <ul>
-               <li><strong>Name:</strong> ${name}</li>
-               <li><strong>Email:</strong> ${email}</li>
-               <li><strong>Reason:</strong> ${reason}</li>
-             </ul>`,
-    };
+  res.json({ message: `Thanks ${name}, you've joined the waitlist!` });
+});
 
-    // Send email first
-    await sgMail.send(msg);
+// === Endpoint: Get live waitlist count ===
+app.get('/api/waitlist/live', async (req, res) => {
+  try {
+    const client = await auth.getClient();
+    const sheets = google.sheets({ version: 'v4', auth: client });
 
-    // Save to database after successful email
-    db.prepare('INSERT INTO waitlist (name, email, reason, joinedAt) VALUES (?, ?, ?, ?)').run(
-      name,
-      email,
-      reason,
-      new Date().toISOString()
-    );
-
-    waitlist.push({ name, email, reason, joinedAt: new Date() }); // optional local copy
-    console.log('Waitlist signup successful:', email);
-    res.status(200).json({ success: true, message: 'Signup successful and email sent!' });
-
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    const rows = response.data.values || [];
+    res.json({ count: rows.length });
   } catch (error) {
-    console.error('Error processing waitlist signup:', error.response ? error.response.body : error.message);
-    res.status(500).json({ success: false, message: 'Signup failed: could not send email or save to DB.' });
+    console.error('Error fetching waitlist count from Google Sheets:', error);
+    res.status(500).json({ error: 'Failed to fetch waitlist count.' });
   }
 });
 
-// Pretend signin (just example)
-app.post('/signin', (req, res) => {
-  const { email, password } = req.body;
-  console.log(`Login attempt: ${email}`);
-
-  if (email && password) {
-    req.session.user = { email };
-    return res.status(200).json({ message: 'Login successful' });
-  } else {
-    return res.status(401).json({ message: 'Invalid credentials' });
+// === Local JSON fallback ===
+app.get('/api/waitlist/count/local', (req, res) => {
+  try {
+    const raw = fs.readFileSync('waitlist.json', 'utf-8');
+    const fixedJson = `[${raw.trim().replace(/,\s*$/, '')}]`;
+    const waitlist = JSON.parse(fixedJson);
+    res.json({ count: waitlist.length });
+  } catch (error) {
+    console.error('Error counting waitlist entries:', error);
+    res.status(500).json({ error: 'Failed to read or count waitlist entries.' });
   }
 });
 
-// Protected dashboard route
-app.get('/dashboard-data', (req, res) => {
-  if (!req.session.user) {
-    return res.status(401).json({ message: 'Not logged in' });
-  }
-  res.json({ fullname: req.session.user.fullname || req.session.user.email });
-});
-
-// Logout route
-app.post('/logout', (req, res) => {
-  req.session.destroy();
-  res.json({ message: 'Logged out' });
-});
-
-// Start the server
+// === Start server ===
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
