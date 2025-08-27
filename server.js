@@ -1,50 +1,25 @@
-// === Dependencies ===
-const express = require('express');
-const cors = require('cors');
-const nodemailer = require('nodemailer');
-const bodyParser = require('body-parser');
-const fs = require('fs');
-const mongoose = require('mongoose');
 require('dotenv').config();
+const express = require('express');
+const nodemailer = require('nodemailer');
+const cors = require('cors');
+const mongoose = require('mongoose');
 const { google } = require('googleapis');
 
-// === Init app ===
 const app = express();
-const PORT = process.env.PORT || 5000;
+app.use(cors());
+app.use(express.json());
 
-// === Middleware ===
-app.use(cors({
-  origin: 'https://fundasmile.net',
-  methods: ['POST','GET']
-}));
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+const PORT = process.env.PORT || 3000;
 
-// === MongoDB Connection ===
+// === MongoDB Setup ===
 mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
+  serverSelectionTimeoutMS: 5000
 })
-.then(() => console.log('MongoDB connected'))
-.catch(err => console.error('MongoDB connection error:', err));
-
-// === Google Sheets Setup ===
-const googleCredentials = {
-  type: process.env.GOOGLE_TYPE,
-  project_id: process.env.GOOGLE_PROJECT_ID,
-  private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), // fix literal newlines
-  client_email: process.env.GOOGLE_CLIENT_EMAIL,
-  client_id: process.env.GOOGLE_CLIENT_ID
-};
-
-// === Google Sheets Auth & Config ===
-const auth = new google.auth.GoogleAuth({
-  credentials: googleCredentials,
-  scopes: ['https://www.googleapis.com/auth/spreadsheets']
+.then(() => console.log('✅ Connected to MongoDB'))
+.catch(err => {
+  console.error('❌ MongoDB connection error:', err.message);
+  process.exit(1);
 });
-
-const spreadsheetId = process.env.SPREADSHEET_ID;  // Your sheet ID
-const range = process.env.SHEET_RANGE;             // Example: "Sheet1!A:D"
 
 // === Nodemailer Setup ===
 const transporter = nodemailer.createTransport({
@@ -55,89 +30,67 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// === Test Route ===
-app.get('/', (req, res) => {
-  res.send('Server is running!');
+// Verify transporter
+transporter.verify((err, success) => {
+  if (err) {
+    console.error('❌ Email transporter error:', err);
+  } else {
+    console.log('✅ Email transporter ready');
+  }
 });
 
-// === Waitlist Submission ===
-app.post('/api/waitlist', async (req, res) => {
-  const { name, email, reason } = req.body;
-  if (!name || !email || !reason) {
-    return res.status(400).json({ error: 'Please provide name, email, and reason.' });
+// === Google Sheets Setup ===
+let googleCredentials;
+try {
+  googleCredentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+  googleCredentials.private_key = googleCredentials.private_key.replace(/\\n/g, '\n');
+} catch (err) {
+  console.error('❌ Invalid GOOGLE_CREDENTIALS JSON:', err);
+  process.exit(1);
+}
+
+const auth = new google.auth.GoogleAuth({
+  credentials: googleCredentials,
+  scopes: ['https://www.googleapis.com/auth/spreadsheets']
+});
+
+const sheets = google.sheets({ version: 'v4', auth });
+
+// === Example Route: Waitlist Form Submission ===
+app.post('/waitlist', async (req, res) => {
+  const { name, email } = req.body;
+
+  if (!name || !email) {
+    return res.status(400).json({ error: 'Name and email are required' });
   }
 
-  console.log('New waitlist submission:', { name, email, reason });
-
-  // --- Append to Google Sheet ---
   try {
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
+    // Append to Google Sheet
     await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range,
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: 'Sheet1!A:B',
       valueInputOption: 'RAW',
-      resource: { values: [[name, email, reason, new Date().toISOString()]] }
+      requestBody: {
+        values: [[name, email, new Date().toISOString()]]
+      }
     });
+
+    // Send confirmation email
+    await transporter.sendMail({
+      from: `"FunDMe" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: 'You are on the Waitlist!',
+      text: `Hi ${name},\n\nThanks for joining the FunDMe waitlist! 🎉\n\nWe’ll keep you updated.\n\n- The FunDMe Team`
+    });
+
+    res.status(200).json({ message: '✅ Successfully added to waitlist!' });
   } catch (err) {
-    console.error('Error writing to Google Sheets:', err);
-    return res.status(500).json({ error: 'Failed to save to Google Sheets.' });
-  }
-
-  // --- Send notification email ---
-  try {
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: process.env.RECEIVE_EMAIL,
-      subject: 'New Campaign Waitlist Signup',
-      text: `Name: ${name}\nEmail: ${email}\nReason: ${reason}`
-    };
-    await transporter.sendMail(mailOptions);
-  } catch (err) {
-    console.error('Error sending email:', err);
-  }
-
-  // --- Save locally as backup ---
-  try {
-    const entry = { name, email, reason, date: new Date().toISOString() };
-    const data = fs.existsSync('waitlist.json') ? fs.readFileSync('waitlist.json', 'utf-8') : '[]';
-    const waitlist = JSON.parse(data || '[]');
-    waitlist.push(entry);
-    fs.writeFileSync('waitlist.json', JSON.stringify(waitlist, null, 2));
-  } catch (error) {
-    console.error('Error saving to local JSON:', error);
-  }
-
-  res.json({ message: `Thanks ${name}, you've joined the waitlist!` });
-});
-
-// === Get live waitlist count from Google Sheets ===
-app.get('/api/waitlist/live', async (req, res) => {
-  try {
-    const client = await auth.getClient();
-    const sheets = google.sheets({ version: 'v4', auth: client });
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-    const rows = response.data.values || [];
-    res.json({ count: rows.length });
-  } catch (error) {
-    console.error('Error fetching waitlist count from Google Sheets:', error);
-    res.status(500).json({ error: 'Failed to fetch waitlist count.' });
+    console.error('❌ Error in /waitlist route:', err);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 });
 
-// === Local JSON fallback for waitlist count ===
-app.get('/api/waitlist/count/local', (req, res) => {
-  try {
-    const raw = fs.readFileSync('waitlist.json', 'utf-8');
-    const waitlist = JSON.parse(raw || '[]');
-    res.json({ count: waitlist.length });
-  } catch (error) {
-    console.error('Error counting waitlist entries:', error);
-    res.status(500).json({ error: 'Failed to read or count waitlist entries.' });
-  }
-});
-
-// === Start server ===
+// === Start Server ===
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
