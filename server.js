@@ -29,16 +29,13 @@ mongoose.connect(process.env.MONGO_URI, {
 .catch(err => console.error('MongoDB connection error:', err));
 
 // === Google Sheets Setup ===
-let googleCredentials;
-try {
-  // Replace literal newlines in private_key for Render
-  googleCredentials = JSON.parse(
-    process.env.GOOGLE_CREDENTIALS.replace(/\\n/g, '\n')
-  );
-} catch (err) {
-  console.error('Invalid GOOGLE_CREDENTIALS JSON:', err);
-  process.exit(1);
-}
+const googleCredentials = {
+  type: process.env.GOOGLE_TYPE,
+  project_id: process.env.GOOGLE_PROJECT_ID,
+  private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), // fix literal newlines
+  client_email: process.env.GOOGLE_CLIENT_EMAIL,
+  client_id: process.env.GOOGLE_CLIENT_ID
+};
 
 // === Google Sheets Auth & Config ===
 const auth = new google.auth.GoogleAuth({
