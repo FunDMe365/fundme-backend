@@ -31,19 +31,23 @@ mongoose.connect(process.env.MONGO_URI, {
 // === Google Sheets Setup ===
 let googleCredentials;
 try {
-  googleCredentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+  // Replace literal newlines in private_key for Render
+  googleCredentials = JSON.parse(
+    process.env.GOOGLE_CREDENTIALS.replace(/\\n/g, '\n')
+  );
 } catch (err) {
   console.error('Invalid GOOGLE_CREDENTIALS JSON:', err);
   process.exit(1);
 }
 
+// === Google Sheets Auth & Config ===
 const auth = new google.auth.GoogleAuth({
   credentials: googleCredentials,
   scopes: ['https://www.googleapis.com/auth/spreadsheets']
 });
 
-const spreadsheetId = process.env.SPREADSHEET_ID;
-const range = process.env.SHEET_RANGE;
+const spreadsheetId = process.env.SPREADSHEET_ID;  // Your sheet ID
+const range = process.env.SHEET_RANGE;             // Example: "Sheet1!A:D"
 
 // === Nodemailer Setup ===
 const transporter = nodemailer.createTransport({
@@ -85,12 +89,13 @@ app.post('/api/waitlist', async (req, res) => {
 
   // --- Send notification email ---
   try {
-    await transporter.sendMail({
+    const mailOptions = {
       from: process.env.EMAIL_USER,
       to: process.env.RECEIVE_EMAIL,
       subject: 'New Campaign Waitlist Signup',
       text: `Name: ${name}\nEmail: ${email}\nReason: ${reason}`
-    });
+    };
+    await transporter.sendMail(mailOptions);
   } catch (err) {
     console.error('Error sending email:', err);
   }
