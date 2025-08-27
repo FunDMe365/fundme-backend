@@ -4,7 +4,7 @@ const cors = require('cors');
 const nodemailer = require('nodemailer');
 const bodyParser = require('body-parser');
 const fs = require('fs');
-const mongoose = require('mongoose'); // <-- MongoDB
+const mongoose = require('mongoose');
 require('dotenv').config();
 const { google } = require('googleapis');
 
@@ -43,16 +43,14 @@ app.get('/', (req, res) => {
   res.send('Server is running!');
 });
 
-// === Endpoint: Waitlist submission ===
+// === Waitlist Submission Endpoint ===
 app.post('/api/waitlist', async (req, res) => {
   const { name, email, reason } = req.body;
-  if (!name || !email || !reason) {
-    return res.status(400).json({ error: 'Please provide name, email, and reason.' });
-  }
+  if (!name || !email || !reason) return res.status(400).json({ error: 'Please provide name, email, and reason.' });
 
   console.log('New waitlist submission:', { name, email, reason });
 
-  // === Append to Google Sheet ===
+  // Append to Google Sheet
   try {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
@@ -67,44 +65,38 @@ app.post('/api/waitlist', async (req, res) => {
     return res.status(500).json({ error: 'Failed to save to Google Sheets.' });
   }
 
-  // === Send notification email ===
+  // Send email notification
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
-      user: process.env.VERIFY_USER,
-      pass: process.env.VERIFY_PASS
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
     }
   });
 
   const mailOptions = {
-    from: process.env.VERIFY_USER,
-    to: process.env.VERIFY_USER,
+    from: process.env.EMAIL_USER,
+    to: process.env.RECEIVE_EMAIL,
     subject: 'New Campaign Waitlist Signup',
     text: `Name: ${name}\nEmail: ${email}\nReason: ${reason}`
   };
 
-  try {
-    await transporter.sendMail(mailOptions);
-  } catch (err) {
-    console.error('Error sending email:', err);
-  }
+  try { await transporter.sendMail(mailOptions); } 
+  catch (err) { console.error('Error sending email:', err); }
 
-  // === Save locally as backup ===
+  // Save locally
   try {
     const entry = { name, email, reason, date: new Date().toISOString() };
     const data = fs.existsSync('waitlist.json') ? fs.readFileSync('waitlist.json', 'utf-8') : '[]';
-    const fixedJson = data.trim().replace(/,\s*$/, '');
-    const waitlist = JSON.parse(fixedJson || '[]');
+    const waitlist = JSON.parse(data || '[]');
     waitlist.push(entry);
     fs.writeFileSync('waitlist.json', JSON.stringify(waitlist, null, 2));
-  } catch (error) {
-    console.error('Error saving to local JSON:', error);
-  }
+  } catch (err) { console.error('Error saving to local JSON:', err); }
 
   res.json({ message: `Thanks ${name}, you've joined the waitlist!` });
 });
 
-// === Endpoint: Get live waitlist count from Google Sheets ===
+// Get live waitlist count from Google Sheets
 app.get('/api/waitlist/live', async (req, res) => {
   try {
     const client = await auth.getClient();
@@ -112,26 +104,25 @@ app.get('/api/waitlist/live', async (req, res) => {
     const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
     const rows = response.data.values || [];
     res.json({ count: rows.length });
-  } catch (error) {
-    console.error('Error fetching waitlist count from Google Sheets:', error);
+  } catch (err) {
+    console.error('Error fetching waitlist count from Google Sheets:', err);
     res.status(500).json({ error: 'Failed to fetch waitlist count.' });
   }
 });
 
-// === Endpoint: Local JSON fallback for waitlist count ===
+// Local JSON fallback
 app.get('/api/waitlist/count/local', (req, res) => {
   try {
     const raw = fs.readFileSync('waitlist.json', 'utf-8');
-    const fixedJson = `[${raw.trim().replace(/,\s*$/, '')}]`;
-    const waitlist = JSON.parse(fixedJson || '[]');
+    const waitlist = JSON.parse(raw || '[]');
     res.json({ count: waitlist.length });
-  } catch (error) {
-    console.error('Error counting waitlist entries:', error);
+  } catch (err) {
+    console.error('Error counting waitlist entries:', err);
     res.status(500).json({ error: 'Failed to read or count waitlist entries.' });
   }
 });
 
-// === Start server ===
+// Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
