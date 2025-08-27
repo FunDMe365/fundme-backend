@@ -6,3 +6,6 @@ credentials.json
 
 node_modules/
 .env
+
+service-account.json
+service-account.json
