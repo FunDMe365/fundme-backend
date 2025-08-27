@@ -6,7 +6,11 @@ const mongoose = require('mongoose');
 const { google } = require('googleapis');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: ['https://fundasmile.net', 'http://localhost:5500', 'http://127.0.0.1:5500'],
+  methods: ['POST','GET']
+}));
+
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
