@@ -4,6 +4,7 @@ const cors = require('cors');
 const nodemailer = require('nodemailer');
 const bodyParser = require('body-parser');
 const fs = require('fs');
+const mongoose = require('mongoose'); // <-- MongoDB
 require('dotenv').config();
 const { google } = require('googleapis');
 
@@ -19,6 +20,14 @@ app.use(cors({
 }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// === MongoDB Connection ===
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log('MongoDB connected'))
+.catch(err => console.error('MongoDB connection error:', err));
 
 // === Google Sheets Setup ===
 const key = JSON.parse(process.env.GOOGLE_CREDENTIALS);
@@ -47,7 +56,6 @@ app.post('/api/waitlist', async (req, res) => {
   try {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
-
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range,
@@ -81,15 +89,26 @@ app.post('/api/waitlist', async (req, res) => {
     console.error('Error sending email:', err);
   }
 
+  // === Save locally as backup ===
+  try {
+    const entry = { name, email, reason, date: new Date().toISOString() };
+    const data = fs.existsSync('waitlist.json') ? fs.readFileSync('waitlist.json', 'utf-8') : '[]';
+    const fixedJson = data.trim().replace(/,\s*$/, '');
+    const waitlist = JSON.parse(fixedJson || '[]');
+    waitlist.push(entry);
+    fs.writeFileSync('waitlist.json', JSON.stringify(waitlist, null, 2));
+  } catch (error) {
+    console.error('Error saving to local JSON:', error);
+  }
+
   res.json({ message: `Thanks ${name}, you've joined the waitlist!` });
 });
 
-// === Endpoint: Get live waitlist count ===
+// === Endpoint: Get live waitlist count from Google Sheets ===
 app.get('/api/waitlist/live', async (req, res) => {
   try {
     const client = await auth.getClient();
     const sheets = google.sheets({ version: 'v4', auth: client });
-
     const response = await sheets.spreadsheets.values.get({ spreadsheetId, range });
     const rows = response.data.values || [];
     res.json({ count: rows.length });
@@ -99,12 +118,12 @@ app.get('/api/waitlist/live', async (req, res) => {
   }
 });
 
-// === Local JSON fallback ===
+// === Endpoint: Local JSON fallback for waitlist count ===
 app.get('/api/waitlist/count/local', (req, res) => {
   try {
     const raw = fs.readFileSync('waitlist.json', 'utf-8');
     const fixedJson = `[${raw.trim().replace(/,\s*$/, '')}]`;
-    const waitlist = JSON.parse(fixedJson);
+    const waitlist = JSON.parse(fixedJson || '[]');
     res.json({ count: waitlist.length });
   } catch (error) {
     console.error('Error counting waitlist entries:', error);
