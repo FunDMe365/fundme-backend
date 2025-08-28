@@ -1,8 +1,9 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const nodemailer = require('nodemailer');
-const mongoose = require('mongoose');
+require("dotenv").config();
+const express = require("express");
+const nodemailer = require("nodemailer");
+const cors = require("cors");
+const { google } = require("googleapis");
+const mongoose = require("mongoose");
 
 const app = express();
 app.use(cors());
@@ -10,111 +11,96 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// =======================
-// MongoDB connection
-// =======================
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch(err => console.error('❌ MongoDB connection error:', err.message));
+// --------------------
+// MongoDB Connection
+// --------------------
+mongoose
+  .connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => console.log("✅ Connected to MongoDB"))
+  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-// =======================
-// Nodemailer transporter
-// =======================
-const emailEnabled = process.env.EMAIL_ENABLED !== 'false';
+// --------------------
+// Email Transporter
+// --------------------
 let transporter;
-
-if (emailEnabled) {
+if (process.env.EMAIL_ENABLED === "true") {
   transporter = nodemailer.createTransport({
-    service: 'gmail',
+    service: "gmail",
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
+      pass: process.env.EMAIL_PASS,
     },
-    tls: { rejectUnauthorized: false }
   });
 
-  transporter.verify()
-    .then(() => console.log('✅ Email transporter ready'))
-    .catch(err => console.error('❌ Email transporter error:', err));
-} else {
-  console.log('⚠️ Email sending disabled (EMAIL_ENABLED=false)');
+  transporter.verify((err, success) => {
+    if (err) console.error("❌ Email transporter error:", err);
+    else console.log("✅ Email transporter ready");
+  });
 }
 
-// =============================
+// --------------------
 // Google Sheets Setup
-// =============================
-const { google } = require("googleapis");
+// --------------------
+const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_KEY_JSON);
 
-function initGoogleSheets() {
-  try {
-    if (!process.env.GOOGLE_SERVICE_KEY) {
-      throw new Error("❌ GOOGLE_SERVICE_KEY is missing in environment variables");
-    }
+const sheetsClient = new google.auth.JWT(
+  serviceAccount.client_email,
+  null,
+  serviceAccount.private_key.replace(/\\n/g, "\n"),
+  ["https://www.googleapis.com/auth/spreadsheets"]
+);
 
-    // Parse service account JSON from env
-    const googleCreds = JSON.parse(process.env.GOOGLE_SERVICE_KEY);
+const sheets = google.sheets({ version: "v4", auth: sheetsClient });
 
-    const auth = new google.auth.JWT(
-      googleCreds.client_email,
-      null,
-      googleCreds.private_key,
-      ["https://www.googleapis.com/auth/spreadsheets"]
-    );
+sheetsClient.authorize((err, tokens) => {
+  if (err) console.error("❌ Google Sheets auth error:", err);
+  else console.log("✅ Google Sheets authentication ready");
+});
 
-    console.log("✅ Google Sheets authentication ready");
-    return auth;
-  } catch (err) {
-    console.error("❌ Google Sheets setup error:", err);
-  }
-}
-
-const sheetsAuth = initGoogleSheets();
-
-// =======================
-// Waitlist submission
-// =======================
-app.post('/api/waitlist', async (req, res) => {
+// --------------------
+// Waitlist Route
+// --------------------
+app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
 
   if (!name || !email || !reason) {
-    return res.status(400).json({ message: 'Missing required fields.' });
+    return res.status(400).json({ error: "Missing required fields" });
   }
 
   try {
-    console.log('📥 Incoming submission:', { name, email, source, reason });
-
-    if (!sheetsClient) throw new Error('Sheets client not initialized');
-
-    await sheetsClient.spreadsheets.values.append({
+    // Add to Google Sheet
+    await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SPREADSHEET_ID,
       range: process.env.SHEET_RANGE,
-      valueInputOption: 'USER_ENTERED',
+      valueInputOption: "RAW",
       requestBody: {
-        values: [[new Date().toLocaleString(), name, email, source || '', reason]]
-      }
+        values: [[new Date().toLocaleString(), name, email, source, reason]],
+      },
     });
-    console.log('✅ Saved to Google Sheets');
 
-    if (emailEnabled && transporter) {
+    // Send confirmation email
+    if (process.env.EMAIL_ENABLED === "true") {
       await transporter.sendMail({
         from: process.env.EMAIL_USER,
         to: email,
-        subject: '🎉 You joined the JoyFund waitlist!',
-        html: `<p>Hi ${name},</p>
-               <p>Thank you for joining the JoyFund INC. waitlist. We'll keep you updated!</p>
-               <p>– JoyFund Team</p>`
+        subject: "🎉 You joined the JoyFund Waitlist!",
+        text: `Hi ${name},\n\nThanks for joining the JoyFund waitlist! We'll keep you updated on all joyful campaigns.\n\n– JoyFund INC.`,
       });
-      console.log('✅ Confirmation email sent');
     }
 
-    res.json({ message: '🎉 Successfully joined the waitlist!' });
+    res.json({ message: "🎉 Successfully joined the waitlist!" });
   } catch (err) {
-    console.error('❌ Waitlist submission error:', err.message);
-    res.status(500).json({ message: '❌ Could not submit. Please try again later.' });
+    console.error("❌ Waitlist submission error:", err);
+    res.status(500).json({ error: "Failed to submit waitlist." });
   }
 });
 
-// =======================
-// Start server
-// =======================
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+// --------------------
+// Start Server
+// --------------------
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
