@@ -12,7 +12,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 10000;
 
 // =======================
-// MongoDB connection (non-blocking)
+// MongoDB connection
 // =======================
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
@@ -50,16 +50,14 @@ if (emailEnabled) {
 // Google Sheets setup (use full service account JSON)
 // =======================
 let sheetsClient;
-try {
-  const serviceAccountJSON = process.env.GOOGLE_SERVICE_KEY_JSON;
-  if (!serviceAccountJSON) throw new Error('Missing GOOGLE_SERVICE_KEY_JSON');
 
-  const serviceAccount = JSON.parse(serviceAccountJSON);
+try {
+  const key = JSON.parse(process.env.GOOGLE_SERVICE_KEY_JSON);
 
   const auth = new google.auth.JWT(
-    serviceAccount.client_email,
+    key.client_email,
     null,
-    serviceAccount.private_key,
+    key.private_key.replace(/\\n/g, '\n'),
     ['https://www.googleapis.com/auth/spreadsheets']
   );
 
@@ -82,7 +80,6 @@ app.post('/api/waitlist', async (req, res) => {
   try {
     console.log('📥 Incoming submission:', { name, email, source, reason });
 
-    // Append to Google Sheet
     if (!sheetsClient) throw new Error('Sheets client not initialized');
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: process.env.SPREADSHEET_ID,
@@ -94,7 +91,6 @@ app.post('/api/waitlist', async (req, res) => {
     });
     console.log('✅ Saved to Google Sheets');
 
-    // Send confirmation email
     if (emailEnabled && transporter) {
       try {
         await transporter.sendMail({
