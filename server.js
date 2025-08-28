@@ -25,7 +25,7 @@ mongoose.connect(process.env.MONGO_URI, {
   });
 
 // =======================
-// Nodemailer transporter (patched for TLS issues on Render)
+// Nodemailer transporter (kept same; tolerant TLS)
 // =======================
 const emailEnabled = process.env.EMAIL_ENABLED !== 'false'; // default true
 
@@ -38,7 +38,7 @@ if (emailEnabled) {
       pass: process.env.EMAIL_PASS
     },
     tls: {
-      rejectUnauthorized: false // prevents OpenSSL unsupported error on Render
+      rejectUnauthorized: false
     }
   });
 
@@ -50,15 +50,27 @@ if (emailEnabled) {
 }
 
 // =======================
-// Google Sheets setup
-// =======================
+/* Google Sheets setup — switched to GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY
+   to avoid JSON parsing / OpenSSL decoder issues on Render */
 let sheetsClient;
 try {
-  const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets']
-  });
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+  let privateKey = process.env.GOOGLE_PRIVATE_KEY || '';
+
+  if (!clientEmail || !privateKey) {
+    throw new Error('Missing GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY');
+  }
+
+  // Render envs store newlines as \n — convert to real newlines
+  privateKey = privateKey.replace(/\\n/g, '\n');
+
+  const auth = new google.auth.JWT(
+    clientEmail,
+    null,
+    privateKey,
+    ['https://www.googleapis.com/auth/spreadsheets']
+  );
+
   sheetsClient = google.sheets({ version: 'v4', auth });
   console.log('✅ Google Sheets client ready');
 } catch (err) {
@@ -90,17 +102,21 @@ app.post('/api/waitlist', async (req, res) => {
     });
     console.log('✅ Saved to Google Sheets');
 
-    // Send confirmation email (if enabled)
+    // Send confirmation email (do not fail request if email has an issue)
     if (emailEnabled && transporter) {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: '🎉 You joined the JoyFund waitlist!',
-        html: `<p>Hi ${name},</p>
-               <p>Thank you for joining the JoyFund INC. waitlist. We'll keep you updated!</p>
-               <p>– JoyFund Team</p>`
-      });
-      console.log('✅ Confirmation email sent');
+      try {
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: email,
+          subject: '🎉 You joined the JoyFund waitlist!',
+          html: `<p>Hi ${name},</p>
+                 <p>Thank you for joining the JoyFund INC. waitlist. We'll keep you updated!</p>
+                 <p>– JoyFund Team</p>`
+        });
+        console.log('✅ Confirmation email sent');
+      } catch (mailErr) {
+        console.error('⚠️ Email send error (submission OK):', mailErr.message);
+      }
     } else {
       console.log('⚠️ Skipped sending email (EMAIL_ENABLED=false)');
     }
