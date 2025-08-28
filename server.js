@@ -44,40 +44,26 @@ if (emailEnabled) {
 // =======================
 // Google Sheets setup
 // =======================
+// ================= GOOGLE SHEETS AUTH =================
+const { google } = require("googleapis");
+
 let sheetsClient;
+async function initGoogleSheets() {
+  try {
+    const auth = new google.auth.JWT({
+      email: process.env.GOOGLE_CLIENT_EMAIL,
+      key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), // 🔑 fix newline issue
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    });
 
-try {
-  if (!process.env.GOOGLE_SERVICE_KEY_JSON) {
-    throw new Error('Missing GOOGLE_SERVICE_KEY_JSON env var');
+    await auth.authorize();
+    sheetsClient = google.sheets({ version: "v4", auth });
+    console.log("✅ Google Sheets client ready");
+  } catch (err) {
+    console.error("❌ Google Sheets setup error:", err);
   }
-
-  // Parse the single-line JSON from Render
-  const key = JSON.parse(process.env.GOOGLE_SERVICE_KEY_JSON);
-
-  // Replace literal \n with actual newlines
-  const privateKey = key.private_key.replace(/\\n/g, '\n');
-
-  // Create JWT auth client
-  const auth = new google.auth.JWT({
-    email: key.client_email,
-    key: privateKey,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets']
-  });
-
-  // Authorize immediately
-  auth.authorize((err) => {
-    if (err) {
-      console.error('❌ Google JWT authorization failed:', err);
-    } else {
-      console.log('✅ Google JWT authorization successful');
-    }
-  });
-
-  sheetsClient = google.sheets({ version: 'v4', auth });
-  console.log('✅ Google Sheets client ready');
-} catch (err) {
-  console.error('❌ Google Sheets setup error:', err.message);
 }
+initGoogleSheets();
 
 // =======================
 // Waitlist submission
