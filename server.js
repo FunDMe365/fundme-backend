@@ -49,15 +49,17 @@ let sheetsClient;
 try {
   if (!process.env.GOOGLE_SERVICE_KEY_JSON) throw new Error('Missing GOOGLE_SERVICE_KEY_JSON env var');
 
-  const key = JSON.parse(process.env.GOOGLE_SERVICE_KEY_JSON);
+  // Remove surrounding quotes if present
+  let keyJSON = process.env.GOOGLE_SERVICE_KEY_JSON.replace(/^"(.*)"$/, '$1');
+  const key = JSON.parse(keyJSON);
+
   const auth = new google.auth.JWT({
     email: key.client_email,
-    key: key.private_key.replace(/\\n/g, '\n'),
+    key: Buffer.from(key.private_key.replace(/\\n/g, '\n'), 'utf8'),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
 
-  // Force auth immediately
-  auth.authorize((err) => {
+  auth.authorize(err => {
     if (err) {
       console.error('❌ Google JWT authorization failed:', err);
     } else {
@@ -66,6 +68,7 @@ try {
   });
 
   sheetsClient = google.sheets({ version: 'v4', auth });
+  console.log('✅ Google Sheets client ready');
 } catch (err) {
   console.error('❌ Google Sheets setup error:', err.message);
 }
@@ -76,7 +79,9 @@ try {
 app.post('/api/waitlist', async (req, res) => {
   const { name, email, source, reason } = req.body;
 
-  if (!name || !email || !reason) return res.status(400).json({ message: 'Missing required fields.' });
+  if (!name || !email || !reason) {
+    return res.status(400).json({ message: 'Missing required fields.' });
+  }
 
   try {
     console.log('📥 Incoming submission:', { name, email, source, reason });
