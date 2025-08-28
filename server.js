@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 10000;
 // =======================
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ Connected to MongoDB'))
-  .catch(err => console.error('❌ MongoDB connection error (ignored):', err.message));
+  .catch(err => console.error('❌ MongoDB connection error:', err.message));
 
 // =======================
 // Nodemailer transporter
@@ -47,19 +47,25 @@ if (emailEnabled) {
 let sheetsClient;
 
 try {
-  if (!process.env.GOOGLE_SERVICE_KEY_JSON) throw new Error('Missing GOOGLE_SERVICE_KEY_JSON env var');
+  if (!process.env.GOOGLE_SERVICE_KEY_JSON) {
+    throw new Error('Missing GOOGLE_SERVICE_KEY_JSON env var');
+  }
 
-  // Remove surrounding quotes if present
-  let keyJSON = process.env.GOOGLE_SERVICE_KEY_JSON.replace(/^"(.*)"$/, '$1');
-  const key = JSON.parse(keyJSON);
+  // Parse the single-line JSON from Render
+  const key = JSON.parse(process.env.GOOGLE_SERVICE_KEY_JSON);
 
+  // Replace literal \n with actual newlines
+  const privateKey = key.private_key.replace(/\\n/g, '\n');
+
+  // Create JWT auth client
   const auth = new google.auth.JWT({
     email: key.client_email,
-    key: Buffer.from(key.private_key.replace(/\\n/g, '\n'), 'utf8'),
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    key: privateKey,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets']
   });
 
-  auth.authorize(err => {
+  // Authorize immediately
+  auth.authorize((err) => {
     if (err) {
       console.error('❌ Google JWT authorization failed:', err);
     } else {
@@ -99,19 +105,15 @@ app.post('/api/waitlist', async (req, res) => {
     console.log('✅ Saved to Google Sheets');
 
     if (emailEnabled && transporter) {
-      try {
-        await transporter.sendMail({
-          from: process.env.EMAIL_USER,
-          to: email,
-          subject: '🎉 You joined the JoyFund waitlist!',
-          html: `<p>Hi ${name},</p>
-                 <p>Thank you for joining the JoyFund INC. waitlist. We'll keep you updated!</p>
-                 <p>– JoyFund Team</p>`
-        });
-        console.log('✅ Confirmation email sent');
-      } catch (mailErr) {
-        console.error('⚠️ Email send error (submission OK):', mailErr.message);
-      }
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: '🎉 You joined the JoyFund waitlist!',
+        html: `<p>Hi ${name},</p>
+               <p>Thank you for joining the JoyFund INC. waitlist. We'll keep you updated!</p>
+               <p>– JoyFund Team</p>`
+      });
+      console.log('✅ Confirmation email sent');
     }
 
     res.json({ message: '🎉 Successfully joined the waitlist!' });
