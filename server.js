@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
 const mongoose = require('mongoose');
-const { google } = require('googleapis');
 
 const app = express();
 app.use(cors());
@@ -41,28 +40,35 @@ if (emailEnabled) {
   console.log('⚠️ Email sending disabled (EMAIL_ENABLED=false)');
 }
 
-// =======================
-// Google Sheets setup
-// =======================
-// ================= GOOGLE SHEETS AUTH =================
+// =============================
+// Google Sheets Setup
+// =============================
+const { google } = require("googleapis");
 
-let sheetsClient;
-async function initGoogleSheets() {
+function initGoogleSheets() {
   try {
-    const auth = new google.auth.JWT({
-      email: process.env.GOOGLE_CLIENT_EMAIL,
-      key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), // 🔑 fix newline issue
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-    });
+    if (!process.env.GOOGLE_SERVICE_KEY) {
+      throw new Error("❌ GOOGLE_SERVICE_KEY is missing in environment variables");
+    }
 
-    await auth.authorize();
-    sheetsClient = google.sheets({ version: "v4", auth });
-    console.log("✅ Google Sheets client ready");
+    // Parse service account JSON from env
+    const googleCreds = JSON.parse(process.env.GOOGLE_SERVICE_KEY);
+
+    const auth = new google.auth.JWT(
+      googleCreds.client_email,
+      null,
+      googleCreds.private_key,
+      ["https://www.googleapis.com/auth/spreadsheets"]
+    );
+
+    console.log("✅ Google Sheets authentication ready");
+    return auth;
   } catch (err) {
     console.error("❌ Google Sheets setup error:", err);
   }
 }
-initGoogleSheets();
+
+const sheetsAuth = initGoogleSheets();
 
 // =======================
 // Waitlist submission
