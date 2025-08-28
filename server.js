@@ -45,7 +45,6 @@ if (emailEnabled) {
 // Google Sheets setup
 // =======================
 // ================= GOOGLE SHEETS AUTH =================
-const { google } = require("googleapis");
 
 let sheetsClient;
 async function initGoogleSheets() {
