@@ -18,17 +18,17 @@ mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch(err => {
-    console.error('❌ MongoDB connection error (ignored):', err.message);
-  });
+.then(() => console.log('✅ Connected to MongoDB'))
+.catch(err => {
+  console.error('❌ MongoDB connection error (ignored):', err.message);
+});
 
 // =======================
-// Nodemailer setup
+// Nodemailer transporter
 // =======================
 const emailEnabled = process.env.EMAIL_ENABLED !== 'false';
-
 let transporter;
+
 if (emailEnabled) {
   transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -50,21 +50,32 @@ if (emailEnabled) {
 // Google Sheets setup
 // =======================
 let sheetsClient;
+
 try {
   if (!process.env.GOOGLE_SERVICE_KEY_JSON) {
-    throw new Error('Missing GOOGLE_SERVICE_KEY_JSON');
+    throw new Error('Missing GOOGLE_SERVICE_KEY_JSON env var');
   }
 
-  // Parse JSON
   const key = JSON.parse(process.env.GOOGLE_SERVICE_KEY_JSON);
 
-  // Convert escaped \n to real newlines in private_key
+  // Convert literal \n to real newlines
+  const privateKey = key.private_key.replace(/\\n/g, '\n');
+
   const auth = new google.auth.JWT(
     key.client_email,
     null,
-    key.private_key.replace(/\\n/g, '\n'),
+    privateKey,
     ['https://www.googleapis.com/auth/spreadsheets']
   );
+
+  // Explicitly authorize JWT immediately
+  auth.authorize((err, tokens) => {
+    if (err) {
+      console.error('❌ Google JWT authorization failed:', err);
+    } else {
+      console.log('✅ Google JWT authorization successful');
+    }
+  });
 
   sheetsClient = google.sheets({ version: 'v4', auth });
   console.log('✅ Google Sheets client ready');
