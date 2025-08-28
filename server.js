@@ -21,13 +21,12 @@ mongoose.connect(process.env.MONGO_URI, {
   .then(() => console.log('✅ Connected to MongoDB'))
   .catch(err => {
     console.error('❌ MongoDB connection error (ignored):', err.message);
-    // Don't crash if Mongo fails
   });
 
 // =======================
-// Nodemailer transporter (kept same; tolerant TLS)
+// Nodemailer transporter
 // =======================
-const emailEnabled = process.env.EMAIL_ENABLED !== 'false'; // default true
+const emailEnabled = process.env.EMAIL_ENABLED !== 'false';
 
 let transporter;
 if (emailEnabled) {
@@ -37,9 +36,7 @@ if (emailEnabled) {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS
     },
-    tls: {
-      rejectUnauthorized: false
-    }
+    tls: { rejectUnauthorized: false }
   });
 
   transporter.verify()
@@ -50,24 +47,19 @@ if (emailEnabled) {
 }
 
 // =======================
-/* Google Sheets setup — switched to GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY
-   to avoid JSON parsing / OpenSSL decoder issues on Render */
+// Google Sheets setup (use full service account JSON)
+// =======================
 let sheetsClient;
 try {
-  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-  let privateKey = process.env.GOOGLE_PRIVATE_KEY || '';
+  const serviceAccountJSON = process.env.GOOGLE_SERVICE_KEY_JSON;
+  if (!serviceAccountJSON) throw new Error('Missing GOOGLE_SERVICE_KEY_JSON');
 
-  if (!clientEmail || !privateKey) {
-    throw new Error('Missing GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY');
-  }
-
-  // Render envs store newlines as \n — convert to real newlines
-  privateKey = privateKey.replace(/\\n/g, '\n');
+  const serviceAccount = JSON.parse(serviceAccountJSON);
 
   const auth = new google.auth.JWT(
-    clientEmail,
+    serviceAccount.client_email,
     null,
-    privateKey,
+    serviceAccount.private_key,
     ['https://www.googleapis.com/auth/spreadsheets']
   );
 
@@ -102,7 +94,7 @@ app.post('/api/waitlist', async (req, res) => {
     });
     console.log('✅ Saved to Google Sheets');
 
-    // Send confirmation email (do not fail request if email has an issue)
+    // Send confirmation email
     if (emailEnabled && transporter) {
       try {
         await transporter.sendMail({
@@ -117,8 +109,6 @@ app.post('/api/waitlist', async (req, res) => {
       } catch (mailErr) {
         console.error('⚠️ Email send error (submission OK):', mailErr.message);
       }
-    } else {
-      console.log('⚠️ Skipped sending email (EMAIL_ENABLED=false)');
     }
 
     res.json({ message: '🎉 Successfully joined the waitlist!' });
