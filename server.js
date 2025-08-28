@@ -24,7 +24,7 @@ mongoose.connect(process.env.MONGO_URI, {
   });
 
 // =======================
-// Nodemailer transporter
+// Nodemailer setup
 // =======================
 const emailEnabled = process.env.EMAIL_ENABLED !== 'false';
 
@@ -47,13 +47,18 @@ if (emailEnabled) {
 }
 
 // =======================
-// Google Sheets setup (use full service account JSON)
+// Google Sheets setup
 // =======================
 let sheetsClient;
-
 try {
+  if (!process.env.GOOGLE_SERVICE_KEY_JSON) {
+    throw new Error('Missing GOOGLE_SERVICE_KEY_JSON');
+  }
+
+  // Parse JSON
   const key = JSON.parse(process.env.GOOGLE_SERVICE_KEY_JSON);
 
+  // Convert escaped \n to real newlines in private_key
   const auth = new google.auth.JWT(
     key.client_email,
     null,
@@ -81,6 +86,7 @@ app.post('/api/waitlist', async (req, res) => {
     console.log('📥 Incoming submission:', { name, email, source, reason });
 
     if (!sheetsClient) throw new Error('Sheets client not initialized');
+
     await sheetsClient.spreadsheets.values.append({
       spreadsheetId: process.env.SPREADSHEET_ID,
       range: process.env.SHEET_RANGE,
