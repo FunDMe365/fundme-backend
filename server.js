@@ -11,12 +11,22 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 10000;
 
-// MongoDB connection
-mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+// =======================
+// MongoDB connection (non-blocking)
+// =======================
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
   .then(() => console.log('✅ Connected to MongoDB'))
-  .catch(err => console.error('❌ MongoDB connection error:', err.message));
+  .catch(err => {
+    console.error('❌ MongoDB connection error (ignored):', err.message);
+    // Don't crash if Mongo fails
+  });
 
+// =======================
 // Nodemailer transporter
+// =======================
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -29,7 +39,9 @@ transporter.verify()
   .then(() => console.log('✅ Email transporter ready'))
   .catch(err => console.error('❌ Email transporter error:', err));
 
+// =======================
 // Google Sheets setup
+// =======================
 let sheetsClient;
 try {
   const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
@@ -43,7 +55,9 @@ try {
   console.error('❌ Google Sheets setup error:', err.message);
 }
 
-// Waitlist submission endpoint
+// =======================
+// Waitlist submission
+// =======================
 app.post('/api/waitlist', async (req, res) => {
   const { name, email, source, reason } = req.body;
 
@@ -52,6 +66,8 @@ app.post('/api/waitlist', async (req, res) => {
   }
 
   try {
+    console.log('📥 Incoming submission:', { name, email, source, reason });
+
     // Append to Google Sheet
     if (!sheetsClient) throw new Error('Sheets client not initialized');
     await sheetsClient.spreadsheets.values.append({
@@ -62,14 +78,18 @@ app.post('/api/waitlist', async (req, res) => {
         values: [[new Date().toLocaleString(), name, email, source || '', reason]]
       }
     });
+    console.log('✅ Saved to Google Sheets');
 
     // Send confirmation email
     await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: email,
       subject: '🎉 You joined the JoyFund waitlist!',
-      html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund INC. waitlist. We'll keep you updated!</p><p>– JoyFund Team</p>`
+      html: `<p>Hi ${name},</p>
+             <p>Thank you for joining the JoyFund INC. waitlist. We'll keep you updated!</p>
+             <p>– JoyFund Team</p>`
     });
+    console.log('✅ Confirmation email sent');
 
     res.json({ message: '🎉 Successfully joined the waitlist! Check your email for confirmation.' });
   } catch (err) {
@@ -78,4 +98,7 @@ app.post('/api/waitlist', async (req, res) => {
   }
 });
 
+// =======================
+// Start server
+// =======================
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
