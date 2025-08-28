@@ -25,19 +25,29 @@ mongoose.connect(process.env.MONGO_URI, {
   });
 
 // =======================
-// Nodemailer transporter
+// Nodemailer transporter (patched for TLS issues on Render)
 // =======================
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
+const emailEnabled = process.env.EMAIL_ENABLED !== 'false'; // default true
 
-transporter.verify()
-  .then(() => console.log('✅ Email transporter ready'))
-  .catch(err => console.error('❌ Email transporter error:', err));
+let transporter;
+if (emailEnabled) {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    },
+    tls: {
+      rejectUnauthorized: false // prevents OpenSSL unsupported error on Render
+    }
+  });
+
+  transporter.verify()
+    .then(() => console.log('✅ Email transporter ready'))
+    .catch(err => console.error('❌ Email transporter error:', err));
+} else {
+  console.log('⚠️ Email sending disabled (EMAIL_ENABLED=false)');
+}
 
 // =======================
 // Google Sheets setup
@@ -80,18 +90,22 @@ app.post('/api/waitlist', async (req, res) => {
     });
     console.log('✅ Saved to Google Sheets');
 
-    // Send confirmation email
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: '🎉 You joined the JoyFund waitlist!',
-      html: `<p>Hi ${name},</p>
-             <p>Thank you for joining the JoyFund INC. waitlist. We'll keep you updated!</p>
-             <p>– JoyFund Team</p>`
-    });
-    console.log('✅ Confirmation email sent');
+    // Send confirmation email (if enabled)
+    if (emailEnabled && transporter) {
+      await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: '🎉 You joined the JoyFund waitlist!',
+        html: `<p>Hi ${name},</p>
+               <p>Thank you for joining the JoyFund INC. waitlist. We'll keep you updated!</p>
+               <p>– JoyFund Team</p>`
+      });
+      console.log('✅ Confirmation email sent');
+    } else {
+      console.log('⚠️ Skipped sending email (EMAIL_ENABLED=false)');
+    }
 
-    res.json({ message: '🎉 Successfully joined the waitlist! Check your email for confirmation.' });
+    res.json({ message: '🎉 Successfully joined the waitlist!' });
   } catch (err) {
     console.error('❌ Waitlist submission error:', err.message);
     res.status(500).json({ message: '❌ Could not submit. Please try again later.' });
