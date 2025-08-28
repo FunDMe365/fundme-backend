@@ -15,10 +15,7 @@ const PORT = process.env.PORT || 10000;
 // MongoDB Connection
 // --------------------
 mongoose
-  .connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
@@ -44,21 +41,27 @@ if (process.env.EMAIL_ENABLED === "true") {
 // --------------------
 // Google Sheets Setup
 // --------------------
-const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_KEY_JSON);
+let sheetsClient;
+let sheets;
 
-const sheetsClient = new google.auth.JWT(
-  serviceAccount.client_email,
-  null,
-  serviceAccount.private_key.replace(/\\n/g, "\n"),
-  ["https://www.googleapis.com/auth/spreadsheets"]
-);
+try {
+  const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_KEY_JSON);
 
-const sheets = google.sheets({ version: "v4", auth: sheetsClient });
+  sheetsClient = new google.auth.JWT({
+    email: serviceAccount.client_email,
+    key: serviceAccount.private_key.replace(/\\n/g, "\n"),
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
 
-sheetsClient.authorize((err, tokens) => {
-  if (err) console.error("❌ Google Sheets auth error:", err);
-  else console.log("✅ Google Sheets authentication ready");
-});
+  sheets = google.sheets({ version: "v4", auth: sheetsClient });
+
+  sheetsClient.authorize((err) => {
+    if (err) console.error("❌ Google Sheets auth error:", err);
+    else console.log("✅ Google Sheets authentication ready");
+  });
+} catch (err) {
+  console.error("❌ Failed to initialize Google Sheets client:", err);
+}
 
 // --------------------
 // Waitlist Route
@@ -72,14 +75,16 @@ app.post("/api/waitlist", async (req, res) => {
 
   try {
     // Add to Google Sheet
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: process.env.SHEET_RANGE,
-      valueInputOption: "RAW",
-      requestBody: {
-        values: [[new Date().toLocaleString(), name, email, source, reason]],
-      },
-    });
+    if (sheets) {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: process.env.SHEET_RANGE,
+        valueInputOption: "RAW",
+        requestBody: {
+          values: [[new Date().toLocaleString(), name, email, source, reason]],
+        },
+      });
+    }
 
     // Send confirmation email
     if (process.env.EMAIL_ENABLED === "true") {
