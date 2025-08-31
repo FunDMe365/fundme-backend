@@ -1,4 +1,3 @@
-// server.js
 require('dotenv').config();
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -33,7 +32,7 @@ const transporter = nodemailer.createTransport({
   secure: true,
   auth: {
     user: process.env.ZOHO_USER,      // e.g., admin@fundasmile.net
-    pass: process.env.ZOHO_APP_PASSWORD // Zoho app password stored in env
+    pass: process.env.ZOHO_APP_PASSWORD
   }
 });
 
@@ -42,7 +41,7 @@ async function saveToSheet(sheetId, sheetName, values) {
   try {
     await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
-      range: `${sheetName}!A:E`, // Only A:E since we have 5 columns per submission
+      range: `${sheetName}!A:Z`,
       valueInputOption: "RAW",
       requestBody: { values: [values] }
     });
@@ -85,19 +84,19 @@ app.post("/submit-volunteer", async (req, res) => {
       name, email, city, message, new Date().toISOString()
     ]);
 
+    // Email to applicant
     await sendConfirmationEmail(
       email,
       "Thank you for applying as a JoyFund Volunteer!",
       `Hi ${name},\n\nThank you for your interest in volunteering with JoyFund INC. Your application has been received and our team will review it.\nA team member will contact you with next steps.\n\n- JoyFund INC. Team`
     );
 
-   // Notify admin
-await sendConfirmationEmail(
-  process.env.ZOHO_USER, // admin@fundasmile.net
-  `New Volunteer Application from ${name}`,
-  `A new volunteer has signed up:\n\nName: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`
-);
-
+    // Email to admin
+    await sendConfirmationEmail(
+      process.env.ZOHO_USER,
+      `New Volunteer Application: ${name}`,
+      `A new volunteer has applied:\n\nName: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`
+    );
 
     res.json({ success: true, message: "Volunteer application submitted successfully." });
   } catch (err) {
@@ -119,10 +118,18 @@ app.post("/submit-streetteam", async (req, res) => {
       name, email, city, message, new Date().toISOString()
     ]);
 
+    // Email to applicant
     await sendConfirmationEmail(
       email,
       "Thank you for joining the JoyFund Street Team!",
       `Hi ${name},\n\nThank you for joining the JoyFund INC. Street Team!\nYou can promote our mission and share information, but please remember: Street Team members are not official representatives of JoyFund INC.\n\n- JoyFund INC. Team`
+    );
+
+    // Email to admin
+    await sendConfirmationEmail(
+      process.env.ZOHO_USER,
+      `New Street Team Application: ${name}`,
+      `A new Street Team member has applied:\n\nName: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`
     );
 
     res.json({ success: true, message: "Street Team application submitted successfully." });
@@ -145,10 +152,18 @@ app.post("/api/waitlist", async (req, res) => {
       name, email, source || "N/A", reason, new Date().toISOString()
     ]);
 
+    // Email to applicant
     await sendConfirmationEmail(
       email,
       "Welcome to the JoyFund Waitlist!",
       `Hi ${name},\n\nThank you for joining the JoyFund waitlist!\nWe’re excited to keep you updated on our upcoming campaigns.\n\n- JoyFund INC. Team`
+    );
+
+    // Email to admin
+    await sendConfirmationEmail(
+      process.env.ZOHO_USER,
+      `New Waitlist Sign-Up: ${name}`,
+      `A new person joined the waitlist:\n\nName: ${name}\nEmail: ${email}\nSource: ${source || "N/A"}\nReason: ${reason}`
     );
 
     res.json({ success: true, message: "Successfully joined the waitlist!" });
