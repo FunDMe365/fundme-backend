@@ -1,4 +1,6 @@
 // server.js
+console.log("GOOGLE_CREDENTIALS_JSON loaded?", !!process.env.GOOGLE_CREDENTIALS_JSON);
+console.log("ZOHO_APP_PASSWORD loaded?", !!process.env.ZOHO_APP_PASSWORD);
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
