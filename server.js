@@ -1,111 +1,150 @@
-require("dotenv").config();
 const express = require("express");
+const bodyParser = require("body-parser");
 const nodemailer = require("nodemailer");
-const cors = require("cors");
 const { google } = require("googleapis");
-const mongoose = require("mongoose");
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 10000;
+// ====================
+// 1. GOOGLE SHEETS SETUP
+// ====================
+const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
+const auth = new google.auth.GoogleAuth({
+  keyFile: "credentials.json", // your Google Service Account key
+  scopes: SCOPES,
+});
+const sheets = google.sheets({ version: "v4", auth });
 
-// --------------------
-// MongoDB Connection
-// --------------------
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ Connected to MongoDB"))
-  .catch((err) => console.error("❌ MongoDB connection error:", err));
+// ====================
+// 2. SPREADSHEET IDS
+// ====================
+const SPREADSHEET_IDS = {
+  volunteers: "1O_y1yDiYfO0RT8eGwBMtaiPWYYvSR8jIDIdZkZPlvNA",
+  streetteam: "1dPz1LqQq6SKjZIwsgIpQJdQzdmlOV7YrOZJjHqC4Yg8",
+};
 
-// --------------------
-// Email Transporter
-// --------------------
-let transporter;
-if (process.env.EMAIL_ENABLED === "true") {
-  transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  });
+// ====================
+// 3. ZOHO SMTP SETUP
+// ====================
+const transporter = nodemailer.createTransport({
+  host: "smtp.zoho.com",
+  port: 465,
+  secure: true,
+  auth: {
+    user: "admin@fundasmile.net",
+    pass: "YOUR_ZOHO_APP_PASSWORD",
+  },
+});
 
-  transporter.verify((err, success) => {
-    if (err) console.error("❌ Email transporter error:", err);
-    else console.log("✅ Email transporter ready");
+// ====================
+// 4. SAVE TO SHEET HELPER
+// ====================
+async function saveToSheet(sheetId, sheetName, values) {
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId,
+    range: `${sheetName}!A:Z`,
+    valueInputOption: "RAW",
+    requestBody: { values: [values] },
   });
 }
 
-// --------------------
-// Google Sheets Setup
-// --------------------
-let sheetsClient;
-let sheets;
+// ====================
+// 5. ROUTES
+// ====================
 
-try {
-  const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_KEY_JSON);
-
-  sheetsClient = new google.auth.JWT({
-    email: serviceAccount.client_email,
-    key: serviceAccount.private_key.replace(/\\n/g, "\n"),
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-
-  sheets = google.sheets({ version: "v4", auth: sheetsClient });
-
-  sheetsClient.authorize((err) => {
-    if (err) console.error("❌ Google Sheets auth error:", err);
-    else console.log("✅ Google Sheets authentication ready");
-  });
-} catch (err) {
-  console.error("❌ Failed to initialize Google Sheets client:", err);
-}
-
-// --------------------
-// Waitlist Route
-// --------------------
-app.post("/api/waitlist", async (req, res) => {
-  const { name, email, source, reason } = req.body;
-
-  if (!name || !email || !reason) {
-    return res.status(400).json({ error: "Missing required fields" });
-  }
-
+// Volunteer form
+app.post("/submit-volunteer", async (req, res) => {
   try {
-    // Add to Google Sheet
-    if (sheets) {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: process.env.SPREADSHEET_ID,
-        range: process.env.SHEET_RANGE,
-        valueInputOption: "RAW",
-        requestBody: {
-          values: [[new Date().toLocaleString(), name, email, source, reason]],
-        },
-      });
-    }
+    const { name, email, phone, message } = req.body;
+
+    // Save to Volunteers sheet
+    await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [
+      name,
+      email,
+      phone,
+      message,
+      new Date().toISOString(),
+    ]);
 
     // Send confirmation email
-    if (process.env.EMAIL_ENABLED === "true") {
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: email,
-        subject: "🎉 You joined the JoyFund Waitlist!",
-        text: `Hi ${name},\n\nThanks for joining the JoyFund waitlist! We'll keep you updated on all joyful campaigns.\n\n– JoyFund INC.`,
-      });
-    }
+    await transporter.sendMail({
+      from: '"JoyFund INC." <admin@fundasmile.net>',
+      to: email,
+      subject: "Thank you for applying as a JoyFund Volunteer!",
+      text: `Hi ${name},
 
-    res.json({ message: "🎉 Successfully joined the waitlist!" });
-  } catch (err) {
-    console.error("❌ Waitlist submission error:", err);
-    res.status(500).json({ error: "Failed to submit waitlist." });
+Thank you for your interest in volunteering with JoyFund INC. 
+Your application has been received and our team will review it.
+A team member will contact you with next steps.
+
+- JoyFund INC. Team`,
+    });
+
+    res.json({ success: true, message: "Volunteer form submitted successfully!" });
+  } catch (error) {
+    console.error("Volunteer error:", error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// --------------------
-// Start Server
-// --------------------
+// Street Team form
+app.post("/submit-streetteam", async (req, res) => {
+  try {
+    const { name, email, phone, message } = req.body;
+
+    // Save to StreetTeam sheet
+    await saveToSheet(SPREADSHEET_IDS.streetteam, "StreetTeam", [
+      name,
+      email,
+      phone,
+      message,
+      new Date().toISOString(),
+    ]);
+
+    // Send confirmation email
+    await transporter.sendMail({
+      from: '"JoyFund INC." <admin@fundasmile.net>',
+      to: email,
+      subject: "Thank you for joining the JoyFund Street Team!",
+      text: `Hi ${name},
+
+Thank you for joining the JoyFund INC. Street Team! 
+Your signup has been received. Street Team members are welcome to 
+spread the word and share our mission, but please note: Street Team 
+members are not official representatives of JoyFund INC.
+
+- JoyFund INC. Team`,
+    });
+
+    res.json({ success: true, message: "Street Team form submitted successfully!" });
+  } catch (error) {
+    console.error("Street Team error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Optional route for third sheet
+app.post("/submit-other", async (req, res) => {
+  try {
+    const { name, email, message } = req.body;
+    await saveToSheet(SPREADSHEET_IDS.other, "OtherTabName", [
+      name,
+      email,
+      message,
+      new Date().toISOString(),
+    ]);
+    res.json({ success: true, message: "Submission saved!" });
+  } catch (error) {
+    console.error("Other sheet error:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ====================
+// 6. START SERVER
+// ====================
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`✅ Server running on http://localhost:${PORT}`);
 });
