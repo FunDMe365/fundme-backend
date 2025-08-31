@@ -1,6 +1,7 @@
 // server.js
 console.log("GOOGLE_CREDENTIALS_JSON loaded?", !!process.env.GOOGLE_CREDENTIALS_JSON);
 console.log("ZOHO_APP_PASSWORD loaded?", !!process.env.ZOHO_APP_PASSWORD);
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -14,7 +15,6 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // ===== Google Sheets Setup =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
-// Use environment variable for credentials instead of a physical file
 const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
   scopes: SCOPES
@@ -24,7 +24,8 @@ const sheets = google.sheets({ version: "v4", auth });
 // ===== Spreadsheet IDs =====
 const SPREADSHEET_IDS = {
   volunteers: "1O_y1yDiYfO0RT8eGwBMtaiPWYYvSR8jIDIdZkZPlvNA",
-  streetteam: "1dPz1LqQq6SKjZIwsgIpQJdQzdmlOV7YrOZJjHqC4Yg8"
+  streetteam: "1dPz1LqQq6SKjZIwsgIpQJdQzdmlOV7YrOZJjHqC4Yg8",
+  waitlist: "YOUR_WAITLIST_SHEET_ID_HERE" // <-- replace with your waitlist sheet ID
 };
 
 // ===== Zoho SMTP Setup =====
@@ -34,7 +35,7 @@ const transporter = nodemailer.createTransport({
   secure: true,
   auth: {
     user: "admin@fundasmile.net",
-    pass: process.env.QpAzxRbqV0wt // store Zoho password as env var
+    pass: process.env.ZOHO_APP_PASSWORD
   }
 });
 
@@ -124,6 +125,6 @@ app.post("/submit-streetteam", async (req, res) => {
   }
 });
 
-// ===== Start Server =====
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Waitlist submission
+app.post("/api/waitlist", async (req, res) => {
+  console.log("Waitlist submission received:",
