@@ -1,7 +1,5 @@
 // server.js
-console.log("GOOGLE_CREDENTIALS_JSON loaded?", !!process.env.GOOGLE_CREDENTIALS_JSON);
-console.log("ZOHO_APP_PASSWORD loaded?", !!process.env.ZOHO_APP_PASSWORD);
-
+require('dotenv').config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -25,7 +23,7 @@ const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_IDS = {
   volunteers: "1O_y1yDiYfO0RT8eGwBMtaiPWYYvSR8jIDIdZkZPlvNA",
   streetteam: "1dPz1LqQq6SKjZIwsgIpQJdQzdmlOV7YrOZJjHqC4Yg8",
-  waitlist: "YOUR_WAITLIST_SHEET_ID_HERE" // <-- replace with your waitlist sheet ID
+  waitlist: "YOUR_WAITLIST_SHEET_ID_HERE"
 };
 
 // ===== Zoho SMTP Setup =====
@@ -34,8 +32,8 @@ const transporter = nodemailer.createTransport({
   port: 465,
   secure: true,
   auth: {
-    user: "admin@fundasmile.net",
-    pass: process.env.ZOHO_APP_PASSWORD
+    user: process.env.ZOHO_USER,      // e.g., admin@fundasmile.net
+    pass: process.env.ZOHO_APP_PASSWORD // Zoho app password stored in env
   }
 });
 
@@ -59,7 +57,7 @@ async function saveToSheet(sheetId, sheetName, values) {
 async function sendConfirmationEmail(to, subject, text) {
   try {
     await transporter.sendMail({
-      from: '"JoyFund INC." <admin@fundasmile.net>',
+      from: `"JoyFund INC." <${process.env.ZOHO_USER}>`,
       to,
       subject,
       text
@@ -73,7 +71,7 @@ async function sendConfirmationEmail(to, subject, text) {
 
 // ===== Routes =====
 
-// Volunteer submission
+// Volunteer
 app.post("/submit-volunteer", async (req, res) => {
   console.log("Volunteer submission received:", req.body);
   const { name, email, city, message } = req.body;
@@ -93,13 +91,13 @@ app.post("/submit-volunteer", async (req, res) => {
       `Hi ${name},\n\nThank you for your interest in volunteering with JoyFund INC. Your application has been received and our team will review it.\nA team member will contact you with next steps.\n\n- JoyFund INC. Team`
     );
 
-    res.json({ success: true });
+    res.json({ success: true, message: "Volunteer application submitted successfully." });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Street Team submission
+// Street Team
 app.post("/submit-streetteam", async (req, res) => {
   console.log("Street Team submission received:", req.body);
   const { name, email, city, message } = req.body;
@@ -119,12 +117,38 @@ app.post("/submit-streetteam", async (req, res) => {
       `Hi ${name},\n\nThank you for joining the JoyFund INC. Street Team!\nYou can promote our mission and share information, but please remember: Street Team members are not official representatives of JoyFund INC.\n\n- JoyFund INC. Team`
     );
 
-    res.json({ success: true });
+    res.json({ success: true, message: "Street Team application submitted successfully." });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// Waitlist submission
+// Waitlist
 app.post("/api/waitlist", async (req, res) => {
-  console.log("Waitlist submission received:",
+  console.log("Waitlist submission received:", req.body);
+  const { name, email, source, reason } = req.body;
+
+  if (!name || !email || !reason) {
+    return res.status(400).json({ success: false, message: "Name, email, and reason are required." });
+  }
+
+  try {
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
+      name, email, source || "N/A", reason, new Date().toISOString()
+    ]);
+
+    await sendConfirmationEmail(
+      email,
+      "Welcome to the JoyFund Waitlist!",
+      `Hi ${name},\n\nThank you for joining the JoyFund waitlist!\nWe’re excited to keep you updated on our upcoming campaigns.\n\n- JoyFund INC. Team`
+    );
+
+    res.json({ success: true, message: "Successfully joined the waitlist!" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ===== Start Server =====
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
