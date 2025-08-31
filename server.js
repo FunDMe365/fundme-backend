@@ -91,6 +91,14 @@ app.post("/submit-volunteer", async (req, res) => {
       `Hi ${name},\n\nThank you for your interest in volunteering with JoyFund INC. Your application has been received and our team will review it.\nA team member will contact you with next steps.\n\n- JoyFund INC. Team`
     );
 
+   // Notify admin
+await sendConfirmationEmail(
+  process.env.ZOHO_USER, // admin@fundasmile.net
+  `New Volunteer Application from ${name}`,
+  `A new volunteer has signed up:\n\nName: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`
+);
+
+
     res.json({ success: true, message: "Volunteer application submitted successfully." });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
