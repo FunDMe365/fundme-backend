@@ -12,8 +12,9 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // ===== Google Sheets Setup =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
+// Use environment variable for credentials instead of a physical file
 const auth = new google.auth.GoogleAuth({
-  keyFile: "credentials.json", // your service account JSON
+  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
   scopes: SCOPES
 });
 const sheets = google.sheets({ version: "v4", auth });
@@ -31,7 +32,7 @@ const transporter = nodemailer.createTransport({
   secure: true,
   auth: {
     user: "admin@fundasmile.net",
-    pass: "4ZHiGKhwMt1M"
+    pass: process.env.QpAzxRbqV0wt // store Zoho password as env var
   }
 });
 
@@ -54,7 +55,12 @@ async function saveToSheet(sheetId, sheetName, values) {
 // ===== Helper: Send Email =====
 async function sendConfirmationEmail(to, subject, text) {
   try {
-    await transporter.sendMail({ from: '"JoyFund INC." <admin@fundasmile.net>', to, subject, text });
+    await transporter.sendMail({
+      from: '"JoyFund INC." <admin@fundasmile.net>',
+      to,
+      subject,
+      text
+    });
     console.log(`Email sent to ${to}`);
   } catch (err) {
     console.error(`Error sending email to ${to}:`, err.message);
