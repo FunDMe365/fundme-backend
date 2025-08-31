@@ -42,7 +42,7 @@ async function saveToSheet(sheetId, sheetName, values) {
   try {
     await sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
-      range: `${sheetName}!A:Z`,
+      range: `${sheetName}!A:E`,
       valueInputOption: "RAW",
       requestBody: { values: [values] }
     });
