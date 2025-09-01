@@ -1,10 +1,10 @@
 require('dotenv').config();
-process.env.DEBUG_URL = '';
 const express = require("express");
 const bodyParser = require("body-parser");
 const nodemailer = require("nodemailer");
 const cors = require("cors");
 const session = require("express-session");
+const MongoStore = require("connect-mongo");
 const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 
@@ -21,17 +21,22 @@ app.use(cors({
 
 app.options("*", cors());
 
-// Middleware
+// ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Session Setup =====
+// ===== Session Setup (MongoDB) =====
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
   saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    collectionName: 'sessions'
+  }),
   cookie: {
-    secure: false, // set to true if using HTTPS
+    secure: true, // only over HTTPS
+    httpOnly: true,
     maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
@@ -63,7 +68,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// ===== Helpers =====
+// ===== Helper Functions =====
 async function saveToSheet(sheetId, sheetName, values) {
   try {
     await sheets.spreadsheets.values.append({
@@ -134,19 +139,14 @@ app.post("/api/signup", async (req, res) => {
 // --- Sign In ---
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ success: false, error: "Email and password required." });
-  }
+  if (!email || !password) return res.status(400).json({ success: false, error: "Email and password required." });
 
   try {
     const user = await verifyUser(email, password);
     if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
 
-    // Save user info in session
     req.session.user = { name: user.name, email: user.email };
     res.json({ success: true, message: "Signed in successfully." });
-
   } catch (err) {
     console.error("Signin error:", err.message);
     res.status(500).json({ success: false, error: "Server error." });
@@ -155,18 +155,9 @@ app.post("/api/signin", async (req, res) => {
 
 // --- Dashboard ---
 app.get("/api/dashboard", (req, res) => {
-  if (!req.session.user) {
-    return res.status(401).json({ success: false, error: "Not authenticated" });
-  }
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated. Please sign in." });
   const { name, email } = req.session.user;
-  res.json({
-    success: true,
-    name,
-    email,
-    campaigns: 0,
-    donations: 0,
-    recentActivity: []
-  });
+  res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
 });
 
 // --- Sign Out ---
@@ -181,17 +172,8 @@ app.post("/submit-volunteer", async (req, res) => {
   if (!name || !email || !city || !message) return res.status(400).json({ success: false, error: "All fields are required." });
   try {
     await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [name, email, city, message, new Date().toISOString()]);
-    await sendConfirmationEmail({
-      to: email,
-      subject: "Thank you for applying as a JoyFund Volunteer!",
-      text: `Hi ${name}, thank you for applying.`,
-      html: `<p>Hi ${name}, thank you for applying.</p>`
-    });
-    await sendConfirmationEmail({
-      to: process.env.ZOHO_USER,
-      subject: `New Volunteer Application: ${name}`,
-      text: `A new volunteer has applied:\nName: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`
-    });
+    await sendConfirmationEmail({ to: email, subject: "Thank you for applying as a JoyFund Volunteer!", text: `Hi ${name}, thank you for applying.`, html: `<p>Hi ${name}, thank you for applying.</p>` });
+    await sendConfirmationEmail({ to: process.env.ZOHO_USER, subject: `New Volunteer Application: ${name}`, text: `A new volunteer has applied:\nName: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}` });
     res.json({ success: true, message: "Volunteer application submitted successfully." });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -204,17 +186,8 @@ app.post("/submit-streetteam", async (req, res) => {
   if (!name || !email || !city || !message) return res.status(400).json({ success: false, error: "All fields are required." });
   try {
     await saveToSheet(SPREADSHEET_IDS.streetteam, "StreetTeam", [name, email, city, message, new Date().toISOString()]);
-    await sendConfirmationEmail({
-      to: email,
-      subject: "Thank you for joining the JoyFund Street Team!",
-      text: `Hi ${name}, thank you for joining.`,
-      html: `<p>Hi ${name}, thank you for joining.</p>`
-    });
-    await sendConfirmationEmail({
-      to: process.env.ZOHO_USER,
-      subject: `New Street Team Application: ${name}`,
-      text: `A new Street Team member has applied:\nName: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`
-    });
+    await sendConfirmationEmail({ to: email, subject: "Thank you for joining the JoyFund Street Team!", text: `Hi ${name}, thank you for joining.`, html: `<p>Hi ${name}, thank you for joining.</p>` });
+    await sendConfirmationEmail({ to: process.env.ZOHO_USER, subject: `New Street Team Application: ${name}`, text: `A new Street Team member has applied:\nName: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}` });
     res.json({ success: true, message: "Street Team application submitted successfully." });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -227,17 +200,8 @@ app.post("/api/waitlist", async (req, res) => {
   if (!name || !email || !reason) return res.status(400).json({ success: false, message: "Name, email, and reason are required." });
   try {
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [name, email, source||"N/A", reason, new Date().toISOString()]);
-    await sendConfirmationEmail({
-      to: email,
-      subject: "Welcome to the JoyFund Waitlist!",
-      text: `Hi ${name}, welcome to the waitlist!`,
-      html: `<p>Hi ${name}, welcome to the waitlist!</p>`
-    });
-    await sendConfirmationEmail({
-      to: process.env.ZOHO_USER,
-      subject: `New Waitlist Sign-Up: ${name}`,
-      text: `A new person joined the waitlist:\nName: ${name}\nEmail: ${email}\nSource: ${source || "N/A"}\nReason: ${reason}`
-    });
+    await sendConfirmationEmail({ to: email, subject: "Welcome to the JoyFund Waitlist!", text: `Hi ${name}, welcome to the waitlist!`, html: `<p>Hi ${name}, welcome to the waitlist!</p>` });
+    await sendConfirmationEmail({ to: process.env.ZOHO_USER, subject: `New Waitlist Sign-Up: ${name}`, text: `A new person joined the waitlist:\nName: ${name}\nEmail: ${email}\nSource: ${source || "N/A"}\nReason: ${reason}` });
     res.json({ success: true, message: "Successfully joined the waitlist!" });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
