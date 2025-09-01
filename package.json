@@ -4,6 +4,7 @@
   "description": "Backend for JoyFund",
   "main": "server.js",
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",

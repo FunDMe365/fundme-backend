@@ -4,6 +4,7 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
 const { google } = require("googleapis");
+const bcrypt = require("bcrypt"); // for password hashing
 
 const app = express();
 app.use(cors());
@@ -22,7 +23,8 @@ const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_IDS = {
   volunteers: "1O_y1yDiYfO0RT8eGwBMtaiPWYYvSR8jIDIdZkZPlvNA",
   streetteam: "1dPz1LqQq6SKjZIwsgIpQJdQzdmlOV7YrOZJjHqC4Yg8",
-  waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ"
+  waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
+  users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0"
 };
 
 // ===== Zoho SMTP Setup =====
@@ -51,6 +53,60 @@ async function saveToSheet(sheetId, sheetName, values) {
     throw err;
   }
 }
+
+// ===== User Helpers =====
+async function saveUser({ name, email, password }) {
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await saveToSheet(
+      SPREADSHEET_IDS.users,
+      "Users",
+      [name, email, hashedPassword, new Date().toISOString()]
+    );
+    console.log(`User ${email} saved successfully.`);
+  } catch (err) {
+    console.error(`Error saving user ${email}:`, err.message);
+    throw err;
+  }
+}
+
+async function verifyUser(email, password) {
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Users!A:C"
+    });
+    const rows = response.data.values || [];
+    const userRow = rows.find(row => row[1] === email);
+    if (!userRow) return false;
+
+    const hashedPassword = userRow[2];
+    const match = await bcrypt.compare(password, hashedPassword);
+    return match ? { name: userRow[0], email: userRow[1] } : false;
+  } catch (err) {
+    console.error(`Error verifying user ${email}:`, err.message);
+    throw err;
+  }
+}
+
+// ===== Create User Account =====
+app.post("/api/signup", async (req, res) => {
+  const { name, email, password } = req.body;
+
+  if (!name || !email || !password) {
+    return res.status(400).json({ success: false, message: "Name, email, and password are required." });
+  }
+
+  try {
+    // Save user to Google Sheet
+    await saveUser({ name, email, password });
+
+    res.json({ success: true, message: "Account created successfully!", user: { name, email } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 
 // ===== HTML Templates =====
 function waitlistTemplate(name) {
