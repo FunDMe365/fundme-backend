@@ -162,6 +162,64 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
+// Get user's campaigns
+app.post("/api/campaigns", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email required" });
+
+    const sheet = await authSheets(); // function to authorize Google Sheets API
+    const response = await sheet.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: "Campaigns!A:D" // Adjust columns: A=ownerEmail, B=title, C=status, D=amount
+    });
+
+    const rows = response.data.values || [];
+    const userCampaigns = rows
+      .filter(row => row[0] === email)
+      .map(row => ({
+        title: row[1],
+        status: row[2],
+        amount: row[3]
+      }));
+
+    res.json(userCampaigns);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch campaigns" });
+  }
+});
+
+// Get user's messages
+app.post("/api/messages", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email required" });
+
+    const sheet = await authSheets(); // same Google Sheets authorization
+    const response = await sheet.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: "Messages!A:D" // A=toEmail, B=from, C=message, D=date
+    });
+
+    const rows = response.data.values || [];
+    const userMessages = rows
+      .filter(row => row[0] === email)
+      .map(row => ({
+        from: row[1],
+        text: row[2],
+        date: row[3]
+      }));
+
+    res.json(userMessages);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
+});
+
 // --- Volunteer ---
 app.post("/submit-volunteer", async (req, res) => {
   const { name, email, city, message } = req.body;
