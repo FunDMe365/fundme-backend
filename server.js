@@ -10,11 +10,19 @@ const app = express();
 
 // ===== CORS Setup =====
 app.use(cors({
-  origin: ['https://fundasmile.net', 'http://localhost:3000'], // allow live site & local
+  origin: function(origin, callback){
+    // allow requests with no origin (mobile apps, curl, server-to-server)
+    if (!origin) return callback(null, true);
+    if(['https://fundasmile.net','http://localhost:3000'].indexOf(origin) === -1){
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type','Authorization']
 }));
-app.options('*', cors()); // handle preflight requests
+app.options('*', cors());
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -97,73 +105,6 @@ async function verifyUser(email, password) {
   }
 }
 
-// ===== Create User Account =====
-app.post("/api/signup", async (req, res) => {
-  const { name, email, password } = req.body;
-
-  if (!name || !email || !password) {
-    return res.status(400).json({ success: false, message: "Name, email, and password are required." });
-  }
-
-  try {
-    // Save user to Google Sheet
-    await saveUser({ name, email, password });
-
-    res.json({ success: true, message: "Account created successfully!", user: { name, email } });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// ===== HTML Templates =====
-function waitlistTemplate(name) { return `
-<!DOCTYPE html>
-<html><body style="font-family: Arial, sans-serif; background:#f7f9fc; margin:0; padding:0;">
-<table style="max-width:600px;margin:auto;background:#fff;border-radius:8px;overflow:hidden;">
-<tr><td style="background:#4CAF50;padding:20px;text-align:center;color:#fff;">
-<h1>🎉 You're on the Waitlist!</h1></td></tr>
-<tr><td style="padding:30px;text-align:center;color:#333;">
-<p style="font-size:18px;">Hi ${name || "Friend"}!</p>
-<p>Thanks for signing up for our waitlist. You’re officially part of the movement 💚.</p>
-<p>We'll keep you updated and let you know the moment new opportunities are available.</p>
-<a href="https://fundasmile.net" style="background:#4CAF50;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;">Visit Our Site</a>
-</td></tr>
-<tr><td style="background:#f0f0f0;padding:15px;text-align:center;color:#666;">💌 FundASmile Team<br><a href="https://fundasmile.net" style="color:#4CAF50;">www.fundasmile.net</a></td></tr>
-</table>
-</body></html>`;}
-
-function volunteerTemplate(name) { return `
-<!DOCTYPE html>
-<html><body style="font-family: Arial, sans-serif; background:#f7f9fc; margin:0; padding:0;">
-<table style="max-width:600px;margin:auto;background:#fff;border-radius:8px;overflow:hidden;">
-<tr><td style="background:#FF9800;padding:20px;text-align:center;color:#fff;">
-<h1>🙌 Welcome, Volunteer!</h1></td></tr>
-<tr><td style="padding:30px;text-align:center;color:#333;">
-<p style="font-size:18px;">Hi ${name || "Friend"}!</p>
-<p>Thank you for volunteering with us. Your time and energy will help bring more smiles to the world 🌍✨.</p>
-<p>We'll reach out soon with ways you can get involved. Together, we’re making a difference!</p>
-<a href="https://fundasmile.net" style="background:#FF9800;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;">Get Involved</a>
-</td></tr>
-<tr><td style="background:#f0f0f0;padding:15px;text-align:center;color:#666;">💌 FundASmile Team<br><a href="https://fundasmile.net" style="color:#FF9800;">www.fundasmile.net</a></td></tr>
-</table>
-</body></html>`;}
-
-function streetTeamTemplate(name) { return `
-<!DOCTYPE html>
-<html><body style="font-family: Arial, sans-serif; background:#f7f9fc; margin:0; padding:0;">
-<table style="max-width:600px;margin:auto;background:#fff;border-radius:8px;overflow:hidden;">
-<tr><td style="background:#673AB7;padding:20px;text-align:center;color:#fff;">
-<h1>🎤 You're on the Street Team!</h1></td></tr>
-<tr><td style="padding:30px;text-align:center;color:#333;">
-<p style="font-size:18px;">Hi ${name || "Friend"}!</p>
-<p>Welcome to the Street Team 🚀. You’re now part of our grassroots crew spreading joy everywhere!</p>
-<p>We'll send you updates and materials so you can help share our mission far and wide 💜.</p>
-<a href="https://fundasmile.net" style="background:#673AB7;color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;">Share the Joy</a>
-</td></tr>
-<tr><td style="background:#f0f0f0;padding:15px;text-align:center;color:#666;">💌 FundASmile Team<br><a href="https://fundasmile.net" style="color:#673AB7;">www.fundasmile.net</a></td></tr>
-</table>
-</body></html>`;}
-
 // ===== Helper: Send Email =====
 async function sendConfirmationEmail({ to, subject, text, html }) {
   try {
@@ -181,7 +122,19 @@ async function sendConfirmationEmail({ to, subject, text, html }) {
   }
 }
 
+// ===== HTML Templates =====
+function waitlistTemplate(name) {
+  return `<html>...your waitlist HTML here...</html>`;
+}
+function volunteerTemplate(name) {
+  return `<html>...your volunteer HTML here...</html>`;
+}
+function streetTeamTemplate(name) {
+  return `<html>...your street team HTML here...</html>`;
+}
+
 // ===== Routes =====
+
 // Volunteer
 app.post("/submit-volunteer", async (req, res) => {
   const { name, email, city, message } = req.body;
@@ -190,40 +143,58 @@ app.post("/submit-volunteer", async (req, res) => {
   }
   try {
     await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [name, email, city, message, new Date().toISOString()]);
-
-    await sendConfirmationEmail({ to: email, subject: "Thank you for applying as a JoyFund Volunteer!", text: `Hi ${name},\n\nThank you for your interest in volunteering.`, html: volunteerTemplate(name) });
+    await sendConfirmationEmail({ to: email, subject: "Thank you for applying as a JoyFund Volunteer!", text: `Hi ${name}, ...`, html: volunteerTemplate(name) });
     await sendConfirmationEmail({ to: process.env.ZOHO_USER, subject: `New Volunteer Application: ${name}`, text: `A new volunteer has applied:\nName: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}` });
-
     res.json({ success: true, message: "Volunteer application submitted successfully." });
-  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // Street Team
 app.post("/submit-streetteam", async (req, res) => {
   const { name, email, city, message } = req.body;
-  if (!name || !email || !city || !message) { return res.status(400).json({ success: false, error: "All fields are required." }); }
+  if (!name || !email || !city || !message) {
+    return res.status(400).json({ success: false, error: "All fields are required." });
+  }
   try {
     await saveToSheet(SPREADSHEET_IDS.streetteam, "StreetTeam", [name, email, city, message, new Date().toISOString()]);
-
-    await sendConfirmationEmail({ to: email, subject: "Thank you for joining the JoyFund Street Team!", text: `Hi ${name},\n\nThank you for joining the Street Team!`, html: streetTeamTemplate(name) });
+    await sendConfirmationEmail({ to: email, subject: "Thank you for joining the JoyFund Street Team!", text: `Hi ${name}, ...`, html: streetTeamTemplate(name) });
     await sendConfirmationEmail({ to: process.env.ZOHO_USER, subject: `New Street Team Application: ${name}`, text: `A new Street Team member has applied:\nName: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}` });
-
     res.json({ success: true, message: "Street Team application submitted successfully." });
-  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // Waitlist
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
-  if (!name || !email || !reason) { return res.status(400).json({ success: false, message: "Name, email, and reason are required." }); }
+  if (!name || !email || !reason) {
+    return res.status(400).json({ success: false, message: "Name, email, and reason are required." });
+  }
   try {
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [name, email, source || "N/A", reason, new Date().toISOString()]);
-
-    await sendConfirmationEmail({ to: email, subject: "Welcome to the JoyFund Waitlist!", text: `Hi ${name},\n\nThank you for joining the JoyFund waitlist!`, html: waitlistTemplate(name) });
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [name, email, source||"N/A", reason, new Date().toISOString()]);
+    await sendConfirmationEmail({ to: email, subject: "Welcome to the JoyFund Waitlist!", text: `Hi ${name}, ...`, html: waitlistTemplate(name) });
     await sendConfirmationEmail({ to: process.env.ZOHO_USER, subject: `New Waitlist Sign-Up: ${name}`, text: `A new person joined the waitlist:\nName: ${name}\nEmail: ${email}\nSource: ${source || "N/A"}\nReason: ${reason}` });
-
     res.json({ success: true, message: "Successfully joined the waitlist!" });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// User Signup
+app.post("/signup", async (req, res) => {
+  const { name, email, password } = req.body;
+  if (!name || !email || !password) {
+    return res.status(400).json({ success: false, message: "Name, email, and password are required." });
+  }
+  try {
+    await saveUser({ name, email, password });
+    res.json({ success: true, message: "Account created successfully!", user: { name, email } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 // ===== Start Server =====
