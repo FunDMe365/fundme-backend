@@ -31,7 +31,7 @@ const transporter = nodemailer.createTransport({
   port: 465,
   secure: true,
   auth: {
-    user: process.env.ZOHO_USER,      // e.g., admin@fundasmile.net
+    user: process.env.ZOHO_USER,      
     pass: process.env.ZOHO_APP_PASSWORD
   }
 });
@@ -137,11 +137,11 @@ app.post("/submit-volunteer", async (req, res) => {
       name, email, city, message, new Date().toISOString()
     ]);
 
-    // To applicant (HTML)
+    // To applicant (HTML + personalized text)
     await sendConfirmationEmail({
       to: email,
       subject: "Thank you for applying as a JoyFund Volunteer!",
-      text: `Hi ${name}, Thank you for your interest in volunteering with JoyFund INC.`,
+      text: `Hi ${name},\n\nThank you for your interest in volunteering with JoyFund INC. Your application has been received and our team will review it.\nA team member will contact you with next steps.\n\n- JoyFund INC. Team`,
       html: volunteerTemplate(name)
     });
 
@@ -169,11 +169,11 @@ app.post("/submit-streetteam", async (req, res) => {
       name, email, city, message, new Date().toISOString()
     ]);
 
-    // To applicant (HTML)
+    // To applicant (HTML + personalized text)
     await sendConfirmationEmail({
       to: email,
       subject: "Thank you for joining the JoyFund Street Team!",
-      text: `Hi ${name}, Thank you for joining the JoyFund INC. Street Team!`,
+      text: `Hi ${name},\n\nThank you for joining the JoyFund INC. Street Team!\nYou can promote our mission and share information, but please remember: Street Team members are not official representatives of JoyFund INC.\n\n- JoyFund INC. Team`,
       html: streetTeamTemplate(name)
     });
 
@@ -201,11 +201,11 @@ app.post("/api/waitlist", async (req, res) => {
       name, email, source || "N/A", reason, new Date().toISOString()
     ]);
 
-    // To applicant (HTML)
+    // To applicant (HTML + personalized text)
     await sendConfirmationEmail({
       to: email,
       subject: "Welcome to the JoyFund Waitlist!",
-      text: `Hi ${name}, Thank you for joining the JoyFund waitlist!`,
+      text: `Hi ${name},\n\nThank you for joining the JoyFund waitlist!\nWe’re excited to keep you updated on our upcoming campaigns.\n\n- JoyFund INC. Team`,
       html: waitlistTemplate(name)
     });
 
