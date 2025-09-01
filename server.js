@@ -119,6 +119,49 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
+// ===== Sign-in Route =====
+app.post("/api/signin", async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ success: false, error: "Email and password are required." });
+  }
+
+  try {
+    // 1️⃣ Get all users from your Google Sheet
+    const sheetRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users, // make sure you have this in your SPREADSHEET_IDS
+      range: "Users!A:D" // Name | Email | Password | Date
+    });
+
+    const rows = sheetRes.data.values || [];
+
+    // 2️⃣ Find the user by email
+    const userRow = rows.find(r => r[1] === email);
+    if (!userRow) {
+      return res.status(401).json({ success: false, error: "User not found." });
+    }
+
+    const [name, userEmail, hashedPassword] = userRow;
+
+    // 3️⃣ Compare password
+    const match = await bcrypt.compare(password, hashedPassword);
+    if (!match) {
+      return res.status(401).json({ success: false, error: "Incorrect password." });
+    }
+
+    // 4️⃣ Return user info to frontend
+    res.json({
+      success: true,
+      user: { name, email: userEmail }
+    });
+
+  } catch (err) {
+    console.error("Signin error:", err.message);
+    res.status(500).json({ success: false, error: "Server error." });
+  }
+});
+
 // --- Volunteer ---
 app.post("/submit-volunteer", async (req, res) => {
   const { name, email, city, message } = req.body;
