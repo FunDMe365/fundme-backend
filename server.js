@@ -161,7 +161,7 @@ app.post("/api/waitlist", async (req, res) => {
 
     // Email to admin
     await sendConfirmationEmail(
-      process.env.ZOHO_USER,require('dotenv').config();
+      process.env.ZOHO_USER require('dotenv').config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
