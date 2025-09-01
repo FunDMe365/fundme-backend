@@ -7,7 +7,11 @@ const { google } = require("googleapis");
 const bcrypt = require("bcrypt"); // for password hashing
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: ['https://fundasmile.net', 'http://localhost:3000'], // allow both live site and local testing
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type']
+}));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
