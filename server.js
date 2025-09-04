@@ -16,16 +16,16 @@ app.use(cors({
   origin: ["https://fundasmile.net", "http://localhost:3000"],
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "Accept"],
-  credentials: true
+  credentials: true // ✅ required for cookies
 }));
-
 app.options("*", cors());
 
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Session Setup (MongoDB) =====
+// ===== Session Setup (MongoDB + HTTPS ready) =====
+app.set('trust proxy', 1); // if behind a proxy (like Render)
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
@@ -35,8 +35,9 @@ app.use(session({
     collectionName: 'sessions'
   }),
   cookie: {
-    secure: true, // only over HTTPS
+    secure: true,       // ✅ send cookie over HTTPS only
     httpOnly: true,
+    sameSite: 'none',   // ✅ allow cross-origin cookies
     maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
