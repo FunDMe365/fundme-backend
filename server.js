@@ -210,6 +210,35 @@ app.post("/api/profile", async (req, res) => {
   }
 });
 
+// Delete Account
+app.post("/api/delete-account", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Users!A:C"
+    });
+    const rows = response.data.values || [];
+    const idx = rows.findIndex(row => row[1] === req.session.user.email);
+    if (idx === -1) return res.status(404).json({ success: false, error: "User not found." });
+
+    rows.splice(idx, 1); // Remove user
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: `Users!A1:C${rows.length + 1}`,
+      valueInputOption: "RAW",
+      requestBody: { values: rows }
+    });
+
+    req.session.destroy();
+    res.json({ success: true, message: "Account deleted successfully." });
+  } catch (err) {
+    console.error("Delete account error:", err.message);
+    res.status(500).json({ success: false, error: "Server error deleting account." });
+  }
+});
+
 // --- Messages ---
 app.get("/api/messages", (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
