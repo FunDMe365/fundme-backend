@@ -161,10 +161,34 @@ app.get("/api/dashboard", (req, res) => {
   res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
 });
 
-// --- Profile (view & update) ---
-app.get("/api/profile", (req, res) => {
+// --- Profile (view & update with join date) ---
+app.get("/api/profile", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
-  res.json({ success: true, profile: req.session.user });
+
+  try {
+    // Fetch all users
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Users!A:C" // assuming column A = join date, B = name, C = email
+    });
+    const rows = response.data.values || [];
+
+    // Find current user
+    const userRow = rows.find(row => row[1] === req.session.user.email);
+    const joinDate = userRow ? userRow[0] : null;
+
+    res.json({
+      success: true,
+      profile: {
+        name: req.session.user.name,
+        email: req.session.user.email,
+        joinDate
+      }
+    });
+  } catch (err) {
+    console.error("Profile fetch error:", err);
+    res.status(500).json({ success: false, error: "Server error fetching profile." });
+  }
 });
 
 app.post("/api/profile", async (req, res) => {
