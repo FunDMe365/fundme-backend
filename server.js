@@ -210,6 +210,23 @@ app.post("/api/profile", async (req, res) => {
   }
 });
 
+// ===== NEW: Frontend-friendly profile route =====
+app.get("/get-profile", (req, res) => {
+  if (!req.session.user) {
+    return res.json({ loggedIn: false });
+  }
+
+  const { name, email } = req.session.user;
+  const joinDate = req.session.user.joinDate || "2025-01-01";
+
+  res.json({
+    loggedIn: true,
+    name,
+    email,
+    joinDate
+  });
+});
+
 // Delete Account
 app.post("/api/delete-account", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
