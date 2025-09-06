@@ -25,7 +25,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ===== Session Setup =====
-app.set('trust proxy', 1);
+app.set('trust proxy', 1); // Important for production behind proxy
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
@@ -34,7 +34,7 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
-    sameSite: 'none',
+    sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
     maxAge: 1000 * 60 * 60 * 24
   }
 }));
@@ -87,7 +87,6 @@ async function saveUser({ name, email, password }) {
   ]);
 }
 
-// ----- FIXED verifyUser -----
 async function verifyUser(email, password) {
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_IDS.users,
@@ -95,13 +94,9 @@ async function verifyUser(email, password) {
   });
   const rows = response.data.values || [];
   const normalizedEmail = email.toLowerCase().trim();
-
-  // Find the row safely; ensure row[2] exists
   const userRow = rows.find(row => row[2] && row[2].toLowerCase().trim() === normalizedEmail);
   if (!userRow) return false;
-
-  const hashedPassword = userRow[3];
-  const passwordMatch = await bcrypt.compare(password, hashedPassword);
+  const passwordMatch = await bcrypt.compare(password, userRow[3]);
   return passwordMatch ? { name: userRow[1], email: userRow[2], joinDate: userRow[0] } : false;
 }
 
@@ -133,6 +128,7 @@ app.post("/api/signin", async (req, res) => {
     if (!user)
       return res.status(401).json({ success: false, error: "Invalid email or password." });
 
+    // Set session
     req.session.user = { name: user.name, email: user.email, joinDate: user.joinDate };
     res.json({ success: true, message: "Signed in successfully." });
   } catch (err) {
@@ -155,7 +151,7 @@ app.get("/api/dashboard", (req, res) => {
   res.json({ success: true, name: req.session.user.name, email: req.session.user.email });
 });
 
-// --- Profile Routes (unchanged) ---
+// --- Profile Routes ---
 app.get("/api/profile", async (req, res) => {
   if (!req.session.user)
     return res.status(401).json({ success: false, error: "Not authenticated." });
@@ -219,7 +215,8 @@ app.post("/api/profile", async (req, res) => {
   }
 });
 
-// --- Delete Account, Messages, Campaigns, Donations routes remain identical ---
+// --- Remaining routes (Delete Account, Messages, Campaigns, Donations) remain the same ---
+// Include your previous implementations for them here
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
