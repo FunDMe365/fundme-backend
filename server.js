@@ -71,55 +71,49 @@ const transporter = nodemailer.createTransport({
 });
 
 // ===== Helper Functions =====
-async function saveToSheet(sheetId, sheetName, values) {
-  try {
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: sheetId,
-      range: `${sheetName}!A:Z`,
-      valueInputOption: "RAW",
-      requestBody: { values: [values] }
-    });
-  } catch (err) {
-    console.error(`Error saving to ${sheetName}:`, err.message);
-    throw err;
-  }
-}
-
-async function sendConfirmationEmail({ to, subject, text, html }) {
-  try {
-    await transporter.sendMail({
-      from: `"JoyFund INC." <${process.env.ZOHO_USER}>`,
-      to,
-      subject,
-      text,
-      html
-    });
-  } catch (err) {
-    console.error(`Error sending email to ${to}:`, err.message);
-    throw err;
-  }
-}
-
 async function saveUser({ name, email, password }) {
   const hashedPassword = await bcrypt.hash(password, 10);
+  // Save as: joinDate, name, email, passwordHash
   await saveToSheet(
     SPREADSHEET_IDS.users,
     "Users",
-    [new Date().toISOString(), name, email, hashedPassword]
+    [new Date().toISOString(), name, email.toLowerCase().trim(), hashedPassword]
   );
 }
 
 async function verifyUser(email, password) {
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_IDS.users,
-    range: "Users!B:D"
+    range: "Users!B:D" // B=name, C=email, D=hashed password
   });
   const rows = response.data.values || [];
-  const userRow = rows.find(row => row[1] === email);
+
+  // Normalize email to lower case and trim spaces
+  const normalizedEmail = email.toLowerCase().trim();
+
+  const userRow = rows.find(row => row[1].toLowerCase().trim() === normalizedEmail);
   if (!userRow) return false;
+
   const match = await bcrypt.compare(password, userRow[2]);
   return match ? { name: userRow[0], email: userRow[1] } : false;
 }
+
+// --- Sign In ---
+app.post("/api/signin", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ success: false, error: "Email and password required." });
+
+  try {
+    const user = await verifyUser(email, password);
+    if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
+
+    req.session.user = { name: user.name, email: user.email };
+    res.json({ success: true, message: "Signed in successfully." });
+  } catch (err) {
+    console.error("Signin error:", err.message);
+    res.status(500).json({ success: false, error: "Server error." });
+  }
+});
 
 // ===== Routes =====
 
@@ -162,16 +156,18 @@ app.get("/api/dashboard", (req, res) => {
   res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
 });
 
-// --- Profile ---
+// --- Profile (view & update) ---
 app.get("/api/profile", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
   try {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:C"
+      range: "Users!A:D" // A=joinDate, B=name, C=email, D=password
     });
     const rows = response.data.values || [];
-    const userRow = rows.find(row => row[2] === req.session.user.email);
+
+    const normalizedEmail = req.session.user.email.toLowerCase().trim();
+    const userRow = rows.find(row => row[2].toLowerCase().trim() === normalizedEmail);
     const joinDate = userRow ? userRow[0] : null;
 
     res.json({
@@ -194,10 +190,12 @@ app.post("/api/profile", async (req, res) => {
   try {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:C"
+      range: "Users!A:D"
     });
     const rows = response.data.values || [];
-    const idx = rows.findIndex(row => row[2] === req.session.user.email);
+
+    const normalizedEmail = req.session.user.email.toLowerCase().trim();
+    const idx = rows.findIndex(row => row[2].toLowerCase().trim() === normalizedEmail);
     if (idx === -1) return res.status(404).json({ success: false, error: "User not found." });
 
     if (name) req.session.user.name = name;
@@ -208,17 +206,17 @@ app.post("/api/profile", async (req, res) => {
       rows[idx] = [
         rows[idx][0], // joinDate
         name || rows[idx][1],
-        email || rows[idx][2],
+        email ? email.toLowerCase().trim() : rows[idx][2],
         hashedPassword
       ];
     } else {
       rows[idx][1] = name || rows[idx][1];
-      rows[idx][2] = email || rows[idx][2];
+      rows[idx][2] = email ? email.toLowerCase().trim() : rows[idx][2];
     }
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_IDS.users,
-      range: `Users!A${idx + 1}:C${idx + 1}`,
+      range: `Users!A${idx + 1}:D${idx + 1}`,
       valueInputOption: "RAW",
       requestBody: { values: [rows[idx]] }
     });
@@ -244,16 +242,19 @@ app.post("/api/delete-account", async (req, res) => {
   try {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:C"
+      range: "Users!A:D"
     });
     const rows = response.data.values || [];
-    const idx = rows.findIndex(row => row[2] === req.session.user.email);
+
+    const normalizedEmail = req.session.user.email.toLowerCase().trim();
+    const idx = rows.findIndex(row => row[2].toLowerCase().trim() === normalizedEmail);
     if (idx === -1) return res.status(404).json({ success: false, error: "User not found." });
 
     rows.splice(idx, 1);
+
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_IDS.users,
-      range: `Users!A1:C${rows.length + 1}`,
+      range: `Users!A1:D${rows.length}`,
       valueInputOption: "RAW",
       requestBody: { values: rows }
     });
