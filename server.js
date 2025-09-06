@@ -98,23 +98,6 @@ async function verifyUser(email, password) {
   return match ? { name: userRow[0], email: userRow[1] } : false;
 }
 
-// --- Sign In ---
-app.post("/api/signin", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ success: false, error: "Email and password required." });
-
-  try {
-    const user = await verifyUser(email, password);
-    if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
-
-    req.session.user = { name: user.name, email: user.email };
-    res.json({ success: true, message: "Signed in successfully." });
-  } catch (err) {
-    console.error("Signin error:", err.message);
-    res.status(500).json({ success: false, error: "Server error." });
-  }
-});
-
 // ===== Routes =====
 
 // --- Sign Up ---
