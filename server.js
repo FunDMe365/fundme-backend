@@ -1,22 +1,21 @@
 require('dotenv').config();
 const express = require("express");
 const bodyParser = require("body-parser");
-const nodemailer = require("nodemailer");
 const cors = require("cors");
 const session = require("express-session");
 const MongoStore = require("connect-mongo");
 const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
+const nodemailer = require("nodemailer");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // ===== CORS Setup =====
-app.set('trust proxy', 1); // needed for secure cookies behind proxies
 app.use(cors({
-  origin: ["https://fundasmile.net"], // only your frontend
+  origin: ["https://fundasmile.net", "http://localhost:3000"],
   methods: ["GET","POST","PUT","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization"],
+  allowedHeaders: ["Content-Type","Authorization","Accept"],
   credentials: true
 }));
 app.options("*", cors());
@@ -26,18 +25,16 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ===== Session Setup =====
+app.set('trust proxy', 1);
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
   saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: process.env.MONGO_URI,
-    collectionName: 'sessions'
-  }),
+  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }),
   cookie: {
-    secure: process.env.NODE_ENV === "production", // true for HTTPS
+    secure: process.env.NODE_ENV === "production",
     httpOnly: true,
-    sameSite: 'none', // required for cross-site cookies
+    sameSite: 'none',
     maxAge: 1000 * 60 * 60 * 24
   }
 }));
@@ -71,10 +68,10 @@ const transporter = nodemailer.createTransport({
 });
 
 // ===== Helper Functions =====
-async function saveToSheet(spreadsheetId, sheetName, row) {
+async function saveToSheet(sheetId, sheetName, row) {
   await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `${sheetName}!A:Z`,
+    spreadsheetId: sheetId,
+    range: `${sheetName}!A:D`,
     valueInputOption: "RAW",
     requestBody: { values: [row] }
   });
@@ -82,26 +79,25 @@ async function saveToSheet(spreadsheetId, sheetName, row) {
 
 async function saveUser({ name, email, password }) {
   const hashedPassword = await bcrypt.hash(password, 10);
-  await saveToSheet(
-    SPREADSHEET_IDS.users,
-    "Users",
-    [new Date().toISOString(), name, email.toLowerCase().trim(), hashedPassword]
-  );
+  await saveToSheet(SPREADSHEET_IDS.users, "Users", [
+    new Date().toISOString(),
+    name,
+    email.toLowerCase().trim(),
+    hashedPassword
+  ]);
 }
 
 async function verifyUser(email, password) {
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_IDS.users,
-    range: "Users!B:D" // B=name, C=email, D=password hash
+    range: "Users!A:D"
   });
   const rows = response.data.values || [];
-
   const normalizedEmail = email.toLowerCase().trim();
-  const userRow = rows.find(row => row[1].toLowerCase().trim() === normalizedEmail);
+  const userRow = rows.find(row => row[2].toLowerCase().trim() === normalizedEmail);
   if (!userRow) return false;
-
-  const match = await bcrypt.compare(password, userRow[2]);
-  return match ? { name: userRow[0], email: userRow[1] } : false;
+  const match = await bcrypt.compare(password, userRow[3]);
+  return match ? { name: userRow[1], email: userRow[2], joinDate: userRow[0] } : false;
 }
 
 // ===== Routes =====
@@ -109,9 +105,7 @@ async function verifyUser(email, password) {
 // --- Sign Up ---
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password)
-    return res.status(400).json({ success: false, message: "Name, email, and password required." });
-
+  if (!name || !email || !password) return res.status(400).json({ success: false, message: "Name, email, and password required." });
   try {
     await saveUser({ name, email, password });
     res.json({ success: true, message: "Account created successfully!" });
@@ -124,14 +118,12 @@ app.post("/api/signup", async (req, res) => {
 // --- Sign In ---
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ success: false, error: "Email and password required." });
+  if (!email || !password) return res.status(400).json({ success: false, error: "Email and password required." });
 
   try {
     const user = await verifyUser(email, password);
     if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
-
-    req.session.user = { name: user.name, email: user.email };
+    req.session.user = { name: user.name, email: user.email, joinDate: user.joinDate };
     res.json({ success: true, message: "Signed in successfully." });
   } catch (err) {
     console.error("Signin error:", err);
@@ -141,37 +133,27 @@ app.post("/api/signin", async (req, res) => {
 
 // --- Check Session ---
 app.get("/check-session", (req, res) => {
-  if (req.session.user) {
-    res.json({ loggedIn: true, name: req.session.user.name, email: req.session.user.email });
-  } else {
-    res.json({ loggedIn: false });
-  }
+  if (req.session.user) return res.json({ loggedIn: true });
+  res.json({ loggedIn: false });
 });
 
 // --- Dashboard ---
 app.get("/api/dashboard", (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
-  const { name, email } = req.session.user;
-  res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
+  res.json({ success: true, name: req.session.user.name, email: req.session.user.email });
 });
 
-// --- Profile ---
+// --- Profile (view & update) ---
 app.get("/api/profile", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
   try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:D"
-    });
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.users, range: "Users!A:D" });
     const rows = response.data.values || [];
-
     const normalizedEmail = req.session.user.email.toLowerCase().trim();
     const userRow = rows.find(row => row[2].toLowerCase().trim() === normalizedEmail);
-    const joinDate = userRow ? userRow[0] : null;
-
     res.json({
       success: true,
-      profile: { name: req.session.user.name, email: req.session.user.email, joinDate }
+      profile: { name: req.session.user.name, email: req.session.user.email, joinDate: userRow ? userRow[0] : null }
     });
   } catch (err) {
     console.error("Profile fetch error:", err);
@@ -183,35 +165,21 @@ app.post("/api/profile", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
   const { name, email, password } = req.body;
   try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:D"
-    });
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.users, range: "Users!A:D" });
     const rows = response.data.values || [];
-
-    const normalizedEmail = req.session.user.email.toLowerCase().trim();
-    const idx = rows.findIndex(row => row[2].toLowerCase().trim() === normalizedEmail);
+    const idx = rows.findIndex(row => row[2].toLowerCase().trim() === req.session.user.email.toLowerCase().trim());
     if (idx === -1) return res.status(404).json({ success: false, error: "User not found." });
 
     if (name) req.session.user.name = name;
     if (email) req.session.user.email = email;
 
-    if (password) {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      rows[idx] = [
-        rows[idx][0],
-        name || rows[idx][1],
-        email ? email.toLowerCase().trim() : rows[idx][2],
-        hashedPassword
-      ];
-    } else {
-      rows[idx][1] = name || rows[idx][1];
-      rows[idx][2] = email ? email.toLowerCase().trim() : rows[idx][2];
-    }
+    if (password) rows[idx][3] = await bcrypt.hash(password, 10);
+    if (name) rows[idx][1] = name;
+    if (email) rows[idx][2] = email.toLowerCase().trim();
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_IDS.users,
-      range: `Users!A${idx + 1}:D${idx + 1}`,
+      range: `Users!A${idx+1}:D${idx+1}`,
       valueInputOption: "RAW",
       requestBody: { values: [rows[idx]] }
     });
@@ -223,10 +191,109 @@ app.post("/api/profile", async (req, res) => {
   }
 });
 
+// --- Delete Account ---
+app.post("/api/delete-account", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  try {
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.users, range: "Users!A:D" });
+    const rows = response.data.values || [];
+    const idx = rows.findIndex(row => row[2].toLowerCase().trim() === req.session.user.email.toLowerCase().trim());
+    if (idx === -1) return res.status(404).json({ success: false, error: "User not found." });
+
+    rows.splice(idx, 1);
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: `Users!A1:D${rows.length}`,
+      valueInputOption: "RAW",
+      requestBody: { values: rows }
+    });
+
+    req.session.destroy();
+    res.json({ success: true, message: "Account deleted successfully." });
+  } catch (err) {
+    console.error("Delete account error:", err);
+    res.status(500).json({ success: false, error: "Server error deleting account." });
+  }
+});
+
+// --- Messages ---
+app.get("/api/messages", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  if (!req.session.messages) req.session.messages = [];
+  res.json({ success: true, messages: req.session.messages });
+});
+
+app.post("/api/messages", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ success: false, error: "Message text is required." });
+  if (!req.session.messages) req.session.messages = [];
+  req.session.messages.push({ text, timestamp: new Date().toISOString() });
+  res.json({ success: true, message: "Message added.", messages: req.session.messages });
+});
+
 // --- Logout ---
 app.get("/logout", (req, res) => {
-  req.session.destroy();
-  res.redirect("/signin.html");
+  req.session.destroy(() => res.json({ success: true, message: "Logged out." }));
+});
+
+// --- Campaigns ---
+app.get("/api/campaigns", async (req, res) => {
+  try {
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:F" });
+    const rows = response.data.values || [];
+    const campaigns = rows.map(row => ({
+      title: row[0],
+      description: row[1],
+      goal: parseFloat(row[2]),
+      raised: parseFloat(row[3] || 0),
+      creatorEmail: row[4],
+      createdAt: row[5]
+    }));
+    res.json({ success: true, campaigns });
+  } catch (err) {
+    console.error("Fetch campaigns error:", err);
+    res.status(500).json({ success: false, error: "Unable to fetch campaigns." });
+  }
+});
+
+app.post("/api/campaigns", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  const { title, description, goal } = req.body;
+  if (!title || !description || !goal) return res.status(400).json({ success: false, error: "All fields required." });
+  try {
+    const newCampaign = [title, description, parseFloat(goal), 0, req.session.user.email, new Date().toISOString()];
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", newCampaign);
+    res.json({ success: true, message: "Campaign created!", campaign: newCampaign });
+  } catch (err) {
+    console.error("Create campaign error:", err);
+    res.status(500).json({ success: false, error: "Failed to create campaign." });
+  }
+});
+
+app.post("/api/campaigns/donate", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  const { title, amount } = req.body;
+  if (!title || !amount) return res.status(400).json({ success: false, error: "Title and amount required." });
+  try {
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:D" });
+    const rows = response.data.values || [];
+    const idx = rows.findIndex(row => row[0] === title);
+    if (idx === -1) return res.status(404).json({ success: false, error: "Campaign not found." });
+
+    rows[idx][3] = parseFloat(rows[idx][3] || 0) + parseFloat(amount);
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: `Campaigns!A${idx+1}:D${idx+1}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [rows[idx]] }
+    });
+
+    res.json({ success: true, message: "Donation successful!", raised: rows[idx][3] });
+  } catch (err) {
+    console.error("Donate error:", err);
+    res.status(500).json({ success: false, error: "Failed to process donation." });
+  }
 });
 
 // ===== Start Server =====
