@@ -12,18 +12,12 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // ===== CORS Setup =====
-const allowedOrigins = ["https://fundasmile.net", "http://localhost:3000"];
+app.set('trust proxy', 1); // needed for secure cookies behind proxies
 app.use(cors({
-  origin: function(origin, callback) {
-    // allow requests with no origin (like mobile apps or curl)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true,
+  origin: ["https://fundasmile.net"], // only your frontend
+  methods: ["GET","POST","PUT","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"],
+  credentials: true
 }));
 app.options("*", cors());
 
@@ -32,7 +26,6 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ===== Session Setup =====
-app.set('trust proxy', 1); // if behind a reverse proxy like Render
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
@@ -42,10 +35,10 @@ app.use(session({
     collectionName: 'sessions'
   }),
   cookie: {
-    secure: process.env.NODE_ENV === "production", // true in production (HTTPS)
+    secure: process.env.NODE_ENV === "production", // true for HTTPS
     httpOnly: true,
-    sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
-    maxAge: 1000 * 60 * 60 * 24 // 1 day
+    sameSite: 'none', // required for cross-site cookies
+    maxAge: 1000 * 60 * 60 * 24
   }
 }));
 
@@ -78,9 +71,17 @@ const transporter = nodemailer.createTransport({
 });
 
 // ===== Helper Functions =====
+async function saveToSheet(spreadsheetId, sheetName, row) {
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range: `${sheetName}!A:Z`,
+    valueInputOption: "RAW",
+    requestBody: { values: [row] }
+  });
+}
+
 async function saveUser({ name, email, password }) {
   const hashedPassword = await bcrypt.hash(password, 10);
-  // Save as: joinDate, name, email, passwordHash
   await saveToSheet(
     SPREADSHEET_IDS.users,
     "Users",
@@ -91,7 +92,7 @@ async function saveUser({ name, email, password }) {
 async function verifyUser(email, password) {
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_IDS.users,
-    range: "Users!B:D" // B=name, C=email, D=hashed password
+    range: "Users!B:D" // B=name, C=email, D=password hash
   });
   const rows = response.data.values || [];
 
@@ -108,14 +109,14 @@ async function verifyUser(email, password) {
 // --- Sign Up ---
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) {
-    return res.status(400).json({ success: false, message: "Name, email, and password are required." });
-  }
+  if (!name || !email || !password)
+    return res.status(400).json({ success: false, message: "Name, email, and password required." });
+
   try {
     await saveUser({ name, email, password });
     res.json({ success: true, message: "Account created successfully!" });
   } catch (err) {
-    console.error(err);
+    console.error("Signup error:", err);
     res.status(500).json({ success: false, message: "Error creating account." });
   }
 });
@@ -123,24 +124,22 @@ app.post("/api/signup", async (req, res) => {
 // --- Sign In ---
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ success: false, error: "Email and password required." });
+  if (!email || !password)
+    return res.status(400).json({ success: false, error: "Email and password required." });
 
   try {
     const user = await verifyUser(email, password);
     if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
 
-    // Set session user
     req.session.user = { name: user.name, email: user.email };
-    await req.session.save(); // ensures session is saved before responding
-
     res.json({ success: true, message: "Signed in successfully." });
   } catch (err) {
-    console.error("Signin error:", err.message);
+    console.error("Signin error:", err);
     res.status(500).json({ success: false, error: "Server error." });
   }
 });
 
-// --- Check Session (for frontend) ---
+// --- Check Session ---
 app.get("/check-session", (req, res) => {
   if (req.session.user) {
     res.json({ loggedIn: true, name: req.session.user.name, email: req.session.user.email });
@@ -149,7 +148,86 @@ app.get("/check-session", (req, res) => {
   }
 });
 
-// ===== The rest of your routes (profile, dashboard, campaigns, etc.) remain unchanged =====
+// --- Dashboard ---
+app.get("/api/dashboard", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  const { name, email } = req.session.user;
+  res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
+});
+
+// --- Profile ---
+app.get("/api/profile", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Users!A:D"
+    });
+    const rows = response.data.values || [];
+
+    const normalizedEmail = req.session.user.email.toLowerCase().trim();
+    const userRow = rows.find(row => row[2].toLowerCase().trim() === normalizedEmail);
+    const joinDate = userRow ? userRow[0] : null;
+
+    res.json({
+      success: true,
+      profile: { name: req.session.user.name, email: req.session.user.email, joinDate }
+    });
+  } catch (err) {
+    console.error("Profile fetch error:", err);
+    res.status(500).json({ success: false, error: "Server error fetching profile." });
+  }
+});
+
+app.post("/api/profile", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  const { name, email, password } = req.body;
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Users!A:D"
+    });
+    const rows = response.data.values || [];
+
+    const normalizedEmail = req.session.user.email.toLowerCase().trim();
+    const idx = rows.findIndex(row => row[2].toLowerCase().trim() === normalizedEmail);
+    if (idx === -1) return res.status(404).json({ success: false, error: "User not found." });
+
+    if (name) req.session.user.name = name;
+    if (email) req.session.user.email = email;
+
+    if (password) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      rows[idx] = [
+        rows[idx][0],
+        name || rows[idx][1],
+        email ? email.toLowerCase().trim() : rows[idx][2],
+        hashedPassword
+      ];
+    } else {
+      rows[idx][1] = name || rows[idx][1];
+      rows[idx][2] = email ? email.toLowerCase().trim() : rows[idx][2];
+    }
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: `Users!A${idx + 1}:D${idx + 1}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [rows[idx]] }
+    });
+
+    res.json({ success: true, message: "Profile updated.", profile: req.session.user });
+  } catch (err) {
+    console.error("Profile update error:", err);
+    res.status(500).json({ success: false, error: "Server error updating profile." });
+  }
+});
+
+// --- Logout ---
+app.get("/logout", (req, res) => {
+  req.session.destroy();
+  res.redirect("/signin.html");
+});
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
