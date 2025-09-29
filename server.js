@@ -235,12 +235,22 @@ app.post("/submit-volunteer", async (req, res) => {
     ]);
 
     setImmediate(async () => {
+      // 🎉 Celebratory email to volunteer
       await sendEmail({
         to: email,
-        subject: "🎉 Volunteer Application Received!",
-        html: `<p>Hi ${name},</p><p>Thank you for applying to volunteer with JoyFund INC.! We’ll review your application and get back to you soon. 💖</p>`
+        subject: "🎉 Volunteer Application Received! 🌟",
+        html: `
+          <div style="font-family:Arial,sans-serif; text-align:center; color:#FF69B4;">
+            <h1 style="color:#FF69B4;">🎊 Thank you, ${name}! 🎊</h1>
+            <p style="font-size:18px; color:#1E90FF;">Your application to volunteer with <strong>JoyFund INC.</strong> has been received! 💖💙</p>
+            <p style="font-size:16px;">We’re thrilled to have you join our community of changemakers. Expect updates and next steps soon! 🌟</p>
+            <p style="font-size:16px;">Keep spreading joy 😄✨</p>
+            <p style="margin-top:20px; font-size:14px; color:#888;">— The JoyFund Team</p>
+          </div>
+        `
       });
 
+      // Admin notification email
       await sendEmail({
         to: process.env.RECEIVE_EMAIL,
         subject: "New Volunteer Application",
@@ -276,12 +286,22 @@ app.post("/submit-streetteam", async (req, res) => {
     ]);
 
     setImmediate(async () => {
+      // 🎉 Celebratory email to street team member
       await sendEmail({
         to: email,
-        subject: "🎉 Street Team Application Received!",
-        html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund Street Team! We’ll be in touch with next steps. 💙💖</p>`
+        subject: "🎉 Street Team Application Received! 🌈",
+        html: `
+          <div style="font-family:Arial,sans-serif; text-align:center; color:#1E90FF;">
+            <h1 style="color:#FF69B4;">🎊 Congratulations, ${name}! 🎊</h1>
+            <p style="font-size:18px; color:#1E90FF;">Your application to join the <strong>JoyFund Street Team</strong> has been received! 💖💙</p>
+            <p style="font-size:16px;">We’re excited to have you helping spread the joy. Next steps will arrive soon! 🌟</p>
+            <p style="font-size:16px;">Keep inspiring smiles 😄✨</p>
+            <p style="margin-top:20px; font-size:14px; color:#888;">— The JoyFund Team</p>
+          </div>
+        `
       });
 
+      // Admin notification email
       await sendEmail({
         to: process.env.RECEIVE_EMAIL,
         subject: "New Street Team Application",
