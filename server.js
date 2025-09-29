@@ -167,23 +167,8 @@ app.get("/api/profile", (req, res) => {
   res.json({ success: true, profile: req.session.user });
 });
 
-app.get("/test-email", async (req, res) => {
-  try {
-    await transporter.sendMail({
-      from: `"JoyFund INC." <${process.env.ZOHO_USER}>`,
-      to: "your-email@example.com",  // replace with your email
-      subject: "Test Email",
-      text: "This is a test email from JoyFund backend",
-    });
-    res.send("Test email sent successfully!");
-  } catch (err) {
-    console.error("Email test failed:", err.message);
-    res.status(500).send("Email test failed: " + err.message);
-  }
-});
 
-
-// ===== Waitlist Submission =====
+// ===== Waitlist Submission (Updated) =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
 
@@ -192,7 +177,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 
   try {
-    // Save to Google Sheet
+    // 1️⃣ Save to Google Sheet (this is critical)
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
       name,
       email,
@@ -201,18 +186,40 @@ app.post("/api/waitlist", async (req, res) => {
       new Date().toISOString()
     ]);
 
-    // Send confirmation email
-    await sendConfirmationEmail({
-      to: email,
-      subject: "Welcome to the JoyFund Waitlist!",
-      text: `Hi ${name},\n\nThank you for joining the JoyFund waitlist!`,
-      html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund waitlist!</p>`
-    });
+    // 2️⃣ Attempt to send confirmation emails (won't block success)
+    try {
+      // Email to the user
+      await sendConfirmationEmail({
+        to: email,
+        subject: "Welcome to the JoyFund Waitlist!",
+        text: `Hi ${name},\n\nThank you for joining the JoyFund waitlist!`,
+        html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund waitlist!</p>`
+      });
 
+      // Email to you (admin)
+      await sendConfirmationEmail({
+        to: process.env.ADMIN_EMAIL, // add ADMIN_EMAIL in your .env
+        subject: "New Waitlist Submission",
+        text: `New waitlist submission:\nName: ${name}\nEmail: ${email}\nSource: ${source}\nReason: ${reason}`,
+        html: `<p>New waitlist submission:</p>
+               <ul>
+                 <li><strong>Name:</strong> ${name}</li>
+                 <li><strong>Email:</strong> ${email}</li>
+                 <li><strong>Source:</strong> ${source}</li>
+                 <li><strong>Reason:</strong> ${reason}</li>
+               </ul>`
+      });
+    } catch (emailErr) {
+      console.error("Email sending failed (ignored):", emailErr.message);
+      // Do NOT throw — we still return success to frontend
+    }
+
+    // 3️⃣ Return success response
     res.json({ success: true, message: "🎉 Successfully joined the waitlist! Check your email for confirmation." });
+
   } catch (err) {
     console.error("Waitlist submission error:", err.message);
-    res.status(500).json({ success: false, error: "Failed to submit waitlist. Please try again later." });
+    res.status(500).json({ success: false, error: "Failed to save to waitlist. Please try again later." });
   }
 });
 
