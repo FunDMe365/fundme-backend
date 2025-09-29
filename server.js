@@ -1,12 +1,12 @@
 require('dotenv').config();
 const express = require("express");
 const bodyParser = require("body-parser");
-const nodemailer = require("nodemailer");
 const cors = require("cors");
 const session = require("express-session");
 const MongoStore = require("connect-mongo");
 const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
+const sgMail = require("@sendgrid/mail");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -24,8 +24,8 @@ app.options("*", cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Session Setup =====
-app.set('trust proxy', 1);
+// ===== Session Setup (MongoDB + HTTPS ready) =====
+app.set('trust proxy', 1); // if behind a proxy (like Render)
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
@@ -38,7 +38,7 @@ app.use(session({
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
     sameSite: 'none',
-    maxAge: 1000 * 60 * 60 * 24
+    maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
 
@@ -58,41 +58,35 @@ const SPREADSHEET_IDS = {
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ"
 };
 
-// ===== Nodemailer Setup (TLS 587) =====
-const transporter = nodemailer.createTransport({
-  host: "smtp.zoho.com",
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.ZOHO_USER,
-    pass: process.env.ZOHO_APP_PASSWORD
-  },
-  tls: {
-    rejectUnauthorized: false
-  }
-});
-
-// ===== Helper Functions =====
-async function saveToSheet(sheetId, sheetName, values) {
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: sheetId,
-    range: `${sheetName}!A:Z`,
-    valueInputOption: "RAW",
-    requestBody: { values: [values] }
-  });
-}
+// ===== SendGrid Setup =====
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 async function sendConfirmationEmail({ to, subject, text, html }) {
   try {
-    await transporter.sendMail({
-      from: `"JoyFund INC." <${process.env.ZOHO_USER}>`,
+    await sgMail.send({
       to,
+      from: process.env.SENDGRID_FROM_EMAIL, // must be a verified sender in SendGrid
       subject,
       text,
       html
     });
   } catch (err) {
     console.error(`Email sending failed to ${to}:`, err.message);
+  }
+}
+
+// ===== Helper Functions =====
+async function saveToSheet(sheetId, sheetName, values) {
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: sheetId,
+      range: `${sheetName}!A:Z`,
+      valueInputOption: "RAW",
+      requestBody: { values: [values] }
+    });
+  } catch (err) {
+    console.error(`Error saving to ${sheetName}:`, err.message);
+    throw err;
   }
 }
 
@@ -122,71 +116,119 @@ async function verifyUser(email, password) {
 // --- Sign Up ---
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ success: false, message: "Name, email, and password are required." });
-
+  if (!name || !email || !password) {
+    return res.status(400).json({ success: false, message: "Name, email, and password are required." });
+  }
   try {
     await saveUser({ name, email, password });
-
-    // Send confirmation emails asynchronously (won’t block response)
-    sendConfirmationEmail({
-      to: email,
-      subject: "Welcome to JoyFund!",
-      text: `Hi ${name},\n\nYour account was successfully created!`,
-      html: `<p>Hi ${name},</p><p>Your account was successfully created!</p>`
-    });
-
-    sendConfirmationEmail({
-      to: process.env.ADMIN_EMAIL,
-      subject: "New User Signup",
-      text: `New signup: ${name} (${email})`,
-      html: `<p>New signup: <strong>${name}</strong> (${email})</p>`
-    });
-
     res.json({ success: true, message: "Account created successfully!" });
   } catch (err) {
-    console.error("Signup error:", err.message);
+    console.error(err);
     res.status(500).json({ success: false, message: "Error creating account." });
   }
 });
 
-// --- Waitlist Submission ---
-app.post("/api/waitlist", async (req, res) => {
-  const { name, email, source, reason } = req.body;
-  if (!name || !email || !source || !reason) return res.status(400).json({ success: false, error: "All fields are required." });
+// --- Sign In ---
+app.post("/api/signin", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ success: false, error: "Email and password required." });
 
   try {
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [name, email, source, reason, new Date().toISOString()]);
+    const user = await verifyUser(email, password);
+    if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
 
-    // Send emails asynchronously
-    sendConfirmationEmail({
-      to: email,
-      subject: "Welcome to the JoyFund Waitlist!",
-      text: `Hi ${name},\n\nThank you for joining the JoyFund waitlist!`,
-      html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund waitlist!</p>`
-    });
+    req.session.user = { name: user.name, email: user.email };
+    res.json({ success: true, message: "Signed in successfully." });
+  } catch (err) {
+    console.error("Signin error:", err.message);
+    res.status(500).json({ success: false, error: "Server error." });
+  }
+});
 
-    sendConfirmationEmail({
-      to: process.env.ADMIN_EMAIL,
-      subject: "New Waitlist Submission",
-      text: `New waitlist submission:\nName: ${name}\nEmail: ${email}\nSource: ${source}\nReason: ${reason}`,
-      html: `<p>New waitlist submission:</p>
-             <ul>
-               <li><strong>Name:</strong> ${name}</li>
-               <li><strong>Email:</strong> ${email}</li>
-               <li><strong>Source:</strong> ${source}</li>
-               <li><strong>Reason:</strong> ${reason}</li>
-             </ul>`
+// --- Dashboard ---
+app.get("/api/dashboard", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  const { name, email } = req.session.user;
+  res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
+});
+
+// --- Profile ---
+app.get("/api/profile", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  res.json({ success: true, profile: req.session.user });
+});
+
+// ===== Waitlist Submission =====
+app.post("/api/waitlist", async (req, res) => {
+  const { name, email, source, reason } = req.body;
+
+  if (!name || !email || !source || !reason) {
+    return res.status(400).json({ success: false, error: "All fields are required." });
+  }
+
+  try {
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
+      name,
+      email,
+      source,
+      reason,
+      new Date().toISOString()
+    ]);
+
+    // Send confirmation emails (non-blocking)
+    setImmediate(async () => {
+      await sendConfirmationEmail({
+        to: email,
+        subject: "Welcome to the JoyFund Waitlist!",
+        text: `Hi ${name},\n\nThank you for joining the JoyFund waitlist!`,
+        html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund waitlist!</p>`
+      });
+
+      await sendConfirmationEmail({
+        to: process.env.RECEIVE_EMAIL,
+        subject: "New Waitlist Submission",
+        text: `New waitlist submission:\nName: ${name}\nEmail: ${email}\nSource: ${source}\nReason: ${reason}`,
+        html: `<p>New waitlist submission:</p>
+               <ul>
+                 <li><strong>Name:</strong> ${name}</li>
+                 <li><strong>Email:</strong> ${email}</li>
+                 <li><strong>Source:</strong> ${source}</li>
+                 <li><strong>Reason:</strong> ${reason}</li>
+               </ul>`
+      });
     });
 
     res.json({ success: true, message: "🎉 Successfully joined the waitlist! Check your email for confirmation." });
+
   } catch (err) {
-    console.error("Waitlist error:", err.message);
+    console.error("Waitlist submission error:", err.message);
     res.status(500).json({ success: false, error: "Failed to save to waitlist. Please try again later." });
   }
 });
 
-// --- Other routes remain unchanged ---
-// Signin, Dashboard, Profile, Messages, Logout remain exactly as before
+// --- Logout ---
+app.post("/api/logout", (req, res) => {
+  req.session.destroy();
+  res.json({ success: true });
+});
+
+// ===== Messages =====
+app.get("/api/messages", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  if (!req.session.messages) req.session.messages = [];
+  res.json({ success: true, messages: req.session.messages });
+});
+
+app.post("/api/messages", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ success: false, error: "Message text is required." });
+
+  if (!req.session.messages) req.session.messages = [];
+  req.session.messages.push({ text, timestamp: new Date().toISOString() });
+
+  res.json({ success: true, message: "Message added.", messages: req.session.messages });
+});
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
