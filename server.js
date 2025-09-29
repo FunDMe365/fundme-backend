@@ -100,14 +100,37 @@ async function sendEmail({ to, subject, text, html }) {
 
 // ===== Routes =====
 
-// --- Sign Up ---
+// --- Sign Up (fast + email) ---
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password) return res.status(400).json({ success: false, message: "All fields required." });
+
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
     await saveToSheet(SPREADSHEET_IDS.users, "Users", [name, email, hashedPassword, new Date().toISOString()]);
+
+    // Send response immediately
     res.json({ success: true, message: "Account created successfully!" });
+
+    // Emails in background
+    (async () => {
+      // Confirmation email to user
+      await sendEmail({
+        to: email,
+        subject: "Welcome to JoyFund!",
+        text: `Hi ${name},\n\nThank you for signing up for JoyFund!`,
+        html: `<p>Hi ${name},</p><p>Thank you for signing up for JoyFund!</p>`
+      });
+
+      // Notification email to admin
+      await sendEmail({
+        to: process.env.ADMIN_EMAIL,
+        subject: "New User Signup",
+        text: `New signup:\nName: ${name}\nEmail: ${email}`,
+        html: `<p>New signup:</p><ul><li><strong>Name:</strong> ${name}</li><li><strong>Email:</strong> ${email}</li></ul>`
+      });
+    })();
+
   } catch (err) {
     console.error("Signup error:", err.message);
     res.status(500).json({ success: false, message: "Error creating account." });
@@ -118,6 +141,7 @@ app.post("/api/signup", async (req, res) => {
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, error: "Email and password required." });
+
   try {
     const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.users, range: "Users!A:C" });
     const rows = response.data.values || [];
