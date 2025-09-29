@@ -185,7 +185,6 @@ app.post("/api/waitlist", async (req, res) => {
 
     // Send confirmation + admin email asynchronously
     setImmediate(async () => {
-      // 🎉 Updated celebratory email to user
       await sendEmail({
         to: email,
         subject: "🎉 Welcome to the JoyFund Waitlist! 🌈",
@@ -200,7 +199,6 @@ app.post("/api/waitlist", async (req, res) => {
         `
       });
 
-      // Admin notification email
       await sendEmail({
         to: process.env.RECEIVE_EMAIL,
         subject: "New Waitlist Submission",
@@ -219,6 +217,88 @@ app.post("/api/waitlist", async (req, res) => {
   } catch (err) {
     console.error("Waitlist submission error:", err.message);
     res.status(500).json({ success: false, error: "Failed to save to waitlist. Please try again later." });
+  }
+});
+
+// ===== New Volunteer Submission Route =====
+app.post("/submit-volunteer", async (req, res) => {
+  const { name, email, city, message } = req.body;
+  if (!name || !email || !city || !message) return res.status(400).json({ success: false, error: "All fields are required." });
+
+  try {
+    await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [
+      name,
+      email,
+      city,
+      message,
+      new Date().toISOString()
+    ]);
+
+    setImmediate(async () => {
+      await sendEmail({
+        to: email,
+        subject: "🎉 Volunteer Application Received!",
+        html: `<p>Hi ${name},</p><p>Thank you for applying to volunteer with JoyFund INC.! We’ll review your application and get back to you soon. 💖</p>`
+      });
+
+      await sendEmail({
+        to: process.env.RECEIVE_EMAIL,
+        subject: "New Volunteer Application",
+        html: `<p>New volunteer submission:</p>
+               <ul>
+                 <li><strong>Name:</strong> ${name}</li>
+                 <li><strong>Email:</strong> ${email}</li>
+                 <li><strong>City:</strong> ${city}</li>
+                 <li><strong>Message:</strong> ${message}</li>
+               </ul>`
+      });
+    });
+
+    res.json({ success: true, message: "✅ Volunteer application submitted successfully!" });
+  } catch (err) {
+    console.error("Volunteer submission error:", err.message);
+    res.status(500).json({ success: false, error: "Failed to submit volunteer application." });
+  }
+});
+
+// ===== New Street Team Submission Route =====
+app.post("/submit-streetteam", async (req, res) => {
+  const { name, email, city, message } = req.body;
+  if (!name || !email || !city || !message) return res.status(400).json({ success: false, error: "All fields are required." });
+
+  try {
+    await saveToSheet(SPREADSHEET_IDS.streetteam, "StreetTeam", [
+      name,
+      email,
+      city,
+      message,
+      new Date().toISOString()
+    ]);
+
+    setImmediate(async () => {
+      await sendEmail({
+        to: email,
+        subject: "🎉 Street Team Application Received!",
+        html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund Street Team! We’ll be in touch with next steps. 💙💖</p>`
+      });
+
+      await sendEmail({
+        to: process.env.RECEIVE_EMAIL,
+        subject: "New Street Team Application",
+        html: `<p>New Street Team submission:</p>
+               <ul>
+                 <li><strong>Name:</strong> ${name}</li>
+                 <li><strong>Email:</strong> ${email}</li>
+                 <li><strong>City:</strong> ${city}</li>
+                 <li><strong>Message:</strong> ${message}</li>
+               </ul>`
+      });
+    });
+
+    res.json({ success: true, message: "✅ Street Team application submitted successfully!" });
+  } catch (err) {
+    console.error("Street Team submission error:", err.message);
+    res.status(500).json({ success: false, error: "Failed to submit Street Team application." });
   }
 });
 
