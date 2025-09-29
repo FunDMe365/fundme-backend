@@ -185,12 +185,22 @@ app.post("/api/waitlist", async (req, res) => {
 
     // Send confirmation + admin email asynchronously
     setImmediate(async () => {
+      // 🎉 Updated celebratory email to user
       await sendEmail({
         to: email,
-        subject: "Welcome to the JoyFund Waitlist!",
-        html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund waitlist!</p>`
+        subject: "🎉 Welcome to the JoyFund Waitlist! 🌈",
+        html: `
+        <div style="font-family:Arial,sans-serif; text-align:center; color:#FF69B4;">
+          <h1 style="color:#FF69B4;">🎊 Congratulations, ${name}! 🎊</h1>
+          <p style="font-size:18px; color:#1E90FF;">You are officially on the <strong>JoyFund waitlist</strong>! 💖💙</p>
+          <p style="font-size:16px;">We’re thrilled to have you join our joyful community of changemakers. Expect amazing updates and opportunities soon! 🌟</p>
+          <p style="font-size:16px;">Keep spreading smiles 😄✨</p>
+          <p style="margin-top:20px; font-size:14px; color:#888;">— The JoyFund Team</p>
+        </div>
+        `
       });
 
+      // Admin notification email
       await sendEmail({
         to: process.env.RECEIVE_EMAIL,
         subject: "New Waitlist Submission",
