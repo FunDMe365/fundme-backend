@@ -24,8 +24,8 @@ app.options("*", cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Session Setup (MongoDB + HTTPS ready) =====
-app.set('trust proxy', 1); // if behind a proxy (like Render)
+// ===== Session Setup =====
+app.set('trust proxy', 1);
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
@@ -38,7 +38,7 @@ app.use(session({
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
     sameSite: 'none',
-    maxAge: 1000 * 60 * 60 * 24 // 1 day
+    maxAge: 1000 * 60 * 60 * 24
   }
 }));
 
@@ -84,7 +84,7 @@ async function saveToSheet(sheetId, sheetName, values) {
   }
 }
 
-async function sendConfirmationEmail({ to, subject, text, html }) {
+async function sendEmail({ to, subject, text, html }) {
   try {
     await transporter.sendMail({
       from: `"JoyFund INC." <${process.env.ZOHO_USER}>`,
@@ -94,30 +94,8 @@ async function sendConfirmationEmail({ to, subject, text, html }) {
       html
     });
   } catch (err) {
-    console.error(`Error sending email to ${to}:`, err.message);
-    throw err;
+    console.error(`Email sending failed to ${to}:`, err.message);
   }
-}
-
-async function saveUser({ name, email, password }) {
-  const hashedPassword = await bcrypt.hash(password, 10);
-  await saveToSheet(
-    SPREADSHEET_IDS.users,
-    "Users",
-    [name, email, hashedPassword, new Date().toISOString()]
-  );
-}
-
-async function verifyUser(email, password) {
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_IDS.users,
-    range: "Users!A:C"
-  });
-  const rows = response.data.values || [];
-  const userRow = rows.find(row => row[1] === email);
-  if (!userRow) return false;
-  const match = await bcrypt.compare(password, userRow[2]);
-  return match ? { name: userRow[0], email: userRow[1] } : false;
 }
 
 // ===== Routes =====
@@ -125,14 +103,13 @@ async function verifyUser(email, password) {
 // --- Sign Up ---
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) {
-    return res.status(400).json({ success: false, message: "Name, email, and password are required." });
-  }
+  if (!name || !email || !password) return res.status(400).json({ success: false, message: "All fields required." });
   try {
-    await saveUser({ name, email, password });
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await saveToSheet(SPREADSHEET_IDS.users, "Users", [name, email, hashedPassword, new Date().toISOString()]);
     res.json({ success: true, message: "Account created successfully!" });
   } catch (err) {
-    console.error(err);
+    console.error("Signup error:", err.message);
     res.status(500).json({ success: false, message: "Error creating account." });
   }
 });
@@ -141,12 +118,14 @@ app.post("/api/signup", async (req, res) => {
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, error: "Email and password required." });
-
   try {
-    const user = await verifyUser(email, password);
-    if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
-
-    req.session.user = { name: user.name, email: user.email };
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.users, range: "Users!A:C" });
+    const rows = response.data.values || [];
+    const userRow = rows.find(row => row[1] === email);
+    if (!userRow) return res.status(401).json({ success: false, error: "Invalid email or password." });
+    const match = await bcrypt.compare(password, userRow[2]);
+    if (!match) return res.status(401).json({ success: false, error: "Invalid email or password." });
+    req.session.user = { name: userRow[0], email: userRow[1] };
     res.json({ success: true, message: "Signed in successfully." });
   } catch (err) {
     console.error("Signin error:", err.message);
@@ -154,51 +133,31 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-// --- Dashboard ---
-app.get("/api/dashboard", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
-  const { name, email } = req.session.user;
-  res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
-});
-
-// --- Profile ---
-app.get("/api/profile", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
-  res.json({ success: true, profile: req.session.user });
-});
-
-
-// ===== Waitlist Submission (Updated) =====
+// --- Waitlist Submission ---
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
-
-  if (!name || !email || !source || !reason) {
-    return res.status(400).json({ success: false, error: "All fields are required." });
-  }
+  if (!name || !email || !source || !reason) return res.status(400).json({ success: false, error: "All fields are required." });
 
   try {
-    // 1️⃣ Save to Google Sheet (this is critical)
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
-      name,
-      email,
-      source,
-      reason,
-      new Date().toISOString()
-    ]);
+    // Save to Google Sheet first
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [name, email, source, reason, new Date().toISOString()]);
 
-    // 2️⃣ Attempt to send confirmation emails (won't block success)
-    try {
-      // Email to the user
-      await sendConfirmationEmail({
+    // Return success immediately
+    res.json({ success: true, message: "🎉 Successfully joined the waitlist! Check your email for confirmation." });
+
+    // Send emails in background
+    (async () => {
+      // Email to user
+      await sendEmail({
         to: email,
         subject: "Welcome to the JoyFund Waitlist!",
         text: `Hi ${name},\n\nThank you for joining the JoyFund waitlist!`,
         html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund waitlist!</p>`
       });
 
-      // Email to you (admin)
-      await sendConfirmationEmail({
-        to: process.env.ADMIN_EMAIL, // add ADMIN_EMAIL in your .env
+      // Email to admin
+      await sendEmail({
+        to: process.env.ADMIN_EMAIL,
         subject: "New Waitlist Submission",
         text: `New waitlist submission:\nName: ${name}\nEmail: ${email}\nSource: ${source}\nReason: ${reason}`,
         html: `<p>New waitlist submission:</p>
@@ -209,13 +168,7 @@ app.post("/api/waitlist", async (req, res) => {
                  <li><strong>Reason:</strong> ${reason}</li>
                </ul>`
       });
-    } catch (emailErr) {
-      console.error("Email sending failed (ignored):", emailErr.message);
-      // Do NOT throw — we still return success to frontend
-    }
-
-    // 3️⃣ Return success response
-    res.json({ success: true, message: "🎉 Successfully joined the waitlist! Check your email for confirmation." });
+    })();
 
   } catch (err) {
     console.error("Waitlist submission error:", err.message);
@@ -227,24 +180,6 @@ app.post("/api/waitlist", async (req, res) => {
 app.post("/api/logout", (req, res) => {
   req.session.destroy();
   res.json({ success: true });
-});
-
-// ===== Messages =====
-app.get("/api/messages", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
-  if (!req.session.messages) req.session.messages = [];
-  res.json({ success: true, messages: req.session.messages });
-});
-
-app.post("/api/messages", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
-  const { text } = req.body;
-  if (!text) return res.status(400).json({ success: false, error: "Message text is required." });
-
-  if (!req.session.messages) req.session.messages = [];
-  req.session.messages.push({ text, timestamp: new Date().toISOString() });
-
-  res.json({ success: true, message: "Message added.", messages: req.session.messages });
 });
 
 // ===== Start Server =====
