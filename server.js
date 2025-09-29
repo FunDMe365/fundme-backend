@@ -167,6 +167,22 @@ app.get("/api/profile", (req, res) => {
   res.json({ success: true, profile: req.session.user });
 });
 
+app.get("/test-email", async (req, res) => {
+  try {
+    await transporter.sendMail({
+      from: `"JoyFund INC." <${process.env.ZOHO_USER}>`,
+      to: "your-email@example.com",  // replace with your email
+      subject: "Test Email",
+      text: "This is a test email from JoyFund backend",
+    });
+    res.send("Test email sent successfully!");
+  } catch (err) {
+    console.error("Email test failed:", err.message);
+    res.status(500).send("Email test failed: " + err.message);
+  }
+});
+
+
 // ===== Waitlist Submission =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
