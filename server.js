@@ -35,7 +35,7 @@ app.use(session({
     collectionName: 'sessions'
   }),
   cookie: {
-    secure: process.env.NODE_ENV === "production", // only require HTTPS in prod
+    secure: process.env.NODE_ENV === "production",
     httpOnly: true,
     sameSite: 'none',
     maxAge: 1000 * 60 * 60 * 24 // 1 day
@@ -156,107 +156,57 @@ app.post("/api/signin", async (req, res) => {
 
 // --- Dashboard ---
 app.get("/api/dashboard", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated. Please sign in." });
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
   const { name, email } = req.session.user;
   res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
 });
 
-// --- Profile (view & update) ---
+// --- Profile ---
 app.get("/api/profile", (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
   res.json({ success: true, profile: req.session.user });
 });
 
-app.post("/api/profile", async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+// ===== Waitlist Submission =====
+app.post("/api/waitlist", async (req, res) => {
+  const { name, email, source, reason } = req.body;
 
-  const { name, email, password } = req.body;
+  if (!name || !email || !source || !reason) {
+    return res.status(400).json({ success: false, error: "All fields are required." });
+  }
+
   try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:C"
-    });
-    const rows = response.data.values || [];
-    const idx = rows.findIndex(row => row[1] === req.session.user.email);
+    // Save to Google Sheet
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
+      name,
+      email,
+      source,
+      reason,
+      new Date().toISOString()
+    ]);
 
-    if (idx === -1) return res.status(404).json({ success: false, error: "User not found." });
-
-    if (name) req.session.user.name = name;
-    if (email) req.session.user.email = email;
-
-    if (password) {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      rows[idx] = [
-        name || req.session.user.name,
-        email || req.session.user.email,
-        hashedPassword
-      ];
-    } else {
-      rows[idx][0] = name || rows[idx][0];
-      rows[idx][1] = email || rows[idx][1];
-    }
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: `Users!A${idx + 1}:C${idx + 1}`,
-      valueInputOption: "RAW",
-      requestBody: { values: [rows[idx]] }
+    // Send confirmation email
+    await sendConfirmationEmail({
+      to: email,
+      subject: "Welcome to the JoyFund Waitlist!",
+      text: `Hi ${name},\n\nThank you for joining the JoyFund waitlist!`,
+      html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund waitlist!</p>`
     });
 
-    res.json({ success: true, message: "Profile updated.", profile: req.session.user });
+    res.json({ success: true, message: "🎉 Successfully joined the waitlist! Check your email for confirmation." });
   } catch (err) {
-    console.error("Profile update error:", err.message);
-    res.status(500).json({ success: false, error: "Server error updating profile." });
+    console.error("Waitlist submission error:", err.message);
+    res.status(500).json({ success: false, error: "Failed to submit waitlist. Please try again later." });
   }
 });
 
-// ===== NEW: Frontend-friendly profile route =====
-app.get("/get-profile", (req, res) => {
-  if (!req.session.user) {
-    return res.json({ loggedIn: false });
-  }
-
-  const { name, email } = req.session.user;
-  const joinDate = req.session.user.joinDate || "2025-01-01";
-
-  res.json({
-    loggedIn: true,
-    name,
-    email,
-    joinDate
-  });
+// --- Logout ---
+app.post("/api/logout", (req, res) => {
+  req.session.destroy();
+  res.json({ success: true });
 });
 
-// Delete Account
-app.post("/api/delete-account", async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
-  try {
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:C"
-    });
-    const rows = response.data.values || [];
-    const idx = rows.findIndex(row => row[1] === req.session.user.email);
-    if (idx === -1) return res.status(404).json({ success: false, error: "User not found." });
-
-    rows.splice(idx, 1); // Remove user
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: `Users!A1:C${rows.length + 1}`,
-      valueInputOption: "RAW",
-      requestBody: { values: rows }
-    });
-
-    req.session.destroy();
-    res.json({ success: true, message: "Account deleted successfully." });
-  } catch (err) {
-    console.error("Delete account error:", err.message);
-    res.status(500).json({ success: false, error: "Server error deleting account." });
-  }
-});
-
-// --- Messages ---
+// ===== Messages =====
 app.get("/api/messages", (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
   if (!req.session.messages) req.session.messages = [];
@@ -273,14 +223,6 @@ app.post("/api/messages", (req, res) => {
 
   res.json({ success: true, message: "Message added.", messages: req.session.messages });
 });
-
-// --- Sign Out ---
-app.get("/logout", (req, res) => {
-  req.session.destroy();
-  res.redirect("/signin.html");
-});
-
-// ===== Volunteer / Street Team / Waitlist routes remain unchanged =====
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
