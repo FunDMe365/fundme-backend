@@ -24,8 +24,8 @@ app.options("*", cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Session Setup (MongoDB + HTTPS ready) =====
-app.set('trust proxy', 1); // if behind a proxy (like Render)
+// ===== Session Setup =====
+app.set('trust proxy', 1);
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
@@ -61,17 +61,25 @@ const SPREADSHEET_IDS = {
 // ===== SendGrid Setup =====
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-async function sendConfirmationEmail({ to, subject, text, html }) {
+// ===== Email Helper =====
+async function sendEmail({ to, subject, html }) {
   try {
-    await sgMail.send({
+    const msg = {
       to,
-      from: process.env.SENDGRID_FROM_EMAIL, // must be a verified sender in SendGrid
+      from: process.env.EMAIL_USER, // must be a verified sender in SendGrid!
       subject,
-      text,
       html
-    });
-  } catch (err) {
-    console.error(`Email sending failed to ${to}:`, err.message);
+    };
+    const response = await sgMail.send(msg);
+    console.log(`✅ Email sent to ${to}:`, response[0].statusCode);
+    return true;
+  } catch (error) {
+    if (error.response && error.response.body) {
+      console.error("❌ SendGrid error:", error.response.body);
+    } else {
+      console.error("❌ SendGrid error:", error.message);
+    }
+    return false;
   }
 }
 
@@ -175,19 +183,17 @@ app.post("/api/waitlist", async (req, res) => {
       new Date().toISOString()
     ]);
 
-    // Send confirmation emails (non-blocking)
+    // Send confirmation + admin email asynchronously
     setImmediate(async () => {
-      await sendConfirmationEmail({
+      await sendEmail({
         to: email,
         subject: "Welcome to the JoyFund Waitlist!",
-        text: `Hi ${name},\n\nThank you for joining the JoyFund waitlist!`,
         html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund waitlist!</p>`
       });
 
-      await sendConfirmationEmail({
+      await sendEmail({
         to: process.env.RECEIVE_EMAIL,
         subject: "New Waitlist Submission",
-        text: `New waitlist submission:\nName: ${name}\nEmail: ${email}\nSource: ${source}\nReason: ${reason}`,
         html: `<p>New waitlist submission:</p>
                <ul>
                  <li><strong>Name:</strong> ${name}</li>
