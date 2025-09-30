@@ -66,7 +66,7 @@ async function sendEmail({ to, subject, html }) {
   try {
     const msg = {
       to,
-      from: process.env.EMAIL_USER, // must be a verified sender in SendGrid!
+      from: process.env.EMAIL_USER,
       subject,
       html
     };
@@ -103,20 +103,33 @@ async function saveUser({ name, email, password }) {
   await saveToSheet(
     SPREADSHEET_IDS.users,
     "Users",
-    [name, email, hashedPassword, new Date().toISOString()]
+    [new Date().toISOString(), name, email, hashedPassword]
   );
 }
 
+// ===== FIXED: verifyUser =====
 async function verifyUser(email, password) {
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_IDS.users,
-    range: "Users!A:C"
+    range: "Users!A:D" // Include PasswordHash column
   });
   const rows = response.data.values || [];
-  const userRow = rows.find(row => row[1] === email);
-  if (!userRow) return false;
-  const match = await bcrypt.compare(password, userRow[2]);
-  return match ? { name: userRow[0], email: userRow[1] } : false;
+
+  console.log("Checking credentials for:", email);
+
+  const userRow = rows.find(row => row[2].toLowerCase() === email.toLowerCase());
+  if (!userRow) {
+    console.log("User not found for email:", email);
+    return false;
+  }
+
+  const storedHash = userRow[3]; // Column D is PasswordHash
+  console.log("Stored hash:", storedHash);
+
+  const match = await bcrypt.compare(password, storedHash);
+  console.log("Password match:", match);
+
+  return match ? { name: userRow[1], email: userRow[2] } : false;
 }
 
 // ===== Routes =====
@@ -183,7 +196,6 @@ app.post("/api/waitlist", async (req, res) => {
       new Date().toISOString()
     ]);
 
-    // Send confirmation + admin email asynchronously
     setImmediate(async () => {
       await sendEmail({
         to: email,
@@ -220,7 +232,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== New Volunteer Submission Route =====
+// ===== Volunteer Submission =====
 app.post("/submit-volunteer", async (req, res) => {
   const { name, email, city, message } = req.body;
   if (!name || !email || !city || !message) return res.status(400).json({ success: false, error: "All fields are required." });
@@ -235,7 +247,6 @@ app.post("/submit-volunteer", async (req, res) => {
     ]);
 
     setImmediate(async () => {
-      // 🎉 Celebratory email to volunteer
       await sendEmail({
         to: email,
         subject: "🎉 Volunteer Application Received! 🌟",
@@ -243,14 +254,13 @@ app.post("/submit-volunteer", async (req, res) => {
           <div style="font-family:Arial,sans-serif; text-align:center; color:#FF69B4;">
             <h1 style="color:#FF69B4;">🎊 Thank you, ${name}! 🎊</h1>
             <p style="font-size:18px; color:#1E90FF;">Your application to volunteer with <strong>JoyFund INC.</strong> has been received! 💖💙</p>
-            <p style="font-size:16px;">We’re thrilled to have you join our community of changemakers. Expect updates and next steps soon! 🌟</p>
+            <p style="font-size:16px;">Expect updates and next steps soon! 🌟</p>
             <p style="font-size:16px;">Keep spreading joy 😄✨</p>
             <p style="margin-top:20px; font-size:14px; color:#888;">— The JoyFund Team</p>
           </div>
         `
       });
 
-      // Admin notification email
       await sendEmail({
         to: process.env.RECEIVE_EMAIL,
         subject: "New Volunteer Application",
@@ -271,7 +281,7 @@ app.post("/submit-volunteer", async (req, res) => {
   }
 });
 
-// ===== New Street Team Submission Route =====
+// ===== Street Team Submission =====
 app.post("/submit-streetteam", async (req, res) => {
   const { name, email, city, message } = req.body;
   if (!name || !email || !city || !message) return res.status(400).json({ success: false, error: "All fields are required." });
@@ -286,7 +296,6 @@ app.post("/submit-streetteam", async (req, res) => {
     ]);
 
     setImmediate(async () => {
-      // 🎉 Celebratory email to street team member
       await sendEmail({
         to: email,
         subject: "🎉 Street Team Application Received! 🌈",
@@ -294,14 +303,13 @@ app.post("/submit-streetteam", async (req, res) => {
           <div style="font-family:Arial,sans-serif; text-align:center; color:#1E90FF;">
             <h1 style="color:#FF69B4;">🎊 Congratulations, ${name}! 🎊</h1>
             <p style="font-size:18px; color:#1E90FF;">Your application to join the <strong>JoyFund Street Team</strong> has been received! 💖💙</p>
-            <p style="font-size:16px;">We’re excited to have you helping spread the joy. Next steps will arrive soon! 🌟</p>
+            <p style="font-size:16px;">Next steps will arrive soon! 🌟</p>
             <p style="font-size:16px;">Keep inspiring smiles 😄✨</p>
             <p style="margin-top:20px; font-size:14px; color:#888;">— The JoyFund Team</p>
           </div>
         `
       });
 
-      // Admin notification email
       await sendEmail({
         to: process.env.RECEIVE_EMAIL,
         subject: "New Street Team Application",
