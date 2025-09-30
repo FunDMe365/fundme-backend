@@ -7,9 +7,13 @@ const MongoStore = require("connect-mongo");
 const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
+const Stripe = require("stripe"); // ✅ Stripe added
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// ===== Stripe Setup =====
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ===== CORS Setup =====
 app.use(cors({
@@ -352,6 +356,39 @@ app.post("/api/messages", (req, res) => {
   req.session.messages.push({ text, timestamp: new Date().toISOString() });
 
   res.json({ success: true, message: "Message added.", messages: req.session.messages });
+});
+
+// ===== Stripe Donation Route =====
+app.post("/api/create-checkout-session", async (req, res) => {
+  try {
+    const { amount } = req.body; // Amount in cents
+
+    if (!amount || amount < 100) {
+      return res.status(400).json({ success: false, error: "Invalid donation amount." });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: "Donation to JoyFund INC." },
+            unit_amount: amount,
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: "https://fundasmile.net/thankyou.html",
+      cancel_url: "https://fundasmile.net/cancel.html",
+    });
+
+    res.json({ success: true, url: session.url });
+  } catch (error) {
+    console.error("Stripe error:", error.message);
+    res.status(500).json({ success: false, error: "Payment processing failed." });
+  }
 });
 
 // ===== Start Server =====
