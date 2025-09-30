@@ -361,10 +361,10 @@ app.post("/api/messages", (req, res) => {
 // ===== Stripe Donation Route =====
 app.post("/api/create-checkout-session", async (req, res) => {
   try {
-    const { amount } = req.body; // Amount in cents
+    let { amount } = req.body;
 
     if (!amount || amount < 100) {
-      return res.status(400).json({ success: false, error: "Invalid donation amount." });
+      return res.status(400).json({ success: false, error: "Invalid donation amount (min $1)." });
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -386,7 +386,7 @@ app.post("/api/create-checkout-session", async (req, res) => {
 
     res.json({ success: true, url: session.url });
   } catch (error) {
-    console.error("Stripe error:", error.message);
+    console.error("Stripe error:", error);
     res.status(500).json({ success: false, error: "Payment processing failed." });
   }
 });
