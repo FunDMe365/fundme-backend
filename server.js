@@ -24,6 +24,12 @@ app.use(cors({
 }));
 app.options("*", cors());
 
+// ✅ Explicit header to allow credentials cross-site
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Credentials", "true");
+  next();
+});
+
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -39,9 +45,9 @@ app.use(session({
     collectionName: 'sessions'
   }),
   cookie: {
-    secure: process.env.NODE_ENV === "production",
+    secure: true,          // Force secure cookies (Render uses HTTPS)
     httpOnly: true,
-    sameSite: 'none',
+    sameSite: "None",      // Required for mobile + cross-site cookies
     maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
