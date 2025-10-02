@@ -8,6 +8,7 @@ const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
+const cookieParser = require("cookie-parser"); // ✅ Added
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -17,22 +18,17 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ===== CORS Setup =====
 app.use(cors({
-  origin: ["https://fundasmile.net", "http://localhost:3000"],
+  origin: "https://fundasmile.net", // ✅ exact frontend URL
   methods: ["GET", "POST", "PUT", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "Accept"],
-  credentials: true
+  credentials: true // ✅ allow cookies
 }));
 app.options("*", cors());
-
-// ✅ Explicit header to allow credentials cross-site
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Credentials", "true");
-  next();
-});
 
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(cookieParser()); // ✅ Added
 
 // ===== Session Setup =====
 app.set('trust proxy', 1);
@@ -45,9 +41,9 @@ app.use(session({
     collectionName: 'sessions'
   }),
   cookie: {
-    secure: true,          // Force secure cookies (Render uses HTTPS)
+    secure: process.env.NODE_ENV === "production", // ✅ must be true on HTTPS
     httpOnly: true,
-    sameSite: "None",      // Required for mobile + cross-site cookies
+    sameSite: 'none', // ✅ allow cross-site cookies
     maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
