@@ -2,11 +2,12 @@ require('dotenv').config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
+const session = require("express-session");
+const MongoStore = require("connect-mongo");
 const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
-const jwt = require("jsonwebtoken");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -26,6 +27,24 @@ app.options("*", cors());
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// ===== Session Setup =====
+app.set('trust proxy', 1);
+app.use(session({
+  secret: process.env.SESSION_SECRET || "supersecretkey",
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    collectionName: 'sessions'
+  }),
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: 'none',
+    maxAge: 1000 * 60 * 60 * 24 // 1 day
+  }
+}));
 
 // ===== Google Sheets Setup =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -49,7 +68,12 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 // ===== Email Helper =====
 async function sendEmail({ to, subject, html }) {
   try {
-    const msg = { to, from: process.env.EMAIL_USER, subject, html };
+    const msg = {
+      to,
+      from: process.env.EMAIL_USER,
+      subject,
+      html
+    };
     const response = await sgMail.send(msg);
     console.log(`✅ Email sent to ${to}:`, response[0].statusCode);
     return true;
@@ -93,23 +117,13 @@ async function verifyUser(email, password) {
     range: "Users!A:D"
   });
   const rows = response.data.values || [];
+
   const userRow = rows.find(row => row[2].toLowerCase() === email.toLowerCase());
   if (!userRow) return false;
+
   const storedHash = userRow[3];
   const match = await bcrypt.compare(password, storedHash);
   return match ? { name: userRow[1], email: userRow[2] } : false;
-}
-
-// ===== JWT Middleware =====
-function authenticateJWT(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ success: false, error: "No token provided." });
-  const token = authHeader.split(' ')[1];
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ success: false, error: "Invalid token." });
-    req.user = user;
-    next();
-  });
 }
 
 // ===== Routes =====
@@ -120,8 +134,7 @@ app.post("/api/signup", async (req, res) => {
   if (!name || !email || !password) return res.status(400).json({ success: false, message: "Name, email, and password are required." });
   try {
     await saveUser({ name, email, password });
-    const token = jwt.sign({ name, email }, process.env.JWT_SECRET, { expiresIn: "1d" });
-    res.json({ success: true, message: "Account created successfully!", token });
+    res.json({ success: true, message: "Account created successfully!" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Error creating account." });
@@ -132,11 +145,13 @@ app.post("/api/signup", async (req, res) => {
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, error: "Email and password required." });
+
   try {
     const user = await verifyUser(email, password);
     if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
-    const token = jwt.sign({ name: user.name, email: user.email }, process.env.JWT_SECRET, { expiresIn: "1d" });
-    res.json({ success: true, message: "Signed in successfully.", token });
+
+    req.session.user = { name: user.name, email: user.email };
+    res.json({ success: true, message: "Signed in successfully." });
   } catch (err) {
     console.error("Signin error:", err.message);
     res.status(500).json({ success: false, error: "Server error." });
@@ -144,22 +159,26 @@ app.post("/api/signin", async (req, res) => {
 });
 
 // --- Dashboard ---
-app.get("/api/dashboard", authenticateJWT, (req, res) => {
-  const { name, email } = req.user;
+app.get("/api/dashboard", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  const { name, email } = req.session.user;
   res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
 });
 
 // --- Profile ---
-app.get("/api/profile", authenticateJWT, (req, res) => {
-  res.json({ success: true, profile: req.user });
+app.get("/api/profile", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  res.json({ success: true, profile: req.session.user });
 });
 
 // ===== Waitlist Submission =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email || !source || !reason) return res.status(400).json({ success: false, error: "All fields are required." });
+
   try {
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [name, email, source, reason, new Date().toISOString()]);
+
     setImmediate(async () => {
       await sendEmail({
         to: email,
@@ -169,12 +188,14 @@ app.post("/api/waitlist", async (req, res) => {
                 <p>You are officially on the JoyFund waitlist! 💖💙</p>
               </div>`
       });
+
       await sendEmail({
         to: process.env.RECEIVE_EMAIL,
         subject: "New Waitlist Submission",
         html: `<p>New waitlist submission: Name: ${name}, Email: ${email}, Source: ${source}, Reason: ${reason}</p>`
       });
     });
+
     res.json({ success: true, message: "🎉 Successfully joined the waitlist! Check your email for confirmation." });
   } catch (err) {
     console.error("Waitlist submission error:", err.message);
@@ -186,6 +207,7 @@ app.post("/api/waitlist", async (req, res) => {
 app.post("/submit-volunteer", async (req, res) => {
   const { name, email, city, message } = req.body;
   if (!name || !email || !city || !message) return res.status(400).json({ success: false, error: "All fields are required." });
+
   try {
     await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [name, email, city, message, new Date().toISOString()]);
     setImmediate(async () => {
@@ -203,6 +225,7 @@ app.post("/submit-volunteer", async (req, res) => {
 app.post("/submit-streetteam", async (req, res) => {
   const { name, email, city, message } = req.body;
   if (!name || !email || !city || !message) return res.status(400).json({ success: false, error: "All fields are required." });
+
   try {
     await saveToSheet(SPREADSHEET_IDS.streetteam, "StreetTeam", [name, email, city, message, new Date().toISOString()]);
     setImmediate(async () => {
@@ -216,24 +239,34 @@ app.post("/submit-streetteam", async (req, res) => {
   }
 });
 
-// ===== Messages =====
-app.get("/api/messages", authenticateJWT, (req, res) => {
-  if (!req.user.messages) req.user.messages = [];
-  res.json({ success: true, messages: req.user.messages });
+// --- Logout ---
+app.post("/api/logout", (req, res) => {
+  req.session.destroy();
+  res.json({ success: true });
 });
 
-app.post("/api/messages", authenticateJWT, (req, res) => {
+// ===== Messages =====
+app.get("/api/messages", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  if (!req.session.messages) req.session.messages = [];
+  res.json({ success: true, messages: req.session.messages });
+});
+
+app.post("/api/messages", (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
   const { text } = req.body;
   if (!text) return res.status(400).json({ success: false, error: "Message text is required." });
-  if (!req.user.messages) req.user.messages = [];
-  req.user.messages.push({ text, timestamp: new Date().toISOString() });
-  res.json({ success: true, message: "Message added.", messages: req.user.messages });
+
+  if (!req.session.messages) req.session.messages = [];
+  req.session.messages.push({ text, timestamp: new Date().toISOString() });
+
+  res.json({ success: true, message: "Message added.", messages: req.session.messages });
 });
 
 // ===== Stripe Donation Route =====
 app.post("/api/create-checkout-session", async (req, res) => {
   try {
-    const { amount } = req.body;
+    const { amount } = req.body; // Amount in cents
     if (!amount || amount < 100) return res.status(400).json({ success: false, error: "Invalid donation amount (min $1)." });
 
     const session = await stripe.checkout.sessions.create({
