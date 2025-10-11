@@ -296,38 +296,28 @@ app.post("/api/create-checkout-session", async (req, res) => {
 });
 const { v4: uuidv4 } = require("uuid"); // add this at the top if not already imported
 
-// ===== Create Campaign Route =====
-app.post("/campaign", async (req, res) => {
-  const { title, description, goal } = req.body;
-  if (!title || !description || !goal) {
-    return res.status(400).json({ success: false, error: "All fields are required." });
-  }
+// ===== Create Campaign =====
+app.post("/api/create-campaign", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+
+  const { description, goal } = req.body;
+  if (!description || !goal) return res.status(400).json({ success: false, error: "Description and goal are required." });
+
+  const id = Date.now().toString(); // simple unique ID
+  const createdAt = new Date().toISOString();
+  const creatorEmail = req.session.user.email;
 
   try {
-    // Generate unique ID for the campaign
-    const newCampaign = {
-      id: uuidv4(),
-      title,
-      description,
-      goal,
-      createdAt: new Date().toISOString()
-    };
+    await saveToSheet(
+      SPREADSHEET_IDS.campaigns,   // make sure you add this in your SPREADSHEET_IDS object
+      "Campaigns",
+      [id, description, goal, 0, creatorEmail, createdAt]
+    );
 
-    // Save to Google Sheet (optional: you can create a "Campaigns" sheet)
-    await saveToSheet(SPREADSHEET_IDS.campaigns || SPREADSHEET_IDS.users, "Campaigns", [
-      newCampaign.id,
-      newCampaign.title,
-      newCampaign.description,
-      newCampaign.goal,
-      newCampaign.Raised,
-      newCampaign.CreatorEmail
-      newCampaign.createdAt
-    ]);
-
-    // Return ID for frontend redirect
-    res.json({ success: true, id: newCampaign.id });
+    // Respond with the new campaign id so frontend can redirect
+    res.json({ success: true, campaignId: id });
   } catch (err) {
-    console.error("Campaign creation error:", err.message);
+    console.error("Create campaign error:", err.message);
     res.status(500).json({ success: false, error: "Failed to create campaign." });
   }
 });
