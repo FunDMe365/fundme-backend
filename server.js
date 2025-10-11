@@ -287,44 +287,29 @@ app.post("/api/create-checkout-session", async (req, res) => {
 
 // ===== Campaign Creation (fully fixed) =====
 app.post("/api/campaigns", async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  if (!req.session.user)
+    return res.status(401).json({ success: false, error: "Not authenticated." });
 
   try {
-    const form = new formidable.IncomingForm({ multiples: false });
-    form.uploadDir = path.join(__dirname, "public/uploads");
-    form.keepExtensions = true;
+    const { title, description, goal, category, endDate, location } = req.body;
 
-    if (!fs.existsSync(form.uploadDir)) fs.mkdirSync(form.uploadDir, { recursive: true });
+    if (!title || !description || !goal)
+      return res.status(400).json({ success: false, error: "Title, description, and goal are required." });
 
-    form.parse(req, async (err, fields, files) => {
-      if (err) return res.status(500).json({ success: false, error: "Error parsing form." });
+    const id = `CAMP-${Date.now()}`;
+    const creatorEmail = req.session.user.email;
+    const createdAt = new Date().toISOString();
+    const raised = 0;
 
-      const { title, description, goal, category, endDate, location } = fields;
-      if (!title || !description || !goal) 
-        return res.status(400).json({ success: false, error: "Title, description, and goal are required." });
+    const values = [Id, Title, Description, Goal, Raised, CreatorEmail, CreatedAt, Category || "", endDate || "", location || ""];
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", values);
 
-      const id = `CAMP-${Date.now()}`;
-      const creatorEmail = req.session.user.email;
-      const createdAt = new Date().toISOString();
-      const raised = 0;
-
-      let imageFileName = "";
-      if (files.image && files.image.size > 0) {
-        const ext = path.extname(files.image.originalFilename);
-        imageFileName = `${id}${ext}`;
-        const destPath = path.join(form.uploadDir, imageFileName);
-        fs.renameSync(files.image.filepath, destPath);
-      }
-
-      const values = [
-        id, title, description, goal, raised, creatorEmail, createdAt,
-        category || "", endDate || "", location || "", imageFileName
-      ];
-
-      await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", values);
-
-      res.json({ success: true, id });
-    });
+    res.json({ success: true, id });
+  } catch (err) {
+    console.error("Create campaign error:", err.message);
+    res.status(500).json({ success: false, error: "Failed to create campaign. Please try again." });
+  }
+});
   } catch (err) {
     console.error("Create campaign error:", err);
     res.status(500).json({ success: false, error: "Failed to create campaign. Please try again." });
