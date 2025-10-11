@@ -12,3 +12,14 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# Ignore Google service account key file
+credentials.json
+
+# Ignore environment variable files
+.env
+
+node_modules/
+.env
+
+service-account.json
+service-account.json
