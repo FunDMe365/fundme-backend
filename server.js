@@ -12,6 +12,9 @@ const Stripe = require("stripe");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Serve static HTML files from the public folder
+app.use(express.static("public"));
+
 // ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
