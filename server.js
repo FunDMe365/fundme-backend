@@ -303,28 +303,35 @@ const { v4: uuidv4 } = require("uuid"); // add this at the top if not already im
 app.post("/api/campaigns", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
 
-  const { title, description, goal } = req.body;
-  if (!title || !description || !goal) return res.status(400).json({ success: false, error: "All fields are required." });
-
   try {
-    // Generate a simple unique ID
-    const id = Date.now().toString();
-    const createdAt = new Date().toISOString();
-    const creatorEmail = req.session.user.email;
+    const form = new formidable.IncomingForm({ multiples: false });
+    form.parse(req, async (err, fields, files) => {
+      if (err) return res.status(500).json({ success: false, error: 'Error parsing form.' });
 
-    // Save to Google Sheet (assuming sheet columns: Id, Description, Goal, Raised, CreatorEmail, CreatedAt)
-    await saveToSheet(
-      process.env.SPREADSHEET_CAMPAIGNS, // You need to add this to your .env
-      "Campaigns",
-      [id, description, goal, 0, creatorEmail, createdAt]
-    );
+      const { title, description, goal, category, endDate, location } = fields;
+      if (!title || !description || !goal) return res.status(400).json({ success: false, error: 'Title, description, and goal are required.' });
 
-    res.json({ success: true, message: "Campaign created successfully!", id });
+      const id = `CAMP-${Date.now()}`;
+      const creatorEmail = req.session.user.email;
+      const createdAt = new Date().toISOString();
+      const raised = 0;
+
+      // Optional: handle image upload if files.image exists
+      let imageURL = '';
+      if (files.image && files.image.size > 0) {
+        // For now, we will just store the filename (later you can integrate cloud storage)
+        imageURL = files.image.originalFilename;
+      }
+
+      const values = [id, title, description, goal, raised, creatorEmail, createdAt, category || '', endDate || '', location || '', imageURL];
+      await saveToSheet(process.env.SPREADSHEET_CAMPAIGNS, "Campaigns", values);
+
+      res.json({ success: true, id });
+    });
   } catch (err) {
-    console.error("Campaign creation error:", err.message);
+    console.error("Create campaign error:", err.message);
     res.status(500).json({ success: false, error: "Failed to create campaign. Please try again." });
   }
 });
-
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
