@@ -60,6 +60,8 @@ const SPREADSHEET_IDS = {
   volunteers: "1O_y1yDiYfO0RT8eGwBMtaiPWYYvSR8jIDIdZkZPlvNA",
   streetteam: "1dPz1LqQq6SKjZIwsgIpQJdQzdmlOV7YrOZJjHqC4Yg8",
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ"
+  campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8"
+
 };
 
 // ===== SendGrid Setup =====
@@ -290,6 +292,43 @@ app.post("/api/create-checkout-session", async (req, res) => {
   } catch (error) {
     console.error("Stripe error:", error.message);
     res.status(500).json({ success: false, error: "Payment processing failed." });
+  }
+});
+const { v4: uuidv4 } = require("uuid"); // add this at the top if not already imported
+
+// ===== Create Campaign Route =====
+app.post("/campaign", async (req, res) => {
+  const { title, description, goal } = req.body;
+  if (!title || !description || !goal) {
+    return res.status(400).json({ success: false, error: "All fields are required." });
+  }
+
+  try {
+    // Generate unique ID for the campaign
+    const newCampaign = {
+      id: uuidv4(),
+      title,
+      description,
+      goal,
+      createdAt: new Date().toISOString()
+    };
+
+    // Save to Google Sheet (optional: you can create a "Campaigns" sheet)
+    await saveToSheet(SPREADSHEET_IDS.campaigns || SPREADSHEET_IDS.users, "Campaigns", [
+      newCampaign.id,
+      newCampaign.title,
+      newCampaign.description,
+      newCampaign.goal,
+      newCampaign.Raised,
+      newCampaign.CreatorEmail
+      newCampaign.createdAt
+    ]);
+
+    // Return ID for frontend redirect
+    res.json({ success: true, id: newCampaign.id });
+  } catch (err) {
+    console.error("Campaign creation error:", err.message);
+    res.status(500).json({ success: false, error: "Failed to create campaign." });
   }
 });
 
