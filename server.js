@@ -8,7 +8,6 @@ const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
-const formidable = require("formidable");
 const fs = require("fs");
 const path = require("path");
 
@@ -17,7 +16,6 @@ const PORT = process.env.PORT || 5000;
 
 // Serve static files
 app.use(express.static("public"));
-app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
 
 // ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
@@ -123,7 +121,8 @@ async function verifyUser(email, password) {
 // --- Sign Up ---
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ success: false, message: "Name, email, and password are required." });
+  if (!name || !email || !password)
+    return res.status(400).json({ success: false, message: "Name, email, and password are required." });
   try {
     await saveUser({ name, email, password });
     res.json({ success: true, message: "Account created successfully!" });
@@ -136,11 +135,13 @@ app.post("/api/signup", async (req, res) => {
 // --- Sign In ---
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ success: false, error: "Email and password required." });
+  if (!email || !password)
+    return res.status(400).json({ success: false, error: "Email and password required." });
 
   try {
     const user = await verifyUser(email, password);
-    if (!user) return res.status(401).json({ success: false, error: "Invalid email or password." });
+    if (!user)
+      return res.status(401).json({ success: false, error: "Invalid email or password." });
 
     req.session.user = { name: user.name, email: user.email };
     res.json({ success: true, message: "Signed in successfully." });
@@ -152,21 +153,24 @@ app.post("/api/signin", async (req, res) => {
 
 // --- Dashboard ---
 app.get("/api/dashboard", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  if (!req.session.user)
+    return res.status(401).json({ success: false, error: "Not authenticated." });
   const { name, email } = req.session.user;
   res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
 });
 
 // --- Profile ---
 app.get("/api/profile", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+  if (!req.session.user)
+    return res.status(401).json({ success: false, error: "Not authenticated." });
   res.json({ success: true, profile: req.session.user });
 });
 
 // ===== Waitlist Submission =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
-  if (!name || !email || !source || !reason) return res.status(400).json({ success: false, error: "All fields are required." });
+  if (!name || !email || !source || !reason)
+    return res.status(400).json({ success: false, error: "All fields are required." });
 
   try {
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [name, email, source, reason, new Date().toISOString()]);
@@ -198,7 +202,8 @@ app.post("/api/waitlist", async (req, res) => {
 // ===== Volunteer Submission =====
 app.post("/submit-volunteer", async (req, res) => {
   const { name, email, city, message } = req.body;
-  if (!name || !email || !city || !message) return res.status(400).json({ success: false, error: "All fields are required." });
+  if (!name || !email || !city || !message)
+    return res.status(400).json({ success: false, error: "All fields are required." });
 
   try {
     await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [name, email, city, message, new Date().toISOString()]);
@@ -216,7 +221,8 @@ app.post("/submit-volunteer", async (req, res) => {
 // ===== Street Team Submission =====
 app.post("/submit-streetteam", async (req, res) => {
   const { name, email, city, message } = req.body;
-  if (!name || !email || !city || !message) return res.status(400).json({ success: false, error: "All fields are required." });
+  if (!name || !email || !city || !message)
+    return res.status(400).json({ success: false, error: "All fields are required." });
 
   try {
     await saveToSheet(SPREADSHEET_IDS.streetteam, "StreetTeam", [name, email, city, message, new Date().toISOString()]);
@@ -231,68 +237,13 @@ app.post("/submit-streetteam", async (req, res) => {
   }
 });
 
-// --- Logout ---
-app.post("/api/logout", (req, res) => {
-  req.session.destroy();
-  res.json({ success: true });
-});
-
-// ===== Messages =====
-app.get("/api/messages", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
-  if (!req.session.messages) req.session.messages = [];
-  res.json({ success: true, messages: req.session.messages });
-});
-
-app.post("/api/messages", (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
-  const { text } = req.body;
-  if (!text) return res.status(400).json({ success: false, error: "Message text is required." });
-
-  if (!req.session.messages) req.session.messages = [];
-  req.session.messages.push({ text, timestamp: new Date().toISOString() });
-
-  res.json({ success: true, message: "Message added.", messages: req.session.messages });
-});
-
-// ===== Stripe Donation Route =====
-app.post("/api/create-checkout-session", async (req, res) => {
-  try {
-    const { amount } = req.body; // Amount in cents
-    if (!amount || amount < 100) return res.status(400).json({ success: false, error: "Invalid donation amount (min $1)." });
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      mode: "payment",
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: { name: "Donation to JoyFund INC." },
-            unit_amount: amount,
-          },
-          quantity: 1,
-        },
-      ],
-      success_url: "https://fundasmile.net/thankyou.html",
-      cancel_url: "https://fundasmile.net/cancel.html",
-    });
-
-    res.json({ success: true, url: session.url });
-  } catch (error) {
-    console.error("Stripe error:", error.message);
-    res.status(500).json({ success: false, error: "Payment processing failed." });
-  }
-});
-
-// ===== Campaign Creation (fully fixed) =====
+// ===== Campaign Creation (no file upload) =====
 app.post("/api/campaigns", async (req, res) => {
   if (!req.session.user)
     return res.status(401).json({ success: false, error: "Not authenticated." });
 
   try {
     const { title, description, goal, category, endDate, location } = req.body;
-
     if (!title || !description || !goal)
       return res.status(400).json({ success: false, error: "Title, description, and goal are required." });
 
@@ -301,25 +252,18 @@ app.post("/api/campaigns", async (req, res) => {
     const createdAt = new Date().toISOString();
     const raised = 0;
 
-    const values = [Id, Title, Description, Goal, Raised, CreatorEmail, CreatedAt, Category || "", endDate || "", location || ""];
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", values);
+    const values = [
+      id, title, description, goal, raised,
+      creatorEmail, createdAt, category || "", endDate || "", location || ""
+    ];
 
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", values);
     res.json({ success: true, id });
   } catch (err) {
     console.error("Create campaign error:", err.message);
     res.status(500).json({ success: false, error: "Failed to create campaign. Please try again." });
   }
 });
-  } catch (err) {
-    console.error("Create campaign error:", err);
-    res.status(500).json({ success: false, error: "Failed to create campaign. Please try again." });
-  }
-});
-
-// ===== Catch-all for unknown API routes =====
-app.use("/api/*", (req, res) => {
-  res.status(404).json({ success: false, error: "API endpoint not found." });
-});
 
 // ===== Start server =====
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
