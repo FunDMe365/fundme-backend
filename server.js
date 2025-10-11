@@ -258,7 +258,7 @@ app.post("/api/messages", (req, res) => {
 // ===== Stripe Donation Route =====
 app.post("/api/create-checkout-session", async (req, res) => {
   try {
-    const { amount } = req.body; // Amount in cents
+    const { amount } = req.body;
     if (!amount || amount < 100) return res.status(400).json({ success: false, error: "Invalid donation amount (min $1)." });
 
     const session = await stripe.checkout.sessions.create({
@@ -289,41 +289,39 @@ app.post("/api/create-checkout-session", async (req, res) => {
 app.post("/api/campaigns", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
 
-  try {
-    const form = new formidable.IncomingForm({ multiples: false });
-    form.uploadDir = path.join(__dirname, "public/uploads");
-    form.keepExtensions = true;
+  const form = new formidable.IncomingForm({ multiples: false });
+  form.uploadDir = path.join(__dirname, "public/uploads");
+  form.keepExtensions = true;
+  if (!fs.existsSync(form.uploadDir)) fs.mkdirSync(form.uploadDir, { recursive: true });
 
-    if (!fs.existsSync(form.uploadDir)) fs.mkdirSync(form.uploadDir, { recursive: true });
+  form.parse(req, async (err, fields, files) => {
+    if (err) return res.status(500).json({ success: false, error: "Error parsing form." });
 
-    form.parse(req, async (err, fields, files) => {
-      if (err) return res.status(500).json({ success: false, error: "Error parsing form." });
+    const { title, description, goal, category, endDate, location } = fields;
+    if (!title || !description || !goal) return res.status(400).json({ success: false, error: "Title, description, and goal are required." });
 
-      const { title, description, goal, category, endDate, location } = fields;
-      if (!title || !description || !goal) return res.status(400).json({ success: false, error: "Title, description, and goal are required." });
+    const id = `CAMP-${Date.now()}`;
+    const creatorEmail = req.session.user.email;
+    const createdAt = new Date().toISOString();
+    const raised = 0;
 
-      const id = `CAMP-${Date.now()}`;
-      const creatorEmail = req.session.user.email;
-      const createdAt = new Date().toISOString();
-      const raised = 0;
+    let imageFileName = "";
+    if (files.image && files.image.size > 0) {
+      const ext = path.extname(files.image.originalFilename);
+      imageFileName = `${id}${ext}`;
+      const destPath = path.join(form.uploadDir, imageFileName);
+      fs.renameSync(files.image.filepath, destPath);
+    }
 
-      let imageFileName = "";
-      if (files.image && files.image.size > 0) {
-        const ext = path.extname(files.image.originalFilename);
-        imageFileName = `${id}${ext}`;
-        const destPath = path.join(form.uploadDir, imageFileName);
-        fs.renameSync(files.image.filepath, destPath);
-      }
-
+    try {
       const values = [id, title, description, goal, raised, creatorEmail, createdAt, category || "", endDate || "", location || "", imageFileName];
       await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", values);
-
       res.json({ success: true, id });
-    });
-  } catch (err) {
-    console.error("Create campaign error:", err.message);
-    res.status(500).json({ success: false, error: "Failed to create campaign. Please try again." });
-  }
+    } catch (err) {
+      console.error("Create campaign error:", err.message);
+      res.status(500).json({ success: false, error: "Failed to create campaign. Please try again." });
+    }
+  });
 });
 
 // ===== Start server =====
