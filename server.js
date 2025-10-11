@@ -323,6 +323,10 @@ app.post("/api/campaigns", async (req, res) => {
     }
   });
 });
+// Catch-all for API routes that aren't matched
+app.use("/api/*", (req, res) => {
+  res.status(404).json({ success: false, error: "API endpoint not found." });
+});
 
 // ===== Start server =====
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
