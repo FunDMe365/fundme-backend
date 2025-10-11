@@ -144,35 +144,20 @@ app.post("/api/login", (req, res) => {
 // -----------------------
 app.post("/api/campaigns", (req, res) => {
   try {
-    const { title, description, goal, category, endDate, location } = req.body;
+    const { title, description, goal, category, endDate, location, organizer, email } = req.body;
 
     if (!title || !description || !goal) {
-      return res.status(400).json({ error: "Missing required fields" });
+      return res.status(400).json({ success: false, message: "Missing required fields" });
     }
 
     const newCampaign = {
       id: Date.now().toString(),
       title,
       description,
-      goal,app.post("/api/campaigns", async (req, res) => {
-  console.log("POST /api/campaigns hit");
-  try {
-    const { title, description, goal, category, location, organizer, email } = req.body;
-    if (!title || !description) {
-      return res.status(400).json({ success: false, message: "Missing required fields" });
-    }
-    res.json({ success: true, message: "Campaign submitted successfully!" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
+      goal,
       raised: 0,
       category: category || "General",
-      endDate: endDate || "",
-      location: location || "",
-      createdAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
     };
 
     console.log("🎉 New Campaign Created:", newCampaign);
@@ -182,10 +167,10 @@ app.post("/api/campaigns", (req, res) => {
     existing.push(newCampaign);
     saveJSON(file, existing);
 
-    return res.json({ success: true, id: newCampaign.id });
+    return res.json({ success: true, message: "Campaign submitted successfully!", id: newCampaign.id });
   } catch (err) {
     console.error("❌ Campaign creation error:", err);
-    res.status(500).json({ error: "Server error creating campaign" });
+    res.status(500).json({ success: false, message: "Server error creating campaign" });
   }
 });
 
