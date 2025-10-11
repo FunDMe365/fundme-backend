@@ -154,7 +154,20 @@ app.post("/api/campaigns", (req, res) => {
       id: Date.now().toString(),
       title,
       description,
-      goal,
+      goal,app.post("/api/campaigns", async (req, res) => {
+  console.log("POST /api/campaigns hit");
+  try {
+    const { title, description, goal, category, location, organizer, email } = req.body;
+    if (!title || !description) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+    res.json({ success: true, message: "Campaign submitted successfully!" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
       raised: 0,
       category: category || "General",
       endDate: endDate || "",
