@@ -8,6 +8,8 @@ const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
+const formidable = require("formidable");
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -62,9 +64,8 @@ const SPREADSHEET_IDS = {
   users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
   volunteers: "1O_y1yDiYfO0RT8eGwBMtaiPWYYvSR8jIDIdZkZPlvNA",
   streetteam: "1dPz1LqQq6SKjZIwsgIpQJdQzdmlOV7YrOZJjHqC4Yg8",
-  waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ"
+  waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8"
-
 };
 
 // ===== SendGrid Setup =====
@@ -73,21 +74,13 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 // ===== Email Helper =====
 async function sendEmail({ to, subject, html }) {
   try {
-    const msg = {
-      to,
-      from: process.env.EMAIL_USER,
-      subject,
-      html
-    };
+    const msg = { to, from: process.env.EMAIL_USER, subject, html };
     const response = await sgMail.send(msg);
     console.log(`✅ Email sent to ${to}:`, response[0].statusCode);
     return true;
   } catch (error) {
-    if (error.response && error.response.body) {
-      console.error("❌ SendGrid error:", error.response.body);
-    } else {
-      console.error("❌ SendGrid error:", error.message);
-    }
+    if (error.response && error.response.body) console.error("❌ SendGrid error:", error.response.body);
+    else console.error("❌ SendGrid error:", error.message);
     return false;
   }
 }
@@ -297,7 +290,6 @@ app.post("/api/create-checkout-session", async (req, res) => {
     res.status(500).json({ success: false, error: "Payment processing failed." });
   }
 });
-const { v4: uuidv4 } = require("uuid"); // add this at the top if not already imported
 
 // ===== Campaign Creation =====
 app.post("/api/campaigns", async (req, res) => {
@@ -316,15 +308,11 @@ app.post("/api/campaigns", async (req, res) => {
       const createdAt = new Date().toISOString();
       const raised = 0;
 
-      // Optional: handle image upload if files.image exists
       let imageURL = '';
-      if (files.image && files.image.size > 0) {
-        // For now, we will just store the filename (later you can integrate cloud storage)
-        imageURL = files.image.originalFilename;
-      }
+      if (files.image && files.image.size > 0) imageURL = files.image.originalFilename;
 
       const values = [id, title, description, goal, raised, creatorEmail, createdAt, category || '', endDate || '', location || '', imageURL];
-      await saveToSheet(process.env.SPREADSHEET_CAMPAIGNS, "Campaigns", values);
+      await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", values);
 
       res.json({ success: true, id });
     });
@@ -333,5 +321,6 @@ app.post("/api/campaigns", async (req, res) => {
     res.status(500).json({ success: false, error: "Failed to create campaign. Please try again." });
   }
 });
+
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
