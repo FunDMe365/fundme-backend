@@ -1,269 +1,206 @@
-require('dotenv').config();
+// =======================
+// JoyFund / FunDaSmile Backend Server
+// =======================
+
 const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
-const session = require("express-session");
-const MongoStore = require("connect-mongo");
-const bcrypt = require("bcrypt");
-const { google } = require("googleapis");
-const sgMail = require("@sendgrid/mail");
-const Stripe = require("stripe");
-const fs = require("fs");
 const path = require("path");
-
+const cors = require("cors");
+const bodyParser = require("body-parser");
+const fs = require("fs");
 const app = express();
-const PORT = process.env.PORT || 5000;
 
-// Serve static files
-app.use(express.static("public"));
-
-// ===== Stripe Setup =====
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-
-// ===== CORS =====
-app.use(cors({
-  origin: ["https://fundasmile.net", "http://localhost:3000"],
-  methods: ["GET", "POST", "PUT", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
-  credentials: true
-}));
-app.options("*", cors());
-
-// ===== Middleware =====
+// -----------------------
+// Middleware
+// -----------------------
+app.use(cors());
+app.use(express.static(path.join(__dirname, "public")));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Session Setup =====
-app.set('trust proxy', 1);
-app.use(session({
-  secret: process.env.SESSION_SECRET || "supersecretkey",
-  resave: false,
-  saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: process.env.MONGO_URI,
-    collectionName: 'sessions'
-  }),
-  cookie: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
-    sameSite: 'none',
-    maxAge: 1000 * 60 * 60 * 24
-  }
-}));
-
-// ===== Google Sheets Setup =====
-const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
-const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
-  scopes: SCOPES
-});
-const sheets = google.sheets({ version: "v4", auth });
-
-// ===== Spreadsheet IDs =====
-const SPREADSHEET_IDS = {
-  users: process.env.SPREADSHEET_USERS,
-  waitlist: process.env.SPREADSHEET_WAITLIST,
-  volunteers: process.env.SPREADSHEET_VOLUNTEERS,
-  streetteam: process.env.SPREADSHEET_STREETTEAM,
-  campaigns: process.env.SPREADSHEET_CAMPAIGNS
-};
-
-// ===== SendGrid =====
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
-// ===== Helpers =====
-async function sendEmail({ to, subject, html }) {
+// -----------------------
+// Helper for saving JSON
+// -----------------------
+function saveJSON(filePath, data) {
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+}
+function readJSON(filePath) {
+  if (!fs.existsSync(filePath)) return [];
   try {
-    await sgMail.send({ to, from: process.env.EMAIL_USER, subject, html });
-  } catch (error) {
-    console.error("SendGrid error:", error.message);
+    return JSON.parse(fs.readFileSync(filePath, "utf8") || "[]");
+  } catch {
+    return [];
   }
 }
 
-async function saveToSheet(sheetId, sheetName, values) {
+// -----------------------
+// WAITLIST FORM
+// -----------------------
+app.post("/api/waitlist", (req, res) => {
   try {
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: sheetId,
-      range: `${sheetName}!A:Z`,
-      valueInputOption: "RAW",
-      requestBody: { values: [values] }
-    });
+    const { name, email } = req.body;
+    console.log("🟢 Waitlist submission:", name, email);
+
+    const file = path.join(__dirname, "waitlist.json");
+    const existing = readJSON(file);
+    existing.push({ name, email, createdAt: new Date().toISOString() });
+    saveJSON(file, existing);
+
+    return res.json({ success: true, message: "Waitlist submission received" });
   } catch (err) {
-    console.error(`Error saving to ${sheetName}:`, err.message);
-    throw err;
-  }
-}
-
-async function saveUser({ name, email, password }) {
-  const hashedPassword = await bcrypt.hash(password, 10);
-  await saveToSheet(
-    SPREADSHEET_IDS.users,
-    "Users",
-    [new Date().toISOString(), name, email, hashedPassword]
-  );
-}
-
-async function verifyUser(email, password) {
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_IDS.users,
-    range: "Users!A:D"
-  });
-  const rows = response.data.values || [];
-  const userRow = rows.find(row => row[2].toLowerCase() === email.toLowerCase());
-  if (!userRow) return false;
-  const storedHash = userRow[3];
-  const match = await bcrypt.compare(password, storedHash);
-  return match ? { name: userRow[1], email: userRow[2] } : false;
-}
-
-// ===== Routes =====
-
-// --- Sign Up ---
-app.post("/api/signup", async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password)
-    return res.status(400).json({ success: false, message: "Name, email, and password are required." });
-  try {
-    await saveUser({ name, email, password });
-    res.json({ success: true, message: "Account created successfully!" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Error creating account." });
+    console.error("❌ Waitlist error:", err);
+    res.status(500).json({ error: "Server error submitting waitlist" });
   }
 });
 
-// --- Sign In ---
-app.post("/api/signin", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ success: false, error: "Email and password required." });
-
+// -----------------------
+// VOLUNTEER FORM
+// -----------------------
+app.post("/api/volunteer", (req, res) => {
   try {
-    const user = await verifyUser(email, password);
-    if (!user)
-      return res.status(401).json({ success: false, error: "Invalid email or password." });
+    const { name, email, interest } = req.body;
+    console.log("🟢 Volunteer submission:", name, email, interest);
 
-    req.session.user = { name: user.name, email: user.email };
-    res.json({ success: true, message: "Signed in successfully." });
+    const file = path.join(__dirname, "volunteers.json");
+    const existing = readJSON(file);
+    existing.push({ name, email, interest, createdAt: new Date().toISOString() });
+    saveJSON(file, existing);
+
+    return res.json({ success: true, message: "Volunteer submission received" });
   } catch (err) {
-    console.error("Signin error:", err.message);
-    res.status(500).json({ success: false, error: "Server error." });
+    console.error("❌ Volunteer error:", err);
+    res.status(500).json({ error: "Server error submitting volunteer form" });
   }
 });
 
-// --- Dashboard ---
-app.get("/api/dashboard", (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated." });
-  const { name, email } = req.session.user;
-  res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
-});
-
-// --- Profile ---
-app.get("/api/profile", (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated." });
-  res.json({ success: true, profile: req.session.user });
-});
-
-// ===== Waitlist Submission =====
-app.post("/api/waitlist", async (req, res) => {
-  const { name, email, source, reason } = req.body;
-  if (!name || !email || !source || !reason)
-    return res.status(400).json({ success: false, error: "All fields are required." });
-
+// -----------------------
+// CONTACT FORM
+// -----------------------
+app.post("/api/contact", (req, res) => {
   try {
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [name, email, source, reason, new Date().toISOString()]);
+    const { name, email, message } = req.body;
+    console.log("🟢 Contact form submission:", name, email, message);
 
-    setImmediate(async () => {
-      await sendEmail({
-        to: email,
-        subject: "🎉 Welcome to the JoyFund Waitlist! 🌈",
-        html: `<div style="font-family:Arial,sans-serif; text-align:center; color:#FF69B4;">
-                <h1>🎊 Congratulations, ${name}! 🎊</h1>
-                <p>You are officially on the JoyFund waitlist! 💖💙</p>
-              </div>`
-      });
+    const file = path.join(__dirname, "contacts.json");
+    const existing = readJSON(file);
+    existing.push({ name, email, message, createdAt: new Date().toISOString() });
+    saveJSON(file, existing);
 
-      await sendEmail({
-        to: process.env.RECEIVE_EMAIL,
-        subject: "New Waitlist Submission",
-        html: `<p>New waitlist submission: Name: ${name}, Email: ${email}, Source: ${source}, Reason: ${reason}</p>`
-      });
-    });
-
-    res.json({ success: true, message: "🎉 Successfully joined the waitlist! Check your email for confirmation." });
+    return res.json({ success: true, message: "Message received" });
   } catch (err) {
-    console.error("Waitlist submission error:", err.message);
-    res.status(500).json({ success: false, error: "Failed to save to waitlist. Please try again later." });
+    console.error("❌ Contact error:", err);
+    res.status(500).json({ error: "Server error submitting contact form" });
   }
 });
 
-// ===== Volunteer Submission =====
-app.post("/submit-volunteer", async (req, res) => {
-  const { name, email, city, message } = req.body;
-  if (!name || !email || !city || !message)
-    return res.status(400).json({ success: false, error: "All fields are required." });
-
+// -----------------------
+// USER SIGNUP
+// -----------------------
+app.post("/api/signup", (req, res) => {
   try {
-    await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [name, email, city, message, new Date().toISOString()]);
-    setImmediate(async () => {
-      await sendEmail({ to: email, subject: "🎉 Volunteer Application Received! 🌟", html: `<p>Thank you, ${name}!</p>` });
-      await sendEmail({ to: process.env.RECEIVE_EMAIL, subject: "New Volunteer Application", html: `<p>Name: ${name}, Email: ${email}, City: ${city}, Message: ${message}</p>` });
-    });
-    res.json({ success: true, message: "✅ Volunteer application submitted successfully!" });
+    const { email, password } = req.body;
+    console.log("🟢 New user signup:", email);
+
+    const file = path.join(__dirname, "users.json");
+    const existing = readJSON(file);
+
+    if (existing.find((u) => u.email === email)) {
+      return res.status(400).json({ error: "Email already registered" });
+    }
+
+    existing.push({ email, password, createdAt: new Date().toISOString() });
+    saveJSON(file, existing);
+
+    return res.json({ success: true, message: "User registered successfully" });
   } catch (err) {
-    console.error("Volunteer submission error:", err.message);
-    res.status(500).json({ success: false, error: "Failed to submit volunteer application." });
+    console.error("❌ Signup error:", err);
+    res.status(500).json({ error: "Server error during signup" });
   }
 });
 
-// ===== Street Team Submission =====
-app.post("/submit-streetteam", async (req, res) => {
-  const { name, email, city, message } = req.body;
-  if (!name || !email || !city || !message)
-    return res.status(400).json({ success: false, error: "All fields are required." });
-
+// -----------------------
+// USER LOGIN
+// -----------------------
+app.post("/api/login", (req, res) => {
   try {
-    await saveToSheet(SPREADSHEET_IDS.streetteam, "StreetTeam", [name, email, city, message, new Date().toISOString()]);
-    setImmediate(async () => {
-      await sendEmail({ to: email, subject: "🎉 Street Team Application Received! 🌈", html: `<p>Thanks, ${name}!</p>` });
-      await sendEmail({ to: process.env.RECEIVE_EMAIL, subject: "New Street Team Application", html: `<p>Name: ${name}, Email: ${email}, City: ${city}, Message: ${message}</p>` });
-    });
-    res.json({ success: true, message: "✅ Street Team application submitted successfully!" });
+    const { email, password } = req.body;
+    const file = path.join(__dirname, "users.json");
+    const existing = readJSON(file);
+    const user = existing.find((u) => u.email === email && u.password === password);
+
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    console.log("✅ User logged in:", email);
+    return res.json({ success: true, message: "Login successful" });
   } catch (err) {
-    console.error("Street Team submission error:", err.message);
-    res.status(500).json({ success: false, error: "Failed to submit Street Team application." });
+    console.error("❌ Login error:", err);
+    res.status(500).json({ error: "Server error during login" });
   }
 });
 
-// ===== Campaign Creation (no file upload) =====
-app.post("/api/campaigns", async (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated." });
-
+// -----------------------
+// CREATE CAMPAIGN
+// -----------------------
+app.post("/api/campaigns", (req, res) => {
   try {
     const { title, description, goal, category, endDate, location } = req.body;
-    if (!title || !description || !goal)
-      return res.status(400).json({ success: false, error: "Title, description, and goal are required." });
 
-    const id = `CAMP-${Date.now()}`;
-    const creatorEmail = req.session.user.email;
-    const createdAt = new Date().toISOString();
-    const raised = 0;
+    if (!title || !description || !goal) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
 
-    const values = [
-      id, title, description, goal, raised,
-      creatorEmail, createdAt, category || "", endDate || "", location || ""
-    ];
+    const newCampaign = {
+      id: Date.now().toString(),
+      title,
+      description,
+      goal,
+      raised: 0,
+      category: category || "General",
+      endDate: endDate || "",
+      location: location || "",
+      createdAt: new Date().toISOString(),
+    };
 
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", values);
-    res.json({ success: true, id });
+    console.log("🎉 New Campaign Created:", newCampaign);
+
+    const file = path.join(__dirname, "campaigns.json");
+    const existing = readJSON(file);
+    existing.push(newCampaign);
+    saveJSON(file, existing);
+
+    return res.json({ success: true, id: newCampaign.id });
   } catch (err) {
-    console.error("Create campaign error:", err.message);
-    res.status(500).json({ success: false, error: "Failed to create campaign. Please try again." });
+    console.error("❌ Campaign creation error:", err);
+    res.status(500).json({ error: "Server error creating campaign" });
   }
 });
 
-// ===== Start server =====
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+// -----------------------
+// FETCH ALL CAMPAIGNS
+// -----------------------
+app.get("/api/campaigns", (req, res) => {
+  try {
+    const file = path.join(__dirname, "campaigns.json");
+    const campaigns = readJSON(file);
+    return res.json(campaigns);
+  } catch (err) {
+    console.error("❌ Error fetching campaigns:", err);
+    res.status(500).json({ error: "Error fetching campaigns" });
+  }
+});
+
+// -----------------------
+// DEFAULT HOME ROUTE
+// -----------------------
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// -----------------------
+// START SERVER
+// -----------------------
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 JoyFund / FunDaSmile backend running on port ${PORT}`);
+});
