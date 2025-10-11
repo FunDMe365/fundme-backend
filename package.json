@@ -1,10 +1,10 @@
 {
-"name": "fundme-backend",
+  "name": "fundme-backend",
   "version": "1.0.0",
   "description": "",
-  "main": "server.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
@@ -14,8 +14,9 @@
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "formidable": "^3.5.4",
-    "nodemailer": "^7.0.5",
+    "nodemailer": "^7.0.5"
   }
+}
  "name": "joyfund-backend",
   "version": "1.0.0",
   "description": "Backend for JoyFund INC website",
