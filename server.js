@@ -9,18 +9,20 @@ const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
 const formidable = require("formidable");
-const { v4: uuidv4 } = require("uuid");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Serve static HTML files from the public folder
+// Serve static files
 app.use(express.static("public"));
+app.use("/uploads", express.static(path.join(__dirname, "public/uploads")));
 
 // ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ===== CORS Setup =====
+// ===== CORS =====
 app.use(cors({
   origin: ["https://fundasmile.net", "http://localhost:3000"],
   methods: ["GET", "POST", "PUT", "OPTIONS"],
@@ -47,7 +49,7 @@ app.use(session({
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
     sameSite: 'none',
-    maxAge: 1000 * 60 * 60 * 24 // 1 day
+    maxAge: 1000 * 60 * 60 * 24
   }
 }));
 
@@ -61,31 +63,25 @@ const sheets = google.sheets({ version: "v4", auth });
 
 // ===== Spreadsheet IDs =====
 const SPREADSHEET_IDS = {
-  users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
-  volunteers: "1O_y1yDiYfO0RT8eGwBMtaiPWYYvSR8jIDIdZkZPlvNA",
-  streetteam: "1dPz1LqQq6SKjZIwsgIpQJdQzdmlOV7YrOZJjHqC4Yg8",
-  waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
-  campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8"
+  users: process.env.SPREADSHEET_USERS,
+  waitlist: process.env.SPREADSHEET_WAITLIST,
+  volunteers: process.env.SPREADSHEET_VOLUNTEERS,
+  streetteam: process.env.SPREADSHEET_STREETTEAM,
+  campaigns: process.env.SPREADSHEET_CAMPAIGNS
 };
 
-// ===== SendGrid Setup =====
+// ===== SendGrid =====
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// ===== Email Helper =====
+// ===== Helpers =====
 async function sendEmail({ to, subject, html }) {
   try {
-    const msg = { to, from: process.env.EMAIL_USER, subject, html };
-    const response = await sgMail.send(msg);
-    console.log(`✅ Email sent to ${to}:`, response[0].statusCode);
-    return true;
+    await sgMail.send({ to, from: process.env.EMAIL_USER, subject, html });
   } catch (error) {
-    if (error.response && error.response.body) console.error("❌ SendGrid error:", error.response.body);
-    else console.error("❌ SendGrid error:", error.message);
-    return false;
+    console.error("SendGrid error:", error.message);
   }
 }
 
-// ===== Helper Functions =====
 async function saveToSheet(sheetId, sheetName, values) {
   try {
     await sheets.spreadsheets.values.append({
@@ -115,10 +111,8 @@ async function verifyUser(email, password) {
     range: "Users!A:D"
   });
   const rows = response.data.values || [];
-
   const userRow = rows.find(row => row[2].toLowerCase() === email.toLowerCase());
   if (!userRow) return false;
-
   const storedHash = userRow[3];
   const match = await bcrypt.compare(password, storedHash);
   return match ? { name: userRow[1], email: userRow[2] } : false;
@@ -297,21 +291,31 @@ app.post("/api/campaigns", async (req, res) => {
 
   try {
     const form = new formidable.IncomingForm({ multiples: false });
+    form.uploadDir = path.join(__dirname, "public/uploads");
+    form.keepExtensions = true;
+
+    if (!fs.existsSync(form.uploadDir)) fs.mkdirSync(form.uploadDir, { recursive: true });
+
     form.parse(req, async (err, fields, files) => {
-      if (err) return res.status(500).json({ success: false, error: 'Error parsing form.' });
+      if (err) return res.status(500).json({ success: false, error: "Error parsing form." });
 
       const { title, description, goal, category, endDate, location } = fields;
-      if (!title || !description || !goal) return res.status(400).json({ success: false, error: 'Title, description, and goal are required.' });
+      if (!title || !description || !goal) return res.status(400).json({ success: false, error: "Title, description, and goal are required." });
 
       const id = `CAMP-${Date.now()}`;
       const creatorEmail = req.session.user.email;
       const createdAt = new Date().toISOString();
       const raised = 0;
 
-      let imageURL = '';
-      if (files.image && files.image.size > 0) imageURL = files.image.originalFilename;
+      let imageFileName = "";
+      if (files.image && files.image.size > 0) {
+        const ext = path.extname(files.image.originalFilename);
+        imageFileName = `${id}${ext}`;
+        const destPath = path.join(form.uploadDir, imageFileName);
+        fs.renameSync(files.image.filepath, destPath);
+      }
 
-      const values = [id, title, description, goal, raised, creatorEmail, createdAt, category || '', endDate || '', location || '', imageURL];
+      const values = [id, title, description, goal, raised, creatorEmail, createdAt, category || "", endDate || "", location || "", imageFileName];
       await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", values);
 
       res.json({ success: true, id });
@@ -322,5 +326,5 @@ app.post("/api/campaigns", async (req, res) => {
   }
 });
 
-// ===== Start Server =====
+// ===== Start server =====
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
