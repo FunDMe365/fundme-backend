@@ -299,29 +299,30 @@ app.post("/api/create-checkout-session", async (req, res) => {
 });
 const { v4: uuidv4 } = require("uuid"); // add this at the top if not already imported
 
-// ===== Create Campaign =====
-app.post("/api/create-campaign", async (req, res) => {
+// ===== Campaign Creation =====
+app.post("/api/campaigns", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
 
-  const { description, goal } = req.body;
-  if (!description || !goal) return res.status(400).json({ success: false, error: "Description and goal are required." });
-
-  const id = Date.now().toString(); // simple unique ID
-  const createdAt = new Date().toISOString();
-  const creatorEmail = req.session.user.email;
+  const { title, description, goal } = req.body;
+  if (!title || !description || !goal) return res.status(400).json({ success: false, error: "All fields are required." });
 
   try {
+    // Generate a simple unique ID
+    const id = Date.now().toString();
+    const createdAt = new Date().toISOString();
+    const creatorEmail = req.session.user.email;
+
+    // Save to Google Sheet (assuming sheet columns: Id, Description, Goal, Raised, CreatorEmail, CreatedAt)
     await saveToSheet(
-      SPREADSHEET_IDS.campaigns,   // make sure you add this in your SPREADSHEET_IDS object
+      process.env.SPREADSHEET_CAMPAIGNS, // You need to add this to your .env
       "Campaigns",
       [id, description, goal, 0, creatorEmail, createdAt]
     );
 
-    // Respond with the new campaign id so frontend can redirect
-    res.json({ success: true, campaignId: id });
+    res.json({ success: true, message: "Campaign created successfully!", id });
   } catch (err) {
-    console.error("Create campaign error:", err.message);
-    res.status(500).json({ success: false, error: "Failed to create campaign." });
+    console.error("Campaign creation error:", err.message);
+    res.status(500).json({ success: false, error: "Failed to create campaign. Please try again." });
   }
 });
 
