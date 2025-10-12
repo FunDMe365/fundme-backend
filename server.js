@@ -168,13 +168,71 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-// --- Dashboard ---
-app.get("/api/dashboard", (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated." });
-  const { name, email } = req.session.user;
-  res.json({ success: true, name, email, campaigns: 0, donations: 0, recentActivity: [] });
+// ===== DASHBOARD (Real-Time Data) =====
+app.get("/api/dashboard", async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ success: false, error: "Email is required." });
+    }
+
+    // Fetch all campaigns
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.CAMPAIGN_SHEET_ID,
+      range: "Campaigns!A:F", // Adjust if you have more columns
+    });
+
+    const rows = response.data.values || [];
+    if (rows.length < 2) {
+      return res.json({
+        success: true,
+        campaigns: 0,
+        donations: 0,
+        recentActivity: [],
+      });
+    }
+
+    // Extract header and data rows
+    const headers = rows[0];
+    const dataRows = rows.slice(1);
+
+    // Find campaigns belonging to this user (based on email)
+    const userCampaigns = dataRows.filter(row => {
+      const campaignEmail = row[2]?.trim().toLowerCase(); // Assuming column C = creator email
+      return campaignEmail === email.trim().toLowerCase();
+    });
+
+    // Format campaigns for dashboard display
+    const formattedCampaigns = userCampaigns.map(row => ({
+      id: row[0],
+      title: row[1],
+      email: row[2],
+      goal: row[3],
+      description: row[4],
+      status: row[5] || "Active",
+    }));
+
+    // Example: donations could be fetched from another sheet later
+    const donations = 0;
+
+    // Recent activity (latest 3 campaigns)
+    const recentActivity = formattedCampaigns.slice(-3).reverse();
+
+    res.json({
+      success: true,
+      email,
+      campaigns: formattedCampaigns.length,
+      donations,
+      recentActivity,
+      allCampaigns: formattedCampaigns,
+    });
+  } catch (err) {
+    console.error("Error fetching dashboard data:", err.message);
+    res.status(500).json({ success: false, error: "Failed to fetch dashboard data." });
+  }
 });
+
 
 // --- Profile ---
 app.get("/api/profile", (req, res) => {
@@ -338,6 +396,54 @@ app.get("/api/campaigns", async (req, res) => {
   } catch (err) {
     console.error("Fetch campaigns error:", err.message);
     res.status(500).json({ success: false, error: "Failed to fetch campaigns." });
+  }
+   // ===== DELETE a Campaign =====
+app.delete("/api/campaigns/:id", async (req, res) => {
+  const campaignId = req.params.id;
+
+  try {
+    // Fetch all campaigns
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.CAMPAIGN_SHEET_ID,
+      range: "Campaigns!A:F",
+    });
+
+    const rows = response.data.values || [];
+    const headers = rows[0];
+    const dataRows = rows.slice(1);
+
+    // Find row index matching ID
+    const index = dataRows.findIndex(r => r[0] === campaignId);
+    if (index === -1) {
+      return res.status(404).json({ success: false, error: "Campaign not found." });
+    }
+
+    // Calculate actual sheet row (1-based + header row)
+    const sheetRow = index + 2;
+
+    // Delete the row
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.CAMPAIGN_SHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            deleteDimension: {
+              range: {
+                sheetId: 0, // 0 = first sheet
+                dimension: "ROWS",
+                startIndex: sheetRow - 1,
+                endIndex: sheetRow,
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    res.json({ success: true, message: "Campaign deleted successfully." });
+  } catch (err) {
+    console.error("Error deleting campaign:", err.message);
+    res.status(500).json({ success: false, error: "Failed to delete campaign." });
   }
 });
 
