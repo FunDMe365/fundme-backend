@@ -179,7 +179,7 @@ app.delete("/api/campaigns/:id", async(req,res)=>{
   if(!req.session.user) return res.status(401).json({success:false,error:"Not authenticated"});
   const id = req.params.id;
   try {
-    const { data } = await sheets.spreadsheets.values.get({spreadsheetId:SPREADSHEET_IDS.campaigns,range:"Campaigns!A:H"});
+    const { data } = await sheets.spreadsheets.values.get({spreadsheetId:SPREADSHEET_IDS.campaigns,range:"Campaigns!A:F"});
     const rows = data.values||[];
     const index = rows.findIndex(r=>r[0]===id);
     if(index<1) return res.status(404).json({success:false,error:"Campaign not found"});
