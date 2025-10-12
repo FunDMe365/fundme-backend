@@ -389,6 +389,10 @@ app.post("/api/create-checkout-session", async (req, res) => {
     console.error("Stripe error:", error);
     res.status(500).json({ success: false, error: "Payment processing failed." });
   }
+   app.post("/api/campaigns", (req, res) => {
+  console.log("✅ Campaign received:", req.body);
+  res.json({ message: "Campaign created successfully!" });
+   });
 });
 
 // ===== Start Server =====
