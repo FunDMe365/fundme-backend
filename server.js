@@ -202,6 +202,40 @@ app.get("/api/all-campaigns", async (req, res) => {
   }
 });
 
+// Fetch all campaigns (public view)
+app.get("/api/campaigns", async (req, res) => {
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:H"
+    });
+
+    const rows = data.values || [];
+    if (rows.length < 2) return res.json({ success: true, campaigns: [] });
+
+    const headers = rows[0];
+    const campaigns = rows.slice(1).map(r => ({
+      id: r[0],
+      title: r[1],
+      email: r[2],
+      goal: r[3],
+      description: r[4],
+      category: r[5],
+      status: r[6],
+      createdAt: r[7]
+    }));
+
+    // Only show active campaigns
+    const activeCampaigns = campaigns.filter(c => c.status === "Active");
+
+    res.json({ success: true, campaigns: activeCampaigns });
+  } catch (err) {
+    console.error("Failed to fetch campaigns:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
+  }
+});
+
+
 // Delete campaign
 app.delete("/api/campaigns/:id", async(req,res)=>{
   if(!req.session.user) return res.status(401).json({success:false,error:"Not authenticated"});
