@@ -8,6 +8,9 @@ const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -37,6 +40,11 @@ app.use(session({
   store: MongoStore.create({ mongoUrl: process.env.MONGO_URI, collectionName: 'sessions' }),
   cookie: { secure: process.env.NODE_ENV === "production", httpOnly: true, sameSite: 'none', maxAge: 1000 * 60 * 60 * 24 }
 }));
+
+// ===== Serve uploaded images =====
+const uploadsDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+app.use("/uploads", express.static(uploadsDir));
 
 // ===== Google Sheets Setup =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -83,6 +91,13 @@ async function verifyUser(email, password) {
   return match ? { name: row[1], email: row[2] } : false;
 }
 
+// ===== Multer Setup for Campaign Images =====
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) { cb(null, uploadsDir); },
+  filename: function (req, file, cb) { cb(null, Date.now() + path.extname(file.originalname)); }
+});
+const upload = multer({ storage });
+
 // ===== Routes =====
 
 // Sign Up
@@ -111,20 +126,6 @@ app.get("/api/profile", (req, res) => {
   res.json({ success: true, profile: req.session.user });
 });
 
-// Profile Update
-app.post("/api/profile/update", async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
-  const { name, email, password } = req.body;
-  try {
-    // For simplicity, just save a new row in Users sheet as updated profile
-    const hash = password ? await bcrypt.hash(password, 10) : null;
-    const values = [new Date().toISOString(), name, email, hash || ""];
-    await saveToSheet(SPREADSHEET_IDS.users, "Users", values);
-    req.session.user = { name, email };
-    res.json({ success: true, message: "Profile updated!" });
-  } catch { res.status(500).json({ success: false, error: "Update failed." }); }
-});
-
 // Logout
 app.post("/api/logout", (req, res) => { req.session.destroy(); res.json({ success: true }); });
 
@@ -132,88 +133,57 @@ app.post("/api/logout", (req, res) => { req.session.destroy(); res.json({ succes
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email || !source || !reason) return res.status(400).json({ success: false, error: "All fields required." });
-  try { await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [name,email,source,reason,new Date().toISOString()]); sendEmail({to:email,subject:"Waitlist",html:`Hi ${name}, you're on the waitlist!`}); res.json({ success:true,message:"Joined waitlist!" }); }
-  catch { res.status(500).json({ success:false,error:"Failed to save." }); }
+  try {
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [name,email,source,reason,new Date().toISOString()]);
+    sendEmail({to:email,subject:"Waitlist",html:`Hi ${name}, you're on the waitlist!`});
+    res.json({ success:true,message:"Joined waitlist!" });
+  } catch { res.status(500).json({ success:false,error:"Failed to save." }); }
 });
 
-// Volunteers & Street Team
-app.post("/submit-volunteer", async (req,res)=>{ const {name,email,city,message}=req.body; if(!name||!email||!city||!message) return res.status(400).json({success:false,error:"All fields required"}); try {await saveToSheet(SPREADSHEET_IDS.volunteers,"Volunteers",[name,email,city,message,new Date().toISOString()]); res.json({success:true,message:"Volunteer submitted!"});} catch {res.status(500).json({success:false,error:"Failed"});} });
-app.post("/submit-streetteam", async (req,res)=>{ const {name,email,city,message}=req.body; if(!name||!email||!city||!message) return res.status(400).json({success:false,error:"All fields required"}); try {await saveToSheet(SPREADSHEET_IDS.streetteam,"StreetTeam",[name,email,city,message,new Date().toISOString()]); res.json({success:true,message:"Street Team submitted!"});} catch {res.status(500).json({success:false,error:"Failed"});} });
-
-// Messages
-app.get("/api/messages",(req,res)=>{ if(!req.session.user) return res.status(401).json({success:false,error:"Not authenticated"}); if(!req.session.messages) req.session.messages=[]; res.json({success:true,messages:req.session.messages}); });
-app.post("/api/messages",(req,res)=>{ if(!req.session.user) return res.status(401).json({success:false,error:"Not authenticated"}); const {text}=req.body; if(!text) return res.status(400).json({success:false,error:"Message required"}); if(!req.session.messages) req.session.messages=[]; req.session.messages.push({text,timestamp:new Date().toISOString()}); res.json({success:true,message:"Message added",messages:req.session.messages}); });
-
 // Stripe Checkout
-app.post("/api/create-checkout-session", async (req,res)=>{ try { const {amount}=req.body; if(!amount||amount<100) return res.status(400).json({success:false,error:"Invalid amount"}); const session = await stripe.checkout.sessions.create({ payment_method_types:["card"],mode:"payment",line_items:[{price_data:{currency:"usd",product_data:{name:"Donation to JoyFund"},unit_amount:amount},quantity:1}], success_url:"https://fundasmile.net/thankyou.html", cancel_url:"https://fundasmile.net/cancel.html" }); res.json({success:true,url:session.url}); } catch { res.status(500).json({success:false,error:"Payment failed"}); } });
+app.post("/api/create-checkout-session", async (req,res)=>{
+  try {
+    const { amount, campaignId } = req.body;
+    if(!amount || amount<100) return res.status(400).json({success:false,error:"Invalid amount"});
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types:["card"],
+      mode:"payment",
+      line_items:[{
+        price_data:{
+          currency:"usd",
+          product_data:{ name:"Donation to JoyFund", metadata: { campaignId } },
+          unit_amount: amount
+        },
+        quantity:1
+      }],
+      success_url:"https://fundasmile.net/thankyou.html",
+      cancel_url:"https://fundasmile.net/cancel.html"
+    });
+    res.json({success:true,url:session.url});
+  } catch { res.status(500).json({success:false,error:"Payment failed"}); }
+});
 
-// Campaigns
-app.post("/api/campaigns", async(req,res)=>{
+// Create Campaign with optional image
+app.post("/api/campaigns", upload.single("image"), async(req,res)=>{
   try {
     const {title,description,goal,category,email} = req.body;
     if(!title||!description||!goal||!category||!email) return res.status(400).json({success:false,error:"All fields required"});
     const id = Date.now().toString();
-    await saveToSheet(SPREADSHEET_IDS.campaigns,"Campaigns",[id,title,email,goal,description,category,"Active",new Date().toISOString()]);
-    res.json({success:true,message:"Campaign created!",id});
+    const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
+    await saveToSheet(SPREADSHEET_IDS.campaigns,"Campaigns",[id,title,email,goal,description,category,"Active",new Date().toISOString(), imageUrl]);
+    res.json({success:true,message:"Campaign created!",id, imageUrl});
   } catch { res.status(500).json({success:false,error:"Failed to create campaign"}); }
 });
 
-// Fetch campaigns per user
-app.get("/api/my-campaigns", async(req,res)=>{
-  if(!req.session.user) return res.status(401).json({success:false,error:"Not authenticated"});
-  try {
-    const { data } = await sheets.spreadsheets.values.get({spreadsheetId:SPREADSHEET_IDS.campaigns,range:"Campaigns!A:H"});
-    const rows = data.values||[];
-    if(rows.length<2) return res.json({success:true,total:0,active:0,campaigns:[]});
-    const headers = rows[0];
-    const userEmail = req.session.user.email.toLowerCase();
-    const userRows = rows.slice(1).filter(r=>r[2]?.toLowerCase()===userEmail);
-    const formatted = userRows.map(r=>({id:r[0],title:r[1],email:r[2],goal:r[3],description:r[4],category:r[5],status:r[6]}));
-    const active = formatted.filter(c=>c.status==="Active").length;
-    res.json({success:true,total:formatted.length,active,campaigns:formatted});
-  } catch { res.status(500).json({success:false,error:"Failed to fetch campaigns"}); }
-});
-
-// Fetch all public campaigns
-app.get("/api/all-campaigns", async (req, res) => {
+// Get all campaigns
+app.get("/api/campaigns", async(req,res)=>{
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:H"
+      range: "Campaigns!A:J"
     });
     const rows = data.values || [];
-    if (rows.length < 2)
-      return res.json({ success: true, campaigns: [] });
-
-    const campaigns = rows.slice(1).map(r => ({
-      id: r[0],
-      title: r[1],
-      email: r[2],
-      goal: r[3],
-      description: r[4],
-      category: r[5],
-      status: r[6]
-    }));
-
-    res.json({ success: true, campaigns: campaigns.filter(c => c.status === "Active") });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, error: "Failed to load campaigns" });
-  }
-});
-
-// Fetch all campaigns (public view)
-app.get("/api/campaigns", async (req, res) => {
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:H"
-    });
-
-    const rows = data.values || [];
-    if (rows.length < 2) return res.json({ success: true, campaigns: [] });
-
-    const headers = rows[0];
+    if(rows.length < 2) return res.json({success:true,campaigns:[]});
     const campaigns = rows.slice(1).map(r => ({
       id: r[0],
       title: r[1],
@@ -222,19 +192,30 @@ app.get("/api/campaigns", async (req, res) => {
       description: r[4],
       category: r[5],
       status: r[6],
-      createdAt: r[7]
+      createdAt: r[7],
+      imageUrl: r[8] || ""
     }));
-
-    // Only show active campaigns
-    const activeCampaigns = campaigns.filter(c => c.status === "Active");
-
-    res.json({ success: true, campaigns: activeCampaigns });
-  } catch (err) {
-    console.error("Failed to fetch campaigns:", err);
-    res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
-  }
+    res.json({success:true,campaigns:campaigns.filter(c=>c.status==="Active")});
+  } catch(err){ console.error(err); res.status(500).json({success:false,error:"Failed to fetch campaigns"}); }
 });
 
+// Get campaigns per user
+app.get("/api/my-campaigns", async(req,res)=>{
+  if(!req.session.user) return res.status(401).json({success:false,error:"Not authenticated"});
+  try {
+    const { data } = await sheets.spreadsheets.values.get({spreadsheetId:SPREADSHEET_IDS.campaigns,range:"Campaigns!A:J"});
+    const rows = data.values||[];
+    if(rows.length<2) return res.json({success:true,total:0,active:0,campaigns:[]});
+    const userEmail = req.session.user.email.toLowerCase();
+    const userRows = rows.slice(1).filter(r=>r[2]?.toLowerCase()===userEmail);
+    const formatted = userRows.map(r=>({
+      id:r[0], title:r[1], email:r[2], goal:r[3], description:r[4],
+      category:r[5], status:r[6], imageUrl:r[8]||""
+    }));
+    const active = formatted.filter(c=>c.status==="Active").length;
+    res.json({success:true,total:formatted.length,active,campaigns:formatted});
+  } catch { res.status(500).json({success:false,error:"Failed to fetch campaigns"}); }
+});
 
 // Delete campaign
 app.delete("/api/campaigns/:id", async(req,res)=>{
@@ -245,8 +226,11 @@ app.delete("/api/campaigns/:id", async(req,res)=>{
     const rows = data.values||[];
     const index = rows.findIndex(r=>r[0]===id);
     if(index<1) return res.status(404).json({success:false,error:"Campaign not found"});
-    const sheetRow = index; // zero-based index includes header row
-    await sheets.spreadsheets.batchUpdate({spreadsheetId:SPREADSHEET_IDS.campaigns,requestBody:{requests:[{deleteDimension:{range:{sheetId:0,dimension:"ROWS",startIndex:sheetRow,endIndex:sheetRow+1}}}]}}); 
+    const sheetRow = index; // zero-based index includes header
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId:SPREADSHEET_IDS.campaigns,
+      requestBody:{requests:[{deleteDimension:{range:{sheetId:0,dimension:"ROWS",startIndex:sheetRow,endIndex:sheetRow+1}}}]}
+    }); 
     res.json({success:true,message:"Campaign deleted"});
   } catch { res.status(500).json({success:false,error:"Failed to delete campaign"}); }
 });
