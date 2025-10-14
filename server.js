@@ -174,18 +174,16 @@ app.get("/api/my-campaigns", async(req,res)=>{
   } catch { res.status(500).json({success:false,error:"Failed to fetch campaigns"}); }
 });
 
-// Public: Fetch all active campaigns
-app.get("/api/campaigns", async (req, res) => {
+// Fetch all public campaigns
+app.get("/api/all-campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:H",
+      range: "Campaigns!A:H"
     });
-
     const rows = data.values || [];
-    if (rows.length < 2) {
+    if (rows.length < 2)
       return res.json({ success: true, campaigns: [] });
-    }
 
     const campaigns = rows.slice(1).map(r => ({
       id: r[0],
@@ -194,20 +192,15 @@ app.get("/api/campaigns", async (req, res) => {
       goal: r[3],
       description: r[4],
       category: r[5],
-      status: r[6],
-      createdAt: r[7],
+      status: r[6]
     }));
 
-    // Only return active ones for the public list
-    const activeCampaigns = campaigns.filter(c => c.status === "Active");
-
-    res.json({ success: true, campaigns: activeCampaigns });
-  } catch (err) {
-    console.error("Error fetching campaigns:", err);
-    res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
+    res.json({ success: true, campaigns: campaigns.filter(c => c.status === "Active") });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, error: "Failed to load campaigns" });
   }
 });
-
 
 // Delete campaign
 app.delete("/api/campaigns/:id", async(req,res)=>{
