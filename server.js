@@ -217,6 +217,101 @@ app.get("/api/my-campaigns", async(req,res)=>{
   } catch { res.status(500).json({success:false,error:"Failed to fetch campaigns"}); }
 });
 
+// Update campaign
+app.put("/api/campaigns/:id", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
+
+  const campaignId = req.params.id;
+
+  try {
+    // Fetch existing campaigns
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:H"
+    });
+    const rows = data.values || [];
+    const headers = rows[0];
+    const index = rows.findIndex(r => r[0] === campaignId);
+
+    if (index < 1) return res.status(404).json({ success: false, error: "Campaign not found" });
+
+    // Read updated fields
+    let title, description, goal, category, imageUrl;
+
+    // Handle multipart/form-data if file is uploaded
+    if (req.headers["content-type"]?.startsWith("multipart/form-data")) {
+      const multer = require("multer");
+      const storage = multer.memoryStorage();
+      const upload = multer({ storage: storage }).single("image");
+
+      upload(req, res, async function(err) {
+        if (err) return res.status(500).json({ success: false, error: "File upload failed" });
+
+        title = req.body.title;
+        description = req.body.description;
+        goal = req.body.goal;
+        category = req.body.category;
+
+        if (req.file) {
+          // Convert image to base64 and store as data URL
+          const base64Image = req.file.buffer.toString("base64");
+          const mimeType = req.file.mimetype;
+          imageUrl = `data:${mimeType};base64,${base64Image}`;
+        }
+
+        // Update the row
+        const updatedRow = [...rows[index]];
+        if (title) updatedRow[1] = title;
+        if (description) updatedRow[4] = description;
+        if (goal) updatedRow[3] = goal;
+        if (category) updatedRow[5] = category;
+        if (imageUrl) updatedRow[8] = imageUrl; // new column for image URL
+
+        // Save back
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: SPREADSHEET_IDS.campaigns,
+          range: `Campaigns!A${index + 1}:I${index + 1}`,
+          valueInputOption: "RAW",
+          requestBody: { values: [updatedRow] }
+        });
+
+        res.json({ success: true, message: "Campaign updated!" });
+      });
+
+    } else {
+      // For application/json requests
+      const body = req.body;
+      title = body.title;
+      description = body.description;
+      goal = body.goal;
+      category = body.category;
+      imageUrl = body.imageUrl; // optional
+
+      const updatedRow = [...rows[index]];
+      if (title) updatedRow[1] = title;
+      if (description) updatedRow[4] = description;
+      if (goal) updatedRow[3] = goal;
+      if (category) updatedRow[5] = category;
+      if (imageUrl) updatedRow[8] = imageUrl;
+
+      // Save back
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_IDS.campaigns,
+        range: `Campaigns!A${index + 1}:I${index + 1}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [updatedRow] }
+      });
+
+      res.json({ success: true, message: "Campaign updated!" });
+    }
+
+  } catch (err) {
+    console.error("Failed to update campaign:", err);
+    res.status(500).json({ success: false, error: "Failed to update campaign" });
+  }
+});
+
+
 // Delete campaign
 app.delete("/api/campaigns/:id", async(req,res)=>{
   if(!req.session.user) return res.status(401).json({success:false,error:"Not authenticated"});
