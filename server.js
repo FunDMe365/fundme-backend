@@ -80,6 +80,7 @@ async function sendEmail({ to, subject, html }) {
   }
 }
 
+// ===== Helper Functions =====
 async function saveToSheet(sheetId, sheetName, values) {
   await sheets.spreadsheets.values.append({
     spreadsheetId: sheetId,
@@ -115,7 +116,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ===== AUTH =====
+// ===== AUTH ROUTES =====
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password)
@@ -154,32 +155,46 @@ app.post("/api/logout", (req, res) => {
   res.json({ success: true });
 });
 
-// ===== CAMPAIGNS =====
+// ===== CAMPAIGNS ROUTES =====
 
 // Create Campaign
 app.post("/api/campaigns", upload.single("image"), async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
+  
   try {
-    const { title, description, goal, category, email } = req.body;
-    if (!title || !description || !goal || !category || !email)
+    const { title, description, goal, category } = req.body;
+    if (!title || !description || !goal || !category)
       return res.status(400).json({ success: false, error: "All fields required." });
 
     const id = Date.now().toString();
-    const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
+    const baseUrl = process.env.NODE_ENV === "production"
+      ? "https://fundme-backend.onrender.com"
+      : `http://localhost:${PORT}`;
+    const imageUrl = req.file ? `${baseUrl}/uploads/${req.file.filename}` : "";
 
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      id, title, email, goal, description, category, "Active", new Date().toISOString(), imageUrl
+      id,
+      title,
+      req.session.user.email,
+      goal,
+      description,
+      category,
+      "Active",
+      new Date().toISOString(),
+      imageUrl
     ]);
 
     res.json({ success: true, message: "Campaign created!", id, imageUrl });
   } catch (err) {
-    console.error("Error creating campaign:", err);
+    console.error(err);
     res.status(500).json({ success: false, error: "Failed to create campaign" });
   }
 });
 
-// Fetch campaigns for logged-in user
-app.get("/api/campaigns", async (req, res) => {
+// Fetch campaigns for logged-in user (Dashboard)
+app.get("/api/my-campaigns", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
+
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
@@ -215,6 +230,7 @@ app.get("/api/campaigns", async (req, res) => {
 app.delete("/api/campaign/:id", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
   const id = req.params.id;
+
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
@@ -223,7 +239,6 @@ app.delete("/api/campaign/:id", async (req, res) => {
     const rows = data.values || [];
     if (rows.length < 2) return res.status(404).json({ success: false, error: "No campaigns found" });
 
-    const header = rows[0];
     const campaignRowIndex = rows.findIndex(r => r[0] === id);
     if (campaignRowIndex === -1) return res.status(404).json({ success: false, error: "Campaign not found" });
 
