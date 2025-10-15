@@ -17,9 +17,18 @@ const PORT = process.env.PORT || 5000;
 // ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ===== CORS =====
+// ===== CORS FIX =====
+const allowedOrigins = ["https://fundasmile.net", "https://www.fundasmile.net"];
 app.use(cors({
-  origin: "https://www.fundasmile.net", // must match your frontend URL
+  origin: function(origin, callback) {
+    // allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = `CORS policy does not allow access from the specified Origin: ${origin}`;
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   credentials: true
 }));
 app.options("*", cors());
@@ -202,7 +211,6 @@ app.get("/api/my-campaigns", async (req, res) => {
       imageUrl: r[8] || ""
     }));
 
-    // FIX: Ensure we filter by logged-in user's email correctly
     const myCampaigns = campaigns.filter(c => c.email === req.session.user.email);
     const active = myCampaigns.filter(c => c.status === "Active");
     const deleted = myCampaigns.filter(c => c.status === "Deleted");
@@ -230,7 +238,6 @@ app.delete("/api/campaign/:id", async (req, res) => {
     const campaignRowIndex = rows.findIndex(r => r[0] === id);
     if (campaignRowIndex === -1) return res.status(404).json({ success: false, error: "Campaign not found" });
 
-    // Update status to Deleted
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
       range: `Campaigns!G${campaignRowIndex + 1}`,
