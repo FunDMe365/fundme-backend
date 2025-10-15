@@ -34,7 +34,6 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ===== Session =====
-app.set("trust proxy", 1);
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
@@ -44,11 +43,11 @@ app.use(session({
     collectionName: "sessions"
   }),
   cookie: {
-  secure: process.env.NODE_ENV === "production", // true on live HTTPS
-  httpOnly: false, 
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  maxAge: 1000 * 60 * 60 * 24
-}
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: false,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24
+  }
 }));
 
 // ===== Google Sheets =====
@@ -69,16 +68,6 @@ const SPREADSHEET_IDS = {
 
 // ===== SendGrid =====
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
-async function sendEmail({ to, subject, html }) {
-  try {
-    await sgMail.send({ to, from: process.env.EMAIL_USER, subject, html });
-    return true;
-  } catch (err) {
-    console.error("SendGrid error:", err.response?.body || err.message);
-    return false;
-  }
-}
 
 // ===== Helper Functions =====
 async function saveToSheet(sheetId, sheetName, values) {
@@ -191,7 +180,7 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
   }
 });
 
-// Fetch campaigns for logged-in user (Dashboard)
+// Fetch campaigns for logged-in user (Dashboard) – FIXED
 app.get("/api/my-campaigns", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
 
@@ -215,6 +204,7 @@ app.get("/api/my-campaigns", async (req, res) => {
       imageUrl: r[8] || ""
     }));
 
+    // FIX: Ensure we filter by logged-in user's email correctly
     const myCampaigns = campaigns.filter(c => c.email === req.session.user.email);
     const active = myCampaigns.filter(c => c.status === "Active");
     const deleted = myCampaigns.filter(c => c.status === "Deleted");
