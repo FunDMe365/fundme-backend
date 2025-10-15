@@ -178,7 +178,7 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
 });
 
 // Fetch campaigns for logged-in user
-app.get("/api/my-campaigns", async (req, res) => {
+app.get("/api/campaigns", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
   try {
     const { data } = await sheets.spreadsheets.values.get({
