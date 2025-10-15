@@ -50,8 +50,8 @@ app.use(session({
     collectionName: "sessions"
   }),
   cookie: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: false,
+    secure: process.env.NODE_ENV === "production", // true in prod (HTTPS)
+    httpOnly: true, // more secure
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     maxAge: 1000 * 60 * 60 * 24
   }
