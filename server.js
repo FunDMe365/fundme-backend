@@ -34,7 +34,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ===== Session =====
-app.set("trust proxy", 1);
+app.set("trust proxy", 1); // required for Render, Heroku, etc.
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
@@ -44,11 +44,11 @@ app.use(session({
     collectionName: "sessions"
   }),
   cookie: {
-  secure: process.env.NODE_ENV === "production" && req.headers['x-forwarded-proto'] === 'https',
-  httpOnly: true,
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  maxAge: 1000 * 60 * 60 * 24
-}
+    httpOnly: true,
+    maxAge: 1000 * 60 * 60 * 24, // 1 day
+    secure: process.env.NODE_ENV === "production", // only HTTPS in production
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax" // none for HTTPS, lax for local
+  }
 }));
 
 // ===== Google Sheets =====
@@ -222,7 +222,7 @@ app.get("/api/my-campaigns", async (req, res) => {
       range: "Campaigns!A:J"
     });
     const rows = data.values || [];
-    if (rows.length < 2) return res.json({ success: true, campaigns: [], total: 0, active: 0 });
+    if (rows.length < 2) return res.json({ success: true, campaigns: [], total: 0, active: 0, deleted: [] });
 
     const campaigns = rows.slice(1).map(r => ({
       id: r[0],
@@ -237,52 +237,44 @@ app.get("/api/my-campaigns", async (req, res) => {
     }));
 
     const myCampaigns = campaigns.filter(c => c.email === req.session.user.email);
-    const activeCount = myCampaigns.filter(c => c.status === "Active").length;
+    const activeCampaigns = myCampaigns.filter(c => c.status === "Active");
+    const deletedCampaigns = myCampaigns.filter(c => c.status === "Deleted");
 
-    res.json({ success: true, campaigns: myCampaigns, total: myCampaigns.length, active: activeCount });
+    res.json({ success: true, campaigns: activeCampaigns, deleted: deletedCampaigns, total: myCampaigns.length, active: activeCampaigns.length });
   } catch (err) {
     console.error("Error fetching my campaigns:", err);
     res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
   }
 });
 
-// ===== Delete Campaign (mark as Deleted) =====
+// Delete Campaign (mark as deleted)
 app.delete("/api/campaign/:id", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
+  const campaignId = req.params.id;
 
   try {
-    const { id } = req.params;
-
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
       range: "Campaigns!A:J"
     });
     const rows = data.values || [];
-    if (rows.length < 2) return res.status(404).json({ success: false, error: "Campaign not found" });
+    if (rows.length < 2) return res.status(404).json({ success: false, error: "No campaigns found" });
 
-    const header = rows[0];
-    let found = false;
+    let rowIndex = rows.findIndex(r => r[0] === campaignId && r[2] === req.session.user.email);
+    if (rowIndex === -1) return res.status(404).json({ success: false, error: "Campaign not found" });
 
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] === id && rows[i][2] === req.session.user.email) {
-        rows[i][6] = "Deleted"; // set status column to Deleted
-        found = true;
-
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: SPREADSHEET_IDS.campaigns,
-          range: `Campaigns!A${i + 1}:J${i + 1}`,
-          valueInputOption: "RAW",
-          requestBody: { values: [rows[i]] }
-        });
-        break;
-      }
-    }
-
-    if (!found) return res.status(404).json({ success: false, error: "Campaign not found or unauthorized" });
+    // Mark as Deleted
+    const sheetRowIndex = rowIndex + 1; // offset for header
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: `Campaigns!G${sheetRowIndex + 1}`, // Column G = status
+      valueInputOption: "RAW",
+      requestBody: { values: [["Deleted"]] }
+    });
 
     res.json({ success: true, message: "Campaign deleted" });
   } catch (err) {
-    console.error("Error deleting campaign:", err);
+    console.error(err);
     res.status(500).json({ success: false, error: "Failed to delete campaign" });
   }
 });
