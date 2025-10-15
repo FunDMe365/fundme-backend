@@ -19,9 +19,7 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ===== CORS =====
 app.use(cors({
-  origin: ["https://fundasmile.net", "http://localhost:3000"],
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  origin: "https://www.fundasmile.net", // must match your frontend URL
   credentials: true
 }));
 app.options("*", cors());
