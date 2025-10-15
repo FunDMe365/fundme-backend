@@ -212,6 +212,40 @@ app.get("/api/campaigns", async (req, res) => {
   }
 });
 
+// Fetch campaigns for logged-in user (dashboard)
+app.get("/api/my-campaigns", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
+
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:J"
+    });
+    const rows = data.values || [];
+    if (rows.length < 2) return res.json({ success: true, campaigns: [], total: 0, active: 0 });
+
+    const campaigns = rows.slice(1).map(r => ({
+      id: r[0],
+      title: r[1],
+      email: r[2],
+      goal: r[3],
+      description: r[4],
+      category: r[5],
+      status: r[6],
+      createdAt: r[7],
+      imageUrl: r[8] || ""
+    }));
+
+    const myCampaigns = campaigns.filter(c => c.email === req.session.user.email);
+    const activeCount = myCampaigns.filter(c => c.status === "Active").length;
+
+    res.json({ success: true, campaigns: myCampaigns, total: myCampaigns.length, active: activeCount });
+  } catch (err) {
+    console.error("Error fetching my campaigns:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
+  }
+});
+
 // ===== STRIPE =====
 app.post("/api/create-checkout-session", async (req, res) => {
   try {
