@@ -246,36 +246,41 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-// ===== DELETE Campaign =====
+// ===== Delete Campaign (mark as Deleted) =====
 app.delete("/api/campaign/:id", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
 
-  const campaignId = req.params.id;
-
   try {
+    const { id } = req.params;
+
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
       range: "Campaigns!A:J"
     });
     const rows = data.values || [];
-    if (rows.length < 2) return res.status(404).json({ success: false, error: "No campaigns found" });
+    if (rows.length < 2) return res.status(404).json({ success: false, error: "Campaign not found" });
 
     const header = rows[0];
-    const campaignRows = rows.slice(1);
+    let found = false;
 
-    const index = campaignRows.findIndex(r => r[0] === campaignId && r[2] === req.session.user.email);
-    if (index === -1) return res.status(404).json({ success: false, error: "Campaign not found or unauthorized" });
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][0] === id && rows[i][2] === req.session.user.email) {
+        rows[i][6] = "Deleted"; // set status column to Deleted
+        found = true;
 
-    campaignRows.splice(index, 1);
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: SPREADSHEET_IDS.campaigns,
+          range: `Campaigns!A${i + 1}:J${i + 1}`,
+          valueInputOption: "RAW",
+          requestBody: { values: [rows[i]] }
+        });
+        break;
+      }
+    }
 
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:J",
-      valueInputOption: "RAW",
-      requestBody: { values: [header, ...campaignRows] }
-    });
+    if (!found) return res.status(404).json({ success: false, error: "Campaign not found or unauthorized" });
 
-    res.json({ success: true, message: "Campaign deleted successfully" });
+    res.json({ success: true, message: "Campaign deleted" });
   } catch (err) {
     console.error("Error deleting campaign:", err);
     res.status(500).json({ success: false, error: "Failed to delete campaign" });
