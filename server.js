@@ -44,12 +44,11 @@ app.use(session({
     collectionName: "sessions"
   }),
   cookie: {
-    httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24, // 1 day
-    secure: process.env.NODE_ENV === "production", // only HTTPS in production
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax" // none for HTTPS, lax for local
-  }
-}));
+  httpOnly: true,
+  maxAge: 1000 * 60 * 60 * 24,
+  secure: process.env.NODE_ENV === "production", // HTTPS only
+  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax"
+}
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
