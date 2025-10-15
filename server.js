@@ -44,11 +44,11 @@ app.use(session({
     collectionName: "sessions"
   }),
   cookie: {
-    secure: process.env.NODE_ENV === "production",
-    httpOnly: false,       // allow mobile JS access
-    sameSite: "none",
-    maxAge: 1000 * 60 * 60 * 24
-  }
+  secure: process.env.NODE_ENV === "production", // true on live HTTPS
+  httpOnly: false, 
+  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  maxAge: 1000 * 60 * 60 * 24
+}
 }));
 
 // ===== Google Sheets =====
