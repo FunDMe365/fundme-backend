@@ -1,4 +1,4 @@
-require('dotenv').config();
+require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -17,20 +17,24 @@ const PORT = process.env.PORT || 5000;
 // ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ===== CORS FIX =====
+// ===== CORS =====
 const allowedOrigins = ["https://fundasmile.net", "https://www.fundasmile.net"];
-app.use(cors({
-  origin: function(origin, callback) {
-    // allow requests with no origin (like mobile apps or curl)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = `CORS policy does not allow access from the specified Origin: ${origin}`;
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true
-}));
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
 app.options("*", cors());
 
 // ===== Middleware =====
@@ -41,27 +45,30 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ===== Session =====
-app.use(session({
-  secret: process.env.SESSION_SECRET || "supersecretkey",
-  resave: false,
-  saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: process.env.MONGO_URI,
-    collectionName: "sessions"
-  }),
-  cookie: {
-    secure: process.env.NODE_ENV === "production", // true in prod (HTTPS)
-    httpOnly: true, // more secure
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    maxAge: 1000 * 60 * 60 * 24
-  }
-}));
+app.set("trust proxy", 1); // required for HTTPS (Render)
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "supersecretkey",
+    resave: false,
+    saveUninitialized: false,
+    store: MongoStore.create({
+      mongoUrl: process.env.MONGO_URI,
+      collectionName: "sessions",
+    }),
+    cookie: {
+      secure: true, // HTTPS required
+      httpOnly: true,
+      sameSite: "none", // allow cross-domain
+      maxAge: 1000 * 60 * 60 * 24, // 1 day
+    },
+  })
+);
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
-  scopes: SCOPES
+  scopes: SCOPES,
 });
 const sheets = google.sheets({ version: "v4", auth });
 
@@ -70,7 +77,7 @@ const SPREADSHEET_IDS = {
   volunteers: "1O_y1yDiYfO0RT8eGwBMtaiPWYYvSR8jIDIdZkZPlvNA",
   streetteam: "1dPz1LqQq6SKjZIwsgIpQJdQzdmlOV7YrOZJjHqC4Yg8",
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
-  campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8"
+  campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
 };
 
 // ===== SendGrid =====
@@ -82,21 +89,28 @@ async function saveToSheet(sheetId, sheetName, values) {
     spreadsheetId: sheetId,
     range: `${sheetName}!A:Z`,
     valueInputOption: "RAW",
-    requestBody: { values: [values] }
+    requestBody: { values: [values] },
   });
 }
 
 async function saveUser({ name, email, password }) {
   const hash = await bcrypt.hash(password, 10);
-  await saveToSheet(SPREADSHEET_IDS.users, "Users", [new Date().toISOString(), name, email, hash]);
+  await saveToSheet(SPREADSHEET_IDS.users, "Users", [
+    new Date().toISOString(),
+    name,
+    email,
+    hash,
+  ]);
 }
 
 async function verifyUser(email, password) {
   const { data } = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_IDS.users,
-    range: "Users!A:D"
+    range: "Users!A:D",
   });
-  const row = (data.values || []).find(r => r[2]?.toLowerCase() === email.toLowerCase());
+  const row = (data.values || []).find(
+    (r) => r[2]?.toLowerCase() === email.toLowerCase()
+  );
   if (!row) return false;
   const match = await bcrypt.compare(password, row[3]);
   return match ? { name: row[1], email: row[2] } : false;
@@ -108,7 +122,7 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, `${Date.now()}${ext}`);
-  }
+  },
 });
 const upload = multer({ storage });
 
@@ -116,7 +130,9 @@ const upload = multer({ storage });
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password)
-    return res.status(400).json({ success: false, message: "All fields required." });
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields required." });
   try {
     await saveUser({ name, email, password });
     res.json({ success: true, message: "Account created!" });
@@ -128,11 +144,15 @@ app.post("/api/signup", async (req, res) => {
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
-    return res.status(400).json({ success: false, error: "Email & password required." });
+    return res
+      .status(400)
+      .json({ success: false, error: "Email & password required." });
   try {
     const user = await verifyUser(email, password);
     if (!user)
-      return res.status(401).json({ success: false, error: "Invalid credentials." });
+      return res
+        .status(401)
+        .json({ success: false, error: "Invalid credentials." });
     req.session.user = user;
     res.json({ success: true, message: "Signed in!" });
   } catch {
@@ -152,20 +172,24 @@ app.post("/api/logout", (req, res) => {
 });
 
 // ===== CAMPAIGNS ROUTES =====
-
-// Create Campaign
 app.post("/api/campaigns", upload.single("image"), async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
-  
+  if (!req.session.user)
+    return res
+      .status(401)
+      .json({ success: false, error: "Not authenticated" });
+
   try {
     const { title, description, goal, category } = req.body;
     if (!title || !description || !goal || !category)
-      return res.status(400).json({ success: false, error: "All fields required." });
+      return res
+        .status(400)
+        .json({ success: false, error: "All fields required." });
 
     const id = Date.now().toString();
-    const baseUrl = process.env.NODE_ENV === "production"
-      ? "https://fundme-backend.onrender.com"
-      : `http://localhost:${PORT}`;
+    const baseUrl =
+      process.env.NODE_ENV === "production"
+        ? "https://fundme-backend.onrender.com"
+        : `http://localhost:${PORT}`;
     const imageUrl = req.file ? `${baseUrl}/uploads/${req.file.filename}` : "";
 
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
@@ -177,7 +201,7 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
       category,
       "Active",
       new Date().toISOString(),
-      imageUrl
+      imageUrl,
     ]);
 
     res.json({ success: true, message: "Campaign created!", id, imageUrl });
@@ -187,19 +211,28 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
   }
 });
 
-// Fetch campaigns for logged-in user (Dashboard) – FIXED
 app.get("/api/my-campaigns", async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
+  if (!req.session.user)
+    return res
+      .status(401)
+      .json({ success: false, error: "Not authenticated" });
 
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:J"
+      range: "Campaigns!A:J",
     });
     const rows = data.values || [];
-    if (rows.length < 2) return res.json({ success: true, campaigns: [], total: 0, active: 0, deleted: [] });
+    if (rows.length < 2)
+      return res.json({
+        success: true,
+        campaigns: [],
+        total: 0,
+        active: 0,
+        deleted: [],
+      });
 
-    const campaigns = rows.slice(1).map(r => ({
+    const campaigns = rows.slice(1).map((r) => ({
       id: r[0],
       title: r[1],
       email: r[2],
@@ -208,41 +241,57 @@ app.get("/api/my-campaigns", async (req, res) => {
       category: r[5],
       status: r[6],
       createdAt: r[7],
-      imageUrl: r[8] || ""
+      imageUrl: r[8] || "",
     }));
 
-    const myCampaigns = campaigns.filter(c => c.email === req.session.user.email);
-    const active = myCampaigns.filter(c => c.status === "Active");
-    const deleted = myCampaigns.filter(c => c.status === "Deleted");
+    const myCampaigns = campaigns.filter(
+      (c) => c.email === req.session.user.email
+    );
+    const active = myCampaigns.filter((c) => c.status === "Active");
+    const deleted = myCampaigns.filter((c) => c.status === "Deleted");
 
-    res.json({ success: true, campaigns: myCampaigns, total: myCampaigns.length, active: active.length, deleted });
+    res.json({
+      success: true,
+      campaigns: myCampaigns,
+      total: myCampaigns.length,
+      active: active.length,
+      deleted,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
   }
 });
 
-// Delete campaign (mark as Deleted)
 app.delete("/api/campaign/:id", async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
+  if (!req.session.user)
+    return res
+      .status(401)
+      .json({ success: false, error: "Not authenticated" });
   const id = req.params.id;
 
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:J"
+      range: "Campaigns!A:J",
     });
     const rows = data.values || [];
-    if (rows.length < 2) return res.status(404).json({ success: false, error: "No campaigns found" });
+    if (rows.length < 2)
+      return res
+        .status(404)
+        .json({ success: false, error: "No campaigns found" });
 
-    const campaignRowIndex = rows.findIndex(r => r[0] === id);
-    if (campaignRowIndex === -1) return res.status(404).json({ success: false, error: "Campaign not found" });
+    const campaignRowIndex = rows.findIndex((r) => r[0] === id);
+    if (campaignRowIndex === -1)
+      return res
+        .status(404)
+        .json({ success: false, error: "Campaign not found" });
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
       range: `Campaigns!G${campaignRowIndex + 1}`,
       valueInputOption: "RAW",
-      requestBody: { values: [["Deleted"]] }
+      requestBody: { values: [["Deleted"]] },
     });
 
     res.json({ success: true, message: "Campaign deleted" });
@@ -267,13 +316,13 @@ app.post("/api/create-checkout-session", async (req, res) => {
           price_data: {
             currency: "usd",
             product_data: { name: `Donation to Campaign ${campaignId}` },
-            unit_amount: amount
+            unit_amount: amount,
           },
-          quantity: 1
-        }
+          quantity: 1,
+        },
       ],
       success_url: "https://fundasmile.net/thankyou.html",
-      cancel_url: "https://fundasmile.net/cancel.html"
+      cancel_url: "https://fundasmile.net/cancel.html",
     });
 
     res.json({ success: true, url: session.url });
