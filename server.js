@@ -34,7 +34,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ===== Session =====
-app.set("trust proxy", 1); // required for Render, Heroku, etc.
+app.set("trust proxy", 1);
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
@@ -44,11 +44,12 @@ app.use(session({
     collectionName: "sessions"
   }),
   cookie: {
-  httpOnly: true,
-  maxAge: 1000 * 60 * 60 * 24,
-  secure: process.env.NODE_ENV === "production", // HTTPS only
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax"
-}
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: "none",
+    maxAge: 1000 * 60 * 60 * 24
+  }
+}));
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -56,7 +57,8 @@ const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
   scopes: SCOPES
 });
-const sheets = google.sheets({ version: "v4", auth });
+
+let sheets = google.sheets({ version: "v4", auth });
 
 const SPREADSHEET_IDS = {
   users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
@@ -101,7 +103,7 @@ async function verifyUser(email, password) {
   const row = (data.values || []).find(r => r[2]?.toLowerCase() === email.toLowerCase());
   if (!row) return false;
   const match = await bcrypt.compare(password, row[3]);
-  return match ? { name: row[1], email: row[2] } : false;
+  return match ? { name: row[1], email: row[2], joinDate: row[0] } : false;
 }
 
 // ===== Multer (File Upload) =====
@@ -179,7 +181,7 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
   }
 });
 
-// Fetch Campaigns (Public)
+// Fetch campaigns (public)
 app.get("/api/campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
@@ -211,7 +213,7 @@ app.get("/api/campaigns", async (req, res) => {
   }
 });
 
-// Fetch campaigns for logged-in user (dashboard)
+// Fetch my campaigns
 app.get("/api/my-campaigns", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
 
@@ -236,21 +238,21 @@ app.get("/api/my-campaigns", async (req, res) => {
     }));
 
     const myCampaigns = campaigns.filter(c => c.email === req.session.user.email);
-    const activeCampaigns = myCampaigns.filter(c => c.status === "Active");
-    const deletedCampaigns = myCampaigns.filter(c => c.status === "Deleted");
+    const active = myCampaigns.filter(c => c.status === "Active");
+    const deleted = myCampaigns.filter(c => c.status === "Deleted");
 
-    res.json({ success: true, campaigns: activeCampaigns, deleted: deletedCampaigns, total: myCampaigns.length, active: activeCampaigns.length });
+    res.json({ success: true, campaigns: active, total: myCampaigns.length, active: active.length, deleted });
   } catch (err) {
     console.error("Error fetching my campaigns:", err);
     res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
   }
 });
 
-// Delete Campaign (mark as deleted)
+// Delete campaign (mark as Deleted)
 app.delete("/api/campaign/:id", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
-  const campaignId = req.params.id;
 
+  const campaignId = req.params.id;
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
@@ -259,21 +261,28 @@ app.delete("/api/campaign/:id", async (req, res) => {
     const rows = data.values || [];
     if (rows.length < 2) return res.status(404).json({ success: false, error: "No campaigns found" });
 
-    let rowIndex = rows.findIndex(r => r[0] === campaignId && r[2] === req.session.user.email);
-    if (rowIndex === -1) return res.status(404).json({ success: false, error: "Campaign not found" });
-
-    // Mark as Deleted
-    const sheetRowIndex = rowIndex + 1; // offset for header
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: `Campaigns!G${sheetRowIndex + 1}`, // Column G = status
-      valueInputOption: "RAW",
-      requestBody: { values: [["Deleted"]] }
+    let found = false;
+    const updatedRows = rows.map(r => {
+      if (r[0] === campaignId && r[2] === req.session.user.email) {
+        r[6] = "Deleted"; // status
+        found = true;
+      }
+      return r;
     });
 
-    res.json({ success: true, message: "Campaign deleted" });
+    if (!found) return res.status(404).json({ success: false, error: "Campaign not found or not authorized" });
+
+    // Update the sheet by overwriting all rows
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:J",
+      valueInputOption: "RAW",
+      requestBody: { values: updatedRows }
+    });
+
+    res.json({ success: true, message: "Campaign deleted successfully" });
   } catch (err) {
-    console.error(err);
+    console.error("Error deleting campaign:", err);
     res.status(500).json({ success: false, error: "Failed to delete campaign" });
   }
 });
