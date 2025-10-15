@@ -45,7 +45,7 @@ app.use(session({
   }),
   cookie: {
     secure: process.env.NODE_ENV === "production",
-    httpOnly: true,
+    httpOnly: false,       // allow mobile JS access
     sameSite: "none",
     maxAge: 1000 * 60 * 60 * 24
   }
@@ -57,8 +57,7 @@ const auth = new google.auth.GoogleAuth({
   credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
   scopes: SCOPES
 });
-
-let sheets = google.sheets({ version: "v4", auth });
+const sheets = google.sheets({ version: "v4", auth });
 
 const SPREADSHEET_IDS = {
   users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
@@ -103,7 +102,7 @@ async function verifyUser(email, password) {
   const row = (data.values || []).find(r => r[2]?.toLowerCase() === email.toLowerCase());
   if (!row) return false;
   const match = await bcrypt.compare(password, row[3]);
-  return match ? { name: row[1], email: row[2], joinDate: row[0] } : false;
+  return match ? { name: row[1], email: row[2] } : false;
 }
 
 // ===== Multer (File Upload) =====
@@ -165,10 +164,7 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
       return res.status(400).json({ success: false, error: "All fields required." });
 
     const id = Date.now().toString();
-    const baseUrl = process.env.NODE_ENV === "production"
-      ? "https://fundme-backend.onrender.com"
-      : `http://localhost:${PORT}`;
-    const imageUrl = req.file ? `${baseUrl}/uploads/${req.file.filename}` : "";
+    const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
 
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
       id, title, email, goal, description, category, "Active", new Date().toISOString(), imageUrl
@@ -181,42 +177,9 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
   }
 });
 
-// Fetch campaigns (public)
-app.get("/api/campaigns", async (req, res) => {
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:J"
-    });
-    const rows = data.values || [];
-    if (rows.length < 2) return res.json({ success: true, campaigns: [] });
-
-    const campaigns = rows.slice(1).map(r => ({
-      id: r[0],
-      title: r[1],
-      email: r[2],
-      goal: r[3],
-      description: r[4],
-      category: r[5],
-      status: r[6],
-      createdAt: r[7],
-      imageUrl: r[8] || ""
-    }));
-
-    res.json({
-      success: true,
-      campaigns: campaigns.filter(c => c.status === "Active")
-    });
-  } catch (err) {
-    console.error("Error fetching campaigns:", err);
-    res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
-  }
-});
-
-// Fetch my campaigns
+// Fetch campaigns for logged-in user
 app.get("/api/my-campaigns", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
-
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
@@ -241,9 +204,9 @@ app.get("/api/my-campaigns", async (req, res) => {
     const active = myCampaigns.filter(c => c.status === "Active");
     const deleted = myCampaigns.filter(c => c.status === "Deleted");
 
-    res.json({ success: true, campaigns: active, total: myCampaigns.length, active: active.length, deleted });
+    res.json({ success: true, campaigns: myCampaigns, total: myCampaigns.length, active: active.length, deleted });
   } catch (err) {
-    console.error("Error fetching my campaigns:", err);
+    console.error(err);
     res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
   }
 });
@@ -251,8 +214,7 @@ app.get("/api/my-campaigns", async (req, res) => {
 // Delete campaign (mark as Deleted)
 app.delete("/api/campaign/:id", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
-
-  const campaignId = req.params.id;
+  const id = req.params.id;
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
@@ -261,28 +223,21 @@ app.delete("/api/campaign/:id", async (req, res) => {
     const rows = data.values || [];
     if (rows.length < 2) return res.status(404).json({ success: false, error: "No campaigns found" });
 
-    let found = false;
-    const updatedRows = rows.map(r => {
-      if (r[0] === campaignId && r[2] === req.session.user.email) {
-        r[6] = "Deleted"; // status
-        found = true;
-      }
-      return r;
-    });
+    const header = rows[0];
+    const campaignRowIndex = rows.findIndex(r => r[0] === id);
+    if (campaignRowIndex === -1) return res.status(404).json({ success: false, error: "Campaign not found" });
 
-    if (!found) return res.status(404).json({ success: false, error: "Campaign not found or not authorized" });
-
-    // Update the sheet by overwriting all rows
+    // Update status to Deleted
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:J",
+      range: `Campaigns!G${campaignRowIndex + 1}`,
       valueInputOption: "RAW",
-      requestBody: { values: updatedRows }
+      requestBody: { values: [["Deleted"]] }
     });
 
-    res.json({ success: true, message: "Campaign deleted successfully" });
+    res.json({ success: true, message: "Campaign deleted" });
   } catch (err) {
-    console.error("Error deleting campaign:", err);
+    console.error(err);
     res.status(500).json({ success: false, error: "Failed to delete campaign" });
   }
 });
