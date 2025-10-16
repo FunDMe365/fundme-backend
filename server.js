@@ -10,24 +10,38 @@ const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
 const path = require("path");
 const multer = require("multer");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// ===== Ensure uploads folder exists =====
+const uploadsDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 // ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ===== CORS =====
-const allowedOrigins = ["https://fundasmile.net", "https://www.fundasmile.net"];
+// Keep production origins strict; allow common local dev origins too.
+const allowedOrigins = [
+  "https://fundasmile.net",
+  "https://www.fundasmile.net",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:5500",
+  "http://127.0.0.1:5500",
+];
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
+      // allow requests with no origin (like mobile apps, curl, Postman)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -42,10 +56,10 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // Serve static uploaded images
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use("/uploads", express.static(uploadsDir));
 
 // ===== Session =====
-app.set("trust proxy", 1); // required for HTTPS (Render)
+app.set("trust proxy", 1); // required if behind a proxy (Render, etc.)
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "supersecretkey",
@@ -56,9 +70,10 @@ app.use(
       collectionName: "sessions",
     }),
     cookie: {
-      secure: true, // HTTPS required
+      // secure must be true in production (HTTPS). Allow dev when not in production.
+      secure: process.env.NODE_ENV === "production",
       httpOnly: true,
-      sameSite: "none", // allow cross-domain
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 1000 * 60 * 60 * 24, // 1 day
     },
   })
@@ -67,7 +82,7 @@ app.use(
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
+  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON || "{}"),
   scopes: SCOPES,
 });
 const sheets = google.sheets({ version: "v4", auth });
@@ -81,11 +96,13 @@ const SPREADSHEET_IDS = {
 };
 
 // ===== SendGrid =====
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+}
 
 // ===== Helper Functions =====
 async function saveToSheet(sheetId, sheetName, values) {
-  await sheets.spreadsheets.values.append({
+  return sheets.spreadsheets.values.append({
     spreadsheetId: sheetId,
     range: `${sheetName}!A:Z`,
     valueInputOption: "RAW",
@@ -118,7 +135,7 @@ async function verifyUser(email, password) {
 
 // ===== Multer (File Upload) =====
 const storage = multer.diskStorage({
-  destination: path.join(__dirname, "uploads"),
+  destination: uploadsDir,
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, `${Date.now()}${ext}`);
@@ -136,8 +153,11 @@ app.post("/api/signup", async (req, res) => {
   try {
     await saveUser({ name, email, password });
     res.json({ success: true, message: "Account created!" });
-  } catch {
-    res.status(500).json({ success: false, message: "Error creating account." });
+  } catch (err) {
+    console.error("Signup error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Error creating account." });
   }
 });
 
@@ -155,7 +175,8 @@ app.post("/api/signin", async (req, res) => {
         .json({ success: false, error: "Invalid credentials." });
     req.session.user = user;
     res.json({ success: true, message: "Signed in!" });
-  } catch {
+  } catch (err) {
+    console.error("Signin error:", err);
     res.status(500).json({ success: false, error: "Server error." });
   }
 });
@@ -167,11 +188,13 @@ app.get("/api/profile", (req, res) => {
 });
 
 app.post("/api/logout", (req, res) => {
-  req.session.destroy();
+  req.session.destroy(() => {});
   res.json({ success: true });
 });
 
 // ===== CAMPAIGNS ROUTES =====
+
+// Create a campaign (authenticated)
 app.post("/api/campaigns", upload.single("image"), async (req, res) => {
   if (!req.session.user)
     return res
@@ -188,7 +211,7 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
     const id = Date.now().toString();
     const baseUrl =
       process.env.NODE_ENV === "production"
-        ? "https://fundme-backend.onrender.com"
+        ? process.env.BACKEND_BASE_URL || "https://fundme-backend.onrender.com"
         : `http://localhost:${PORT}`;
     const imageUrl = req.file ? `${baseUrl}/uploads/${req.file.filename}` : "";
 
@@ -206,11 +229,51 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
 
     res.json({ success: true, message: "Campaign created!", id, imageUrl });
   } catch (err) {
-    console.error(err);
+    console.error("Create campaign error:", err);
     res.status(500).json({ success: false, error: "Failed to create campaign" });
   }
 });
 
+// Public: Get all active campaigns (frontend calls this)
+app.get("/api/campaigns", async (req, res) => {
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:I", // matches how we save columns
+    });
+    const rows = data.values || [];
+
+    // If only headers or empty
+    if (rows.length < 2) {
+      return res.json({ success: true, campaigns: [] });
+    }
+
+    // rows[0] is header, data rows start at index 1
+    const campaigns = rows
+      .slice(1)
+      .map((r) => {
+        return {
+          id: r[0] || "",
+          title: r[1] || "",
+          email: r[2] || "",
+          goal: r[3] || "",
+          description: r[4] || "",
+          category: r[5] || "",
+          status: r[6] || "",
+          createdAt: r[7] || "",
+          imageUrl: r[8] || "",
+        };
+      })
+      .filter((c) => c.status === "Active"); // only active campaigns for public listing
+
+    res.json({ success: true, campaigns });
+  } catch (err) {
+    console.error("Fetch campaigns error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
+  }
+});
+
+// Get campaigns for current user (authenticated)
 app.get("/api/my-campaigns", async (req, res) => {
   if (!req.session.user)
     return res
@@ -220,7 +283,7 @@ app.get("/api/my-campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:J",
+      range: "Campaigns!A:I",
     });
     const rows = data.values || [];
     if (rows.length < 2)
@@ -258,11 +321,12 @@ app.get("/api/my-campaigns", async (req, res) => {
       deleted,
     });
   } catch (err) {
-    console.error(err);
+    console.error("My campaigns error:", err);
     res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
   }
 });
 
+// Delete (mark as Deleted)
 app.delete("/api/campaign/:id", async (req, res) => {
   if (!req.session.user)
     return res
@@ -273,7 +337,7 @@ app.delete("/api/campaign/:id", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:J",
+      range: "Campaigns!A:I",
     });
     const rows = data.values || [];
     if (rows.length < 2)
@@ -287,16 +351,18 @@ app.delete("/api/campaign/:id", async (req, res) => {
         .status(404)
         .json({ success: false, error: "Campaign not found" });
 
+    // campaignRowIndex is index into rows (0 = header). Sheet rows start at 1, so add 1.
+    const sheetRowNumber = campaignRowIndex + 1;
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: `Campaigns!G${campaignRowIndex + 1}`,
+      range: `Campaigns!G${sheetRowNumber}`,
       valueInputOption: "RAW",
       requestBody: { values: [["Deleted"]] },
     });
 
     res.json({ success: true, message: "Campaign deleted" });
   } catch (err) {
-    console.error(err);
+    console.error("Delete campaign error:", err);
     res.status(500).json({ success: false, error: "Failed to delete campaign" });
   }
 });
