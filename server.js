@@ -25,7 +25,6 @@ if (!fs.existsSync(uploadsDir)) {
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ===== CORS =====
-// Keep production origins strict; allow common local dev origins too.
 const allowedOrigins = [
   "https://fundasmile.net",
   "https://www.fundasmile.net",
@@ -38,7 +37,6 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: function (origin, callback) {
-      // allow requests with no origin (like mobile apps, curl, Postman)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
       return callback(new Error("Not allowed by CORS"));
@@ -54,12 +52,10 @@ app.options("*", cors());
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-
-// Serve static uploaded images
 app.use("/uploads", express.static(uploadsDir));
 
 // ===== Session =====
-app.set("trust proxy", 1); // required if behind a proxy (Render, etc.)
+app.set("trust proxy", 1);
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "supersecretkey",
@@ -70,11 +66,10 @@ app.use(
       collectionName: "sessions",
     }),
     cookie: {
-      // secure must be true in production (HTTPS). Allow dev when not in production.
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24, // 1 day
+      maxAge: 1000 * 60 * 60 * 24,
     },
   })
 );
@@ -147,32 +142,24 @@ const upload = multer({ storage });
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password)
-    return res
-      .status(400)
-      .json({ success: false, message: "All fields required." });
+    return res.status(400).json({ success: false, message: "All fields required." });
   try {
     await saveUser({ name, email, password });
     res.json({ success: true, message: "Account created!" });
   } catch (err) {
     console.error("Signup error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Error creating account." });
+    res.status(500).json({ success: false, message: "Error creating account." });
   }
 });
 
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
-    return res
-      .status(400)
-      .json({ success: false, error: "Email & password required." });
+    return res.status(400).json({ success: false, error: "Email & password required." });
   try {
     const user = await verifyUser(email, password);
     if (!user)
-      return res
-        .status(401)
-        .json({ success: false, error: "Invalid credentials." });
+      return res.status(401).json({ success: false, error: "Invalid credentials." });
     req.session.user = user;
     res.json({ success: true, message: "Signed in!" });
   } catch (err) {
@@ -193,20 +180,14 @@ app.post("/api/logout", (req, res) => {
 });
 
 // ===== CAMPAIGNS ROUTES =====
-
-// Create a campaign (authenticated)
 app.post("/api/campaigns", upload.single("image"), async (req, res) => {
   if (!req.session.user)
-    return res
-      .status(401)
-      .json({ success: false, error: "Not authenticated" });
+    return res.status(401).json({ success: false, error: "Not authenticated" });
 
   try {
     const { title, description, goal, category } = req.body;
     if (!title || !description || !goal || !category)
-      return res
-        .status(400)
-        .json({ success: false, error: "All fields required." });
+      return res.status(400).json({ success: false, error: "All fields required." });
 
     const id = Date.now().toString();
     const baseUrl =
@@ -234,37 +215,29 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
   }
 });
 
-// Public: Get all active campaigns (frontend calls this)
 app.get("/api/campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I", // matches how we save columns
+      range: "Campaigns!A:I",
     });
     const rows = data.values || [];
+    if (rows.length < 2) return res.json({ success: true, campaigns: [] });
 
-    // If only headers or empty
-    if (rows.length < 2) {
-      return res.json({ success: true, campaigns: [] });
-    }
-
-    // rows[0] is header, data rows start at index 1
     const campaigns = rows
       .slice(1)
-      .map((r) => {
-        return {
-          id: r[0] || "",
-          title: r[1] || "",
-          email: r[2] || "",
-          goal: r[3] || "",
-          description: r[4] || "",
-          category: r[5] || "",
-          status: r[6] || "",
-          createdAt: r[7] || "",
-          imageUrl: r[8] || "",
-        };
-      })
-      .filter((c) => c.status === "Active"); // only active campaigns for public listing
+      .map((r) => ({
+        id: r[0] || "",
+        title: r[1] || "",
+        email: r[2] || "",
+        goal: r[3] || "",
+        description: r[4] || "",
+        category: r[5] || "",
+        status: r[6] || "",
+        createdAt: r[7] || "",
+        imageUrl: r[8] || "",
+      }))
+      .filter((c) => c.status === "Active");
 
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -273,12 +246,9 @@ app.get("/api/campaigns", async (req, res) => {
   }
 });
 
-// Get campaigns for current user (authenticated)
 app.get("/api/my-campaigns", async (req, res) => {
   if (!req.session.user)
-    return res
-      .status(401)
-      .json({ success: false, error: "Not authenticated" });
+    return res.status(401).json({ success: false, error: "Not authenticated" });
 
   try {
     const { data } = await sheets.spreadsheets.values.get({
@@ -287,13 +257,7 @@ app.get("/api/my-campaigns", async (req, res) => {
     });
     const rows = data.values || [];
     if (rows.length < 2)
-      return res.json({
-        success: true,
-        campaigns: [],
-        total: 0,
-        active: 0,
-        deleted: [],
-      });
+      return res.json({ success: true, campaigns: [], total: 0, active: 0, deleted: [] });
 
     const campaigns = rows.slice(1).map((r) => ({
       id: r[0],
@@ -307,33 +271,23 @@ app.get("/api/my-campaigns", async (req, res) => {
       imageUrl: r[8] || "",
     }));
 
-    const myCampaigns = campaigns.filter(
-      (c) => c.email === req.session.user.email
-    );
+    const myCampaigns = campaigns.filter((c) => c.email === req.session.user.email);
     const active = myCampaigns.filter((c) => c.status === "Active");
     const deleted = myCampaigns.filter((c) => c.status === "Deleted");
 
-    res.json({
-      success: true,
-      campaigns: myCampaigns,
-      total: myCampaigns.length,
-      active: active.length,
-      deleted,
-    });
+    res.json({ success: true, campaigns: myCampaigns, total: myCampaigns.length, active: active.length, deleted });
   } catch (err) {
     console.error("My campaigns error:", err);
     res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
   }
 });
 
-// Delete (mark as Deleted)
+// Mark campaign as Deleted
 app.delete("/api/campaign/:id", async (req, res) => {
   if (!req.session.user)
-    return res
-      .status(401)
-      .json({ success: false, error: "Not authenticated" });
-  const id = req.params.id;
+    return res.status(401).json({ success: false, error: "Not authenticated" });
 
+  const id = req.params.id;
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
@@ -341,17 +295,12 @@ app.delete("/api/campaign/:id", async (req, res) => {
     });
     const rows = data.values || [];
     if (rows.length < 2)
-      return res
-        .status(404)
-        .json({ success: false, error: "No campaigns found" });
+      return res.status(404).json({ success: false, error: "No campaigns found" });
 
     const campaignRowIndex = rows.findIndex((r) => r[0] === id);
     if (campaignRowIndex === -1)
-      return res
-        .status(404)
-        .json({ success: false, error: "Campaign not found" });
+      return res.status(404).json({ success: false, error: "Campaign not found" });
 
-    // campaignRowIndex is index into rows (0 = header). Sheet rows start at 1, so add 1.
     const sheetRowNumber = campaignRowIndex + 1;
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
@@ -364,6 +313,49 @@ app.delete("/api/campaign/:id", async (req, res) => {
   } catch (err) {
     console.error("Delete campaign error:", err);
     res.status(500).json({ success: false, error: "Failed to delete campaign" });
+  }
+});
+
+// ===== DELETE USER ACCOUNT =====
+app.delete("/api/users/delete", async (req, res) => {
+  try {
+    const userEmail = req.session?.user?.email || req.body?.email;
+    if (!userEmail)
+      return res.status(401).json({ success: false, error: "User not authenticated" });
+
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Users!A2:Z",
+    });
+
+    const rows = data.values || [];
+    const rowIndex = rows.findIndex(row => row[2]?.toLowerCase() === userEmail.toLowerCase());
+    if (rowIndex === -1)
+      return res.status(404).json({ success: false, error: "User not found" });
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      requestBody: {
+        requests: [
+          {
+            deleteDimension: {
+              range: {
+                sheetId: 0,
+                dimension: "ROWS",
+                startIndex: rowIndex + 1,
+                endIndex: rowIndex + 2,
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    req.session.destroy(() => {});
+    res.json({ success: true, message: "User deleted successfully" });
+  } catch (err) {
+    console.error("❌ Error deleting user:", err);
+    res.status(500).json({ success: false, error: "Server error deleting user" });
   }
 });
 
