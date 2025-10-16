@@ -184,6 +184,47 @@ app.post("/api/logout", (req, res) => {
   res.json({ success: true });
 });
 
+// ===== ID VERIFICATION ROUTE =====
+app.post("/api/verify-id", upload.fields([
+  { name: "idPhoto", maxCount: 1 },
+  { name: "additionalDocs", maxCount: 1 }
+]), async (req, res) => {
+  if (!req.session.user)
+    return res.status(401).json({ success: false, error: "Not authenticated" });
+
+  try {
+    const idPhoto = req.files['idPhoto']?.[0]?.filename || null;
+    const additionalDocs = req.files['additionalDocs']?.[0]?.filename || null;
+
+    if (!idPhoto) {
+      return res.status(400).json({ success: false, error: "ID photo is required." });
+    }
+
+    // Base URL for uploaded files
+    const baseUrl =
+      process.env.NODE_ENV === "production"
+        ? process.env.BACKEND_BASE_URL || "https://fundme-backend.onrender.com"
+        : `http://localhost:${PORT}`;
+
+    const idPhotoUrl = `${baseUrl}/uploads/${idPhoto}`;
+    const additionalDocsUrl = additionalDocs ? `${baseUrl}/uploads/${additionalDocs}` : "";
+
+    // Save submission to "Users" sheet or a separate "ID_Verifications" sheet
+    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
+      new Date().toISOString(),
+      req.session.user.email,
+      idPhotoUrl,
+      additionalDocsUrl,
+      "Pending"
+    ]);
+
+    res.json({ success: true, message: "ID verification submitted successfully!" });
+  } catch (err) {
+    console.error("ID verification error:", err);
+    res.status(500).json({ success: false, error: "Failed to submit verification." });
+  }
+});
+
 // ===== CAMPAIGNS ROUTES =====
 // === CHANGED: Block unverified users from creating campaigns ===
 app.post("/api/campaigns", upload.single("image"), async (req, res) => {
