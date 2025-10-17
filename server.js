@@ -141,7 +141,7 @@ app.post("/api/logout", (req, res) => {
 });
 
 // ===== ID VERIFICATION =====
-app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
+app.post("/api/identityverification", upload.single("idPhoto"), async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
 
   try {
@@ -152,7 +152,7 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
     const idPhotoUrl = `${baseUrl}/uploads/${file.filename}`;
 
     console.log("Submitting ID verification for:", req.session.user.email);
-    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
+    await saveToSheet(SPREADSHEET_IDS.users, "identityverification", [
       new Date().toISOString(), req.session.user.email, idPhotoUrl, "Pending"
     ]);
 
