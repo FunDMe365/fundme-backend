@@ -249,6 +249,35 @@ console.log("Attempting to save ID verification to sheet...");
   }
 });
 
+// Get ID verification status for logged-in user
+app.get("/api/id-verification-status", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
+
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "ID_Verifications!A:D", // timestamp, email, idPhotoUrl, status
+    });
+
+    const row = (data.values || []).find(
+      r => r[1]?.toLowerCase() === req.session.user.email.toLowerCase()
+    );
+
+    if (!row) {
+      return res.json({ success: true, status: "Not submitted", idPhotoUrl: null });
+    }
+
+    res.json({
+      success: true,
+      status: row[3], // Pending, Approved, Rejected
+      idPhotoUrl: row[2] || null
+    });
+  } catch (err) {
+    console.error("Fetch ID verification status error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch ID verification status." });
+  }
+});
+
 // ===== CAMPAIGNS =====
 app.post("/api/campaigns", upload.single("image"), async (req, res) => {
   if (!req.session.user)
