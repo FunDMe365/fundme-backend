@@ -251,41 +251,37 @@ console.log("Attempting to save ID verification to sheet...");
 
 // Get ID verification status for logged-in user
 app.get("/api/id-verification-status", async (req, res) => {
-  if (!req.session.user)
+  if (!req.session.user) {
     return res.status(401).json({ success: false, error: "Not authenticated." });
+  }
 
   try {
+    const userEmail = req.session.user.email.trim().toLowerCase();
+
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
       range: "ID_Verifications!A:D", // timestamp, email, idPhotoUrl, status
     });
 
     const rows = data.values || [];
-    const userEmail = req.session.user.email.trim().toLowerCase();
+    console.log("Checking verification for:", userEmail);
 
-    // Find the matching row by email
-    const row = rows.find(r => (r[1] || "").trim().toLowerCase() === userEmail);
+    const row = rows.find(r => 
+      r[1] && r[1].trim().toLowerCase() === userEmail
+    );
 
     if (!row) {
-      return res.json({
-        success: true,
-        status: "Not submitted",
-        idPhotoUrl: null,
-      });
+      return res.json({ success: true, status: "Not submitted", idPhotoUrl: null });
     }
 
-    // Return whatever status the sheet has
-    res.json({
-      success: true,
-      status: row[3] || "Pending", // default to Pending if missing
-      idPhotoUrl: row[2] || null,
-    });
+    // row = [timestamp, email, idPhotoUrl, status]
+    const status = row[3]?.trim() || "Pending";
+    const idPhotoUrl = row[2] || null;
+
+    return res.json({ success: true, status, idPhotoUrl });
   } catch (err) {
     console.error("Fetch ID verification status error:", err);
-    res.status(500).json({
-      success: false,
-      error: "Failed to fetch ID verification status.",
-    });
+    res.status(500).json({ success: false, error: "Failed to fetch ID verification status." });
   }
 });
 // ===== CAMPAIGNS =====
