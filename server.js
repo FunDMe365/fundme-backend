@@ -230,6 +230,10 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
 
     const idPhotoUrl = `${baseUrl}/uploads/${idPhoto}`;
 
+    console.log("SESSION:", req.session.user);
+console.log("FILE:", req.file);
+console.log("Attempting to save ID verification to sheet...");
+
     console.log("Saving ID Verification for user:", req.session.user.email);
     await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
       new Date().toISOString(),
