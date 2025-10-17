@@ -251,37 +251,72 @@ console.log("Attempting to save ID verification to sheet...");
 
 // Get ID verification status for logged-in user
 app.get("/api/id-verification-status", async (req, res) => {
-  if (!req.session.user) {
+  if (!req.session.user)
     return res.status(401).json({ success: false, error: "Not authenticated." });
-  }
 
   try {
     const userEmail = req.session.user.email.trim().toLowerCase();
 
     const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "ID_Verifications!A:D", // timestamp, email, idPhotoUrl, status
+      spreadsheetId: SPREADSHEET_IDS.users, // Make sure this points to your user sheet
+      range: "ID_Verifications!A:D", // A: timestamp, B: email, C: idPhotoUrl, D: status
     });
 
     const rows = data.values || [];
-    console.log("Checking verification for:", userEmail);
-
-    const row = rows.find(r => 
-      r[1] && r[1].trim().toLowerCase() === userEmail
-    );
-
-    if (!row) {
+    if (rows.length <= 1)
       return res.json({ success: true, status: "Not submitted", idPhotoUrl: null });
-    }
 
-    // row = [timestamp, email, idPhotoUrl, status]
-    const status = row[3]?.trim() || "Pending";
-    const idPhotoUrl = row[2] || null;
+    // Remove header row and find by email
+    const userRow = rows.find((r, i) => i > 0 && r[1]?.trim().toLowerCase() === userEmail);
 
+    if (!userRow)
+      return res.json({ success: true, status: "Not submitted", idPhotoUrl: null });
+
+    const status = (userRow[3] || "Pending").trim();
+    const idPhotoUrl = userRow[2] || null;
+
+    console.log(`✅ Found ID status for ${userEmail}: ${status}`);
     return res.json({ success: true, status, idPhotoUrl });
   } catch (err) {
-    console.error("Fetch ID verification status error:", err);
-    res.status(500).json({ success: false, error: "Failed to fetch ID verification status." });
+    console.error("❌ ID verification fetch error:", err);
+    return res.status(500).json({ success: false, error: "Failed to fetch verification status." });
+  }
+});
+
+// Fetch all campaigns for logged-in user (Google Sheets)
+app.get("/api/my-campaigns", async (req, res) => {
+  if (!req.session.user)
+    return res.status(401).json({ success: false, error: "Not authenticated." });
+
+  try {
+    const userEmail = req.session.user.email.trim().toLowerCase();
+
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns, // <- add this to your .env or config
+      range: "Campaigns!A:E", // adjust columns as needed
+    });
+
+    const rows = data.values || [];
+    if (rows.length <= 1)
+      return res.json({ success: true, campaigns: [] });
+
+    // Map sheet rows to campaign objects
+    const campaigns = rows.slice(1).map(r => ({
+      id: r[0],
+      title: r[1],
+      imageUrl: r[2],
+      status: r[3],
+      ownerEmail: r[4]?.trim().toLowerCase(),
+    }));
+
+    // Filter by logged-in user's email
+    const userCampaigns = campaigns.filter(c => c.ownerEmail === userEmail);
+
+    console.log(`✅ Found ${userCampaigns.length} campaigns for ${userEmail}`);
+    res.json({ success: true, campaigns: userCampaigns });
+  } catch (err) {
+    console.error("❌ Fetch campaigns error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch campaigns." });
   }
 });
 // ===== CAMPAIGNS =====
