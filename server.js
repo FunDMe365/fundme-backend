@@ -33,20 +33,16 @@ const allowedOrigins = [
   "http://localhost:5500",
   "http://127.0.0.1:5500",
 ];
-
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
-
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"],
+}));
 app.options("*", cors());
 
 // ===== Middleware =====
@@ -56,23 +52,21 @@ app.use("/uploads", express.static(uploadsDir));
 
 // ===== Session =====
 app.set("trust proxy", 1);
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "supersecretkey",
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI,
-      collectionName: "sessions",
-    }),
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24,
-    },
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || "supersecretkey",
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    collectionName: "sessions",
+  }),
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24,
+  },
+}));
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -97,15 +91,19 @@ if (process.env.SENDGRID_API_KEY) {
 
 // ===== Helper Functions =====
 async function saveToSheet(sheetId, sheetName, values) {
-  return sheets.spreadsheets.values.append({
-    spreadsheetId: sheetId,
-    range: `${sheetName}!A:Z`,
-    valueInputOption: "RAW",
-    requestBody: { values: [values] },
-  });
+  try {
+    return sheets.spreadsheets.values.append({
+      spreadsheetId: sheetId,
+      range: `${sheetName}!A:Z`,
+      valueInputOption: "RAW",
+      requestBody: { values: [values] },
+    });
+  } catch (err) {
+    console.error("Google Sheets error:", err);
+    throw err;
+  }
 }
 
-// === CHANGED: Save user with verified = false by default ===
 async function saveUser({ name, email, password }) {
   const hash = await bcrypt.hash(password, 10);
   await saveToSheet(SPREADSHEET_IDS.users, "Users", [
@@ -117,20 +115,15 @@ async function saveUser({ name, email, password }) {
   ]);
 }
 
-// === CHANGED: Include verified flag in verifyUser ===
 async function verifyUser(email, password) {
   const { data } = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_IDS.users,
-    range: "Users!A:E", // include verified column
+    range: "Users!A:E",
   });
-  const row = (data.values || []).find(
-    (r) => r[2]?.toLowerCase() === email.toLowerCase()
-  );
+  const row = (data.values || []).find(r => r[2]?.toLowerCase() === email.toLowerCase());
   if (!row) return false;
   const match = await bcrypt.compare(password, row[3]);
-  return match
-    ? { name: row[1], email: row[2], verified: row[4] === "true" }
-    : false;
+  return match ? { name: row[1], email: row[2], verified: row[4] === "true" } : false;
 }
 
 // ===== Multer (File Upload) =====
@@ -139,15 +132,14 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, `${Date.now()}${ext}`);
-  },
+  }
 });
 const upload = multer({ storage });
 
 // ===== AUTH ROUTES =====
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password)
-    return res.status(400).json({ success: false, message: "All fields required." });
+  if (!name || !email || !password) return res.status(400).json({ success: false, message: "All fields required." });
   try {
     await saveUser({ name, email, password });
     res.json({ success: true, message: "Account created!" });
@@ -159,12 +151,10 @@ app.post("/api/signup", async (req, res) => {
 
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ success: false, error: "Email & password required." });
+  if (!email || !password) return res.status(400).json({ success: false, error: "Email & password required." });
   try {
     const user = await verifyUser(email, password);
-    if (!user)
-      return res.status(401).json({ success: false, error: "Invalid credentials." });
+    if (!user) return res.status(401).json({ success: false, error: "Invalid credentials." });
     req.session.user = user;
     res.json({ success: true, message: "Signed in!" });
   } catch (err) {
@@ -174,8 +164,7 @@ app.post("/api/signin", async (req, res) => {
 });
 
 app.get("/api/profile", (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated." });
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated." });
   res.json({ success: true, profile: req.session.user });
 });
 
@@ -184,37 +173,25 @@ app.post("/api/logout", (req, res) => {
   res.json({ success: true });
 });
 
-// ===== ID VERIFICATION ROUTE =====
-app.post("/api/verify-id", upload.fields([
-  { name: "idPhoto", maxCount: 1 },
-  { name: "additionalDocs", maxCount: 1 }
-]), async (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated" });
+// ===== ID VERIFICATION =====
+app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
 
   try {
-    const idPhoto = req.files['idPhoto']?.[0]?.filename || null;
-    const additionalDocs = req.files['additionalDocs']?.[0]?.filename || null;
+    const idPhoto = req.file?.filename;
+    if (!idPhoto) return res.status(400).json({ success: false, error: "ID photo is required." });
 
-    if (!idPhoto) {
-      return res.status(400).json({ success: false, error: "ID photo is required." });
-    }
-
-    // Base URL for uploaded files
-    const baseUrl =
-      process.env.NODE_ENV === "production"
-        ? process.env.BACKEND_BASE_URL || "https://fundme-backend.onrender.com"
-        : `http://localhost:${PORT}`;
+    const baseUrl = process.env.NODE_ENV === "production"
+      ? process.env.BACKEND_BASE_URL || "https://fundme-backend.onrender.com"
+      : `http://localhost:${PORT}`;
 
     const idPhotoUrl = `${baseUrl}/uploads/${idPhoto}`;
-    const additionalDocsUrl = additionalDocs ? `${baseUrl}/uploads/${additionalDocs}` : "";
 
-    // Save submission to "Users" sheet or a separate "ID_Verifications" sheet
+    console.log("Saving ID Verification for user:", req.session.user.email);
     await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
       new Date().toISOString(),
       req.session.user.email,
       idPhotoUrl,
-      additionalDocsUrl,
       "Pending"
     ]);
 
@@ -225,37 +202,23 @@ app.post("/api/verify-id", upload.fields([
   }
 });
 
-// ===== CAMPAIGNS ROUTES =====
-// === CHANGED: Block unverified users from creating campaigns ===
+// ===== CAMPAIGN ROUTES =====
 app.post("/api/campaigns", upload.single("image"), async (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated" });
-
-  if (!req.session.user.verified)
-    return res.status(403).json({ success: false, error: "ID verification required to create a campaign" });
+  if (!req.session.user) return res.status(401).json({ success: false, error: "Not authenticated" });
+  if (!req.session.user.verified) return res.status(403).json({ success: false, error: "ID verification required" });
 
   try {
     const { title, description, goal, category } = req.body;
-    if (!title || !description || !goal || !category)
-      return res.status(400).json({ success: false, error: "All fields required." });
+    if (!title || !description || !goal || !category) return res.status(400).json({ success: false, error: "All fields required." });
 
     const id = Date.now().toString();
-    const baseUrl =
-      process.env.NODE_ENV === "production"
-        ? process.env.BACKEND_BASE_URL || "https://fundme-backend.onrender.com"
-        : `http://localhost:${PORT}`;
+    const baseUrl = process.env.NODE_ENV === "production"
+      ? process.env.BACKEND_BASE_URL || "https://fundme-backend.onrender.com"
+      : `http://localhost:${PORT}`;
     const imageUrl = req.file ? `${baseUrl}/uploads/${req.file.filename}` : "";
 
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      id,
-      title,
-      req.session.user.email,
-      goal,
-      description,
-      category,
-      "Active",
-      new Date().toISOString(),
-      imageUrl,
+      id, title, req.session.user.email, goal, description, category, "Active", new Date().toISOString(), imageUrl
     ]);
 
     res.json({ success: true, message: "Campaign created!", id, imageUrl });
@@ -263,28 +226,6 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
     console.error("Create campaign error:", err);
     res.status(500).json({ success: false, error: "Failed to create campaign" });
   }
-});
-
-// ===== KEEP THE REST OF THE FILE AS IS =====
-
-app.get("/api/campaigns", async (req, res) => {
-  // ... your existing code
-});
-
-app.get("/api/my-campaigns", async (req, res) => {
-  // ... your existing code
-});
-
-app.delete("/api/campaign/:id", async (req, res) => {
-  // ... your existing code
-});
-
-app.delete("/api/users/delete", async (req, res) => {
-  // ... your existing code
-});
-
-app.post("/api/create-checkout-session", async (req, res) => {
-  // ... your existing code
 });
 
 // ===== START SERVER =====
