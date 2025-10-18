@@ -239,11 +239,18 @@ app.get("/api/id-verification-status", async (req, res) => {
     const rows = data.values || [];
     const userRow = rows.find(r => r[1]?.trim().toLowerCase() === userEmail);
 
-    if (!userRow)
+    if (!userRow) {
+      req.session.user.verified = false;
+      req.session.user.verificationStatus = "Not submitted";
       return res.json({ success: true, status: "Not submitted", idPhotoUrl: null });
+    }
 
     const status = userRow[3] || "Pending";
     const idPhotoUrl = userRow[2] || null;
+
+    // 🔹 Update the session automatically if status changes
+    req.session.user.verificationStatus = status;
+    req.session.user.verified = status.toLowerCase() === "approved";
 
     res.json({ success: true, status, idPhotoUrl });
   } catch (err) {
@@ -251,7 +258,6 @@ app.get("/api/id-verification-status", async (req, res) => {
     res.status(500).json({ success: false, error: "Failed to fetch ID verification status." });
   }
 });
-
 // ===== Campaign Routes =====
 app.get("/api/my-campaigns", async (req, res) => {
   if (!req.session.user)
