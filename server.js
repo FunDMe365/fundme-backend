@@ -1,7 +1,6 @@
 require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
-const cors = require("cors");
 const session = require("express-session");
 const MongoStore = require("connect-mongo");
 const bcrypt = require("bcrypt");
@@ -22,7 +21,7 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 // ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ===== CORS =====
+// ===== Allowed Origins =====
 const allowedOrigins = [
   "https://fundasmile.net",
   "https://www.fundasmile.net",
@@ -30,24 +29,7 @@ const allowedOrigins = [
   "http://127.0.0.1:3000",
 ];
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true); // allow curl / mobile apps
-      if (allowedOrigins.indexOf(origin) === -1) {
-        return callback(new Error("CORS not allowed"), false);
-      }
-      return callback(null, true);
-    },
-    credentials: true, // must match frontend fetch
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
-  })
-);
-
-// ===== Middleware for preflight requests =====
-app.options("*", cors({ origin: allowedOrigins, credentials: true }));
-// ===== Unified CORS handling for all requests including preflight =====
+// ===== Minimal CORS fix (handles preflight & credentials) =====
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (allowedOrigins.includes(origin)) {
@@ -59,25 +41,29 @@ app.use((req, res, next) => {
   if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
 });
+
+// ===== Middleware =====
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use("/uploads", express.static(uploadsDir));
+
 // ===== Session =====
 app.set("trust proxy", 1);
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "supersecretkey",
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI,
-      collectionName: "sessions",
-    }),
-    cookie: {
-      secure: process.env.NODE_ENV === "production", // HTTPS only in prod
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24,
-    },
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || "supersecretkey",
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    collectionName: "sessions",
+  }),
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24,
+  }
+}));
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -189,9 +175,8 @@ app.post("/api/signin", async (req, res) => {
     const user = await verifyUser(email, password);
     if (!user) return res.status(401).json({ success: false, error: "Invalid credentials." });
 
-    // ✅ Persist user in session
     req.session.user = user;
-    await new Promise((r) => req.session.save(r)); // force save
+    await new Promise((r) => req.session.save(r));
 
     const message = user.verified
       ? "Signed in successfully!"
