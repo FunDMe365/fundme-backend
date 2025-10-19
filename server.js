@@ -216,7 +216,7 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
       return res.status(400).json({ success: false, message: "ID photo required" });
     }
 
-    // ✅ Use session user info instead of body
+    // ✅ Use session user info
     const { name, email } = req.session.user;
     const photoUrl = `/uploads/${req.file.filename}`;
 
@@ -234,6 +234,35 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
     await new Promise(r => req.session.save(r));
 
     res.json({ success: true, message: "ID submitted successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ===== ADMIN APPROVE ID (NEW FIX) =====
+app.post("/api/admin/approve-id", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ success: false, message: "Email required" });
+
+    // Append Approved in sheet
+    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
+      new Date().toISOString(),
+      email,
+      email, // optional: name or email again
+      "Approved",
+      "" // photo URL optional
+    ]);
+
+    // ✅ Update session if this user is logged in
+    if (req.session.user && req.session.user.email.toLowerCase() === email.toLowerCase()) {
+      req.session.user.verificationStatus = "Approved";
+      req.session.user.verified = true;
+      await new Promise(r => req.session.save(r));
+    }
+
+    res.json({ success: true, message: "User ID approved and session updated" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
