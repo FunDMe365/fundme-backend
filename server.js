@@ -190,11 +190,34 @@ app.post("/api/signin", async (req, res) => {
 });
 
 // ===== CHECK SESSION =====
-app.get("/api/check-session", (req, res) => {
-  if (req.session.user) {
-    return res.json({ loggedIn: true, profile: req.session.user });
-  } else {
-    return res.json({ loggedIn: false });
+app.get("/api/check-session", async (req, res) => {
+  if (!req.session.user) return res.json({ loggedIn: false });
+
+  try {
+    const email = req.session.user.email;
+
+    // Fetch latest verification status from Sheets
+    const { data: verData } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "ID_Verifications!A:D",
+    });
+
+    const verRows = (verData.values || []).filter(
+      (r) => r[1]?.toLowerCase() === email.toLowerCase()
+    );
+    const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
+    const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
+    const verified = verificationStatus === "Approved";
+
+    // Update session
+    req.session.user.verificationStatus = verificationStatus;
+    req.session.user.verified = verified;
+    await new Promise(r => req.session.save(r));
+
+    res.json({ loggedIn: true, profile: req.session.user });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ loggedIn: true, profile: req.session.user });
   }
 });
 
@@ -212,11 +235,8 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
 
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: "ID photo required" });
-    }
+    if (!req.file) return res.status(400).json({ success: false, message: "ID photo required" });
 
-    // ✅ Use session user info
     const { name, email } = req.session.user;
     const photoUrl = `/uploads/${req.file.filename}`;
 
@@ -228,7 +248,6 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
       photoUrl
     ]);
 
-    // Update session
     req.session.user.verificationStatus = "Pending";
     req.session.user.verified = false;
     await new Promise(r => req.session.save(r));
@@ -240,22 +259,20 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
   }
 });
 
-// ===== ADMIN APPROVE ID (NEW FIX) =====
+// ===== ADMIN APPROVE ID =====
 app.post("/api/admin/approve-id", async (req, res) => {
   try {
     const { email } = req.body;
     if (!email) return res.status(400).json({ success: false, message: "Email required" });
 
-    // Append Approved in sheet
     await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
       new Date().toISOString(),
       email,
-      email, // optional: name or email again
+      email,
       "Approved",
-      "" // photo URL optional
+      ""
     ]);
 
-    // ✅ Update session if this user is logged in
     if (req.session.user && req.session.user.email.toLowerCase() === email.toLowerCase()) {
       req.session.user.verificationStatus = "Approved";
       req.session.user.verified = true;
@@ -363,7 +380,27 @@ app.delete("/api/campaign/:id", async (req, res) => {
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    if (!req.session.user.verified) return res.status(403).json({ success: false, message: "ID verification required" });
+
+    const email = req.session.user.email;
+
+    // ✅ Fetch latest ID verification status
+    const { data: verData } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "ID_Verifications!A:D",
+    });
+
+    const verRows = (verData.values || []).filter(
+      (r) => r[1]?.toLowerCase() === email.toLowerCase()
+    );
+    const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
+    const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
+    const verified = verificationStatus === "Approved";
+
+    req.session.user.verificationStatus = verificationStatus;
+    req.session.user.verified = verified;
+    await new Promise(r => req.session.save(r));
+
+    if (!verified) return res.status(403).json({ success: false, message: "ID verification required" });
 
     const { title, description } = req.body;
     if (!title || !description) return res.status(400).json({ success: false, message: "Title & description required" });
@@ -377,7 +414,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       "Pending",
       imageUrl,
       new Date().toISOString(),
-      req.session.user.email
+      email
     ]);
 
     res.json({ success: true, message: "Campaign created!" });
