@@ -334,18 +334,22 @@ app.get("/api/my-campaigns", async (req, res) => {
 
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:H",
+      range: "Campaigns!A:I", // Include all columns
     });
 
-    const campaigns = (data.values || []).map(r => ({
-      id: r[0],
-      title: r[1],
-      description: r[2],
-      status: r[3],
-      imageUrl: r[4],
-      createdAt: r[5],
-      ownerEmail: r[6],
-    })).filter(c => c.ownerEmail.toLowerCase() === req.session.user.email.toLowerCase());
+    const campaigns = (data.values || [])
+      .filter(c => c[2]?.toLowerCase() === req.session.user.email.toLowerCase())
+      .map(r => ({
+        id: r[0],
+        title: r[1],
+        email: r[2],
+        goal: r[3],
+        description: r[4],
+        category: r[5],
+        status: r[6],
+        createdAt: r[7],
+        imageUrl: r[8]
+      }));
 
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -353,6 +357,7 @@ app.get("/api/my-campaigns", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
 
 app.delete("/api/campaign/:id", async (req, res) => {
   try {
