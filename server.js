@@ -274,6 +274,7 @@ app.post("/api/waitlist", async (req, res) => {
       email,
       source,
       reason,
+      Date / Time
     ]);
 
     res.json({
