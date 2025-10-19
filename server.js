@@ -100,7 +100,8 @@ async function saveToSheet(sheetId, sheetName, values) {
 // ===== Multer (File Upload) =====
 const storage = multer.diskStorage({
   destination: uploadsDir,
-  filename: (req, file, cb) => cb(null, `${Date.now()}${path.extname(file.originalname)}`),
+  filename: (req, file, cb) =>
+    cb(null, `${Date.now()}${path.extname(file.originalname)}`),
 });
 const upload = multer({ storage });
 
@@ -112,7 +113,7 @@ async function saveUser({ name, email, password }) {
     name,
     email,
     hash,
-    "false", // verified default
+    "false",
   ]);
 }
 
@@ -122,19 +123,22 @@ async function verifyUser(email, password) {
     range: "Users!A:E",
   });
 
-  const userRow = (userData.values || []).find(r => r[2]?.toLowerCase() === email.toLowerCase());
+  const userRow = (userData.values || []).find(
+    (r) => r[2]?.toLowerCase() === email.toLowerCase()
+  );
   if (!userRow) return false;
 
   const passwordMatch = await bcrypt.compare(password, userRow[3]);
   if (!passwordMatch) return false;
 
-  // Pull latest ID verification record
   const { data: verData } = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_IDS.users,
     range: "ID_Verifications!A:D",
   });
 
-  const verRows = (verData.values || []).filter(r => r[1]?.toLowerCase() === email.toLowerCase());
+  const verRows = (verData.values || []).filter(
+    (r) => r[1]?.toLowerCase() === email.toLowerCase()
+  );
   const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
   const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
   const verified = verificationStatus === "Approved";
@@ -224,7 +228,6 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
   }
 });
 
-// ===== Get ID Verification Status =====
 app.get("/api/id-verification-status", async (req, res) => {
   if (!req.session.user)
     return res.status(401).json({ success: false, error: "Not authenticated." });
@@ -237,7 +240,7 @@ app.get("/api/id-verification-status", async (req, res) => {
     });
 
     const rows = data.values || [];
-    const userRow = rows.find(r => r[1]?.trim().toLowerCase() === userEmail)
+    const userRow = rows.find((r) => r[1]?.trim().toLowerCase() === userEmail);
     if (!userRow) {
       req.session.user.verified = false;
       req.session.user.verificationStatus = "Not submitted";
@@ -246,8 +249,6 @@ app.get("/api/id-verification-status", async (req, res) => {
 
     const status = userRow[3] || "Pending";
     const idPhotoUrl = userRow[2] || null;
-
-    // 🔹 Update the session automatically if status changes
     req.session.user.verificationStatus = status;
     req.session.user.verified = status.toLowerCase() === "approved";
 
@@ -257,22 +258,34 @@ app.get("/api/id-verification-status", async (req, res) => {
     res.status(500).json({ success: false, error: "Failed to fetch ID verification status." });
   }
 });
-//===== Waitlist Route =====
+
+// ===== Waitlist Route (Fixed) =====
 app.post("/api/waitlist", async (req, res) => {
   try {
-    const { name, email } = req.body;
+    const { name, email, source, reason } = req.body;
+    if (!name || !email || !source || !reason)
+      return res.status(400).json({ success: false, message: "All fields required." });
 
-    if (!name || !email) {
-      return res.status(400).json({ success: false, message: "Name and email required." });
-    }
+    console.log("📝 New waitlist submission:", name, email, source, reason);
 
-    console.log("New waitlist submission:", name, email);
-    res.json({ success: true, message: "Added to waitlist!" });
-  } catch (error) {
-    console.error("Waitlist error:", error);
-    res.status(500).json({ success: false, message: "Server error." });
+    await saveToSheet(SPREADSHEET_IDS.users, "Waitlist", [
+      new Date().toISOString(),
+      name,
+      email,
+      source,
+      reason,
+    ]);
+
+    res.json({
+      success: true,
+      message: "🎉 Successfully joined the waitlist! Check your email.",
+    });
+  } catch (err) {
+    console.error("Waitlist error:", err);
+    res.status(500).json({ success: false, message: "Server error. Please try again." });
   }
 });
+
 // ===== Campaign Routes =====
 app.get("/api/my-campaigns", async (req, res) => {
   if (!req.session.user)
@@ -286,7 +299,7 @@ app.get("/api/my-campaigns", async (req, res) => {
     });
 
     const rows = data.values || [];
-    const campaigns = rows.slice(1).map(r => ({
+    const campaigns = rows.slice(1).map((r) => ({
       id: r[0],
       title: r[1],
       email: r[2],
@@ -298,7 +311,7 @@ app.get("/api/my-campaigns", async (req, res) => {
       imageUrl: r[8] || "",
     }));
 
-    const userCampaigns = campaigns.filter(c => c.email?.toLowerCase() === userEmail);
+    const userCampaigns = campaigns.filter((c) => c.email?.toLowerCase() === userEmail);
     res.json({ success: true, campaigns: userCampaigns });
   } catch (err) {
     console.error(err);
