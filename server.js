@@ -186,15 +186,11 @@ app.post("/api/signin", async (req, res) => {
 
 // ===== CHECK SESSION =====
 app.get("/api/check-session", (req, res) => {
-  if (!req.session.user) {
+  if (req.session.user) {
+    return res.json({ loggedIn: true, profile: req.session.user });
+  } else {
     return res.json({ loggedIn: false });
   }
-  res.json({ loggedIn: true, profile: req.session.user });
-});
-
-app.post("/api/logout", (req, res) => {
-  req.session.destroy(() => {});
-  res.json({ success: true });
 });
 
 // ===== Start Server =====
