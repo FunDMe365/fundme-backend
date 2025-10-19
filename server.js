@@ -23,20 +23,19 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ===== CORS =====
-const allowedOrigins = [
-  "https://fundasmile.net",
-  "https://www.fundasmile.net",
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-  "http://localhost:5500",
-  "http://127.0.0.1:5500",
-];
 app.use(
   cors({
-    origin: ["https://fundasmile.net","https://www.fundasmile.net","http://localhost:3000"],
-    methods: ["GET","POST","OPTIONS"], // add OPTIONS explicitly
+    origin: [
+      "https://fundasmile.net",
+      "https://www.fundasmile.net",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "http://localhost:5500",
+      "http://127.0.0.1:5500",
+    ],
+    methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type"],
-    credentials: true
+    credentials: true,
   })
 );
 
@@ -60,7 +59,7 @@ app.use(
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24,
+      maxAge: 1000 * 60 * 60 * 24, // 1 day
     },
   })
 );
@@ -76,7 +75,7 @@ const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_IDS = {
   users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
-  waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ" // <--- Add your Waitlist sheet ID
+  waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
 };
 
 // ===== SendGrid =====
@@ -187,6 +186,14 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
+// ✅ KEEP SESSION ALIVE ROUTE
+app.get("/api/check-session", (req, res) => {
+  if (req.session.user) {
+    return res.json({ loggedIn: true, user: req.session.user });
+  }
+  res.json({ loggedIn: false });
+});
+
 app.get("/api/profile", (req, res) => {
   if (!req.session.user)
     return res.status(401).json({ success: false, error: "Not authenticated." });
@@ -268,7 +275,6 @@ app.post("/api/waitlist", async (req, res) => {
   }
 
   try {
-    // 1️⃣ Save to Google Sheet
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
       new Date().toISOString(),
       name,
@@ -277,52 +283,10 @@ app.post("/api/waitlist", async (req, res) => {
       reason,
     ]);
 
-    // 2️⃣ Send emails (if API key exists), but do NOT block response on failure
-    if (process.env.SENDGRID_API_KEY) {
-      try {
-        const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
-
-        const messages = [
-          {
-            to: email,
-            from: adminEmail,
-            subject: "Successfully Joined Waitlist!",
-            html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund INC waitlist! 🎉</p>`,
-          },
-          {
-            to: adminEmail,
-            from: adminEmail,
-            subject: `New waitlist submission from ${name}`,
-            html: `<p>${name} (${email}) just joined the waitlist.</p>`,
-          },
-        ];
-
-        await sgMail.send(messages);
-        console.log("SendGrid emails sent successfully");
-      } catch (emailErr) {
-        console.error("SendGrid email failed:", emailErr.response?.body || emailErr);
-      }
-    }
-
-    // 3️⃣ Save local backup
-    try {
-      const localFile = path.join(__dirname, "waitlist-backup.json");
-      const existing = fs.existsSync(localFile)
-        ? JSON.parse(fs.readFileSync(localFile))
-        : [];
-      existing.push({ timestamp: new Date().toISOString(), name, email, source, reason });
-      fs.writeFileSync(localFile, JSON.stringify(existing, null, 2));
-      console.log("Saved waitlist entry to local backup.");
-    } catch (fsErr) {
-      console.error("Failed to save local backup:", fsErr);
-    }
-
-    // 4️⃣ Always respond success if Sheets worked
     res.json({
       success: true,
       message: "Successfully joined waitlist! Please check your email for updates.",
     });
-
   } catch (err) {
     console.error("Failed to add to waitlist:", err);
     res.status(500).json({
@@ -331,6 +295,7 @@ app.post("/api/waitlist", async (req, res) => {
     });
   }
 });
+
 // ===== Campaign Routes =====
 app.get("/api/my-campaigns", async (req, res) => {
   if (!req.session.user)
@@ -403,9 +368,6 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
 
 app.get("/api/test-email", async (req, res) => {
   try {
-    const sgMail = require("@sendgrid/mail");
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
     const msg = {
       to: process.env.ADMIN_EMAIL,
       from: process.env.ADMIN_EMAIL,
