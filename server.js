@@ -212,11 +212,12 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
 
-    const { name, email } = req.body;
-    if (!name || !email || !req.file) {
-      return res.status(400).json({ success: false, message: "All fields required" });
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "ID photo required" });
     }
 
+    // ✅ Use session user info instead of body
+    const { name, email } = req.session.user;
     const photoUrl = `/uploads/${req.file.filename}`;
 
     await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
@@ -245,7 +246,6 @@ app.post("/api/profile/update", async (req, res) => {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
 
     const { name, email, password } = req.body;
-    // Save updated info to Google Sheets (append new row)
     const hashed = password ? await bcrypt.hash(password, 10) : null;
     await saveToSheet(SPREADSHEET_IDS.users, "Users", [
       new Date().toISOString(),
@@ -255,7 +255,6 @@ app.post("/api/profile/update", async (req, res) => {
       "false"
     ]);
 
-    // Update session
     req.session.user.name = name;
     req.session.user.email = email;
     await new Promise(r => req.session.save(r));
@@ -271,7 +270,6 @@ app.post("/api/profile/update", async (req, res) => {
 app.delete("/api/delete-account", async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    // Optionally mark deleted in Google Sheets
     req.session.destroy(err => {
       if (err) return res.status(500).json({ success: false, message: "Delete failed" });
       res.clearCookie("connect.sid");
@@ -315,7 +313,6 @@ app.delete("/api/campaign/:id", async (req, res) => {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
     const campaignId = req.params.id;
 
-    // Append a row marking deleted (since Google Sheets can't delete easily)
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
       new Date().toISOString(),
       "Deleted",
