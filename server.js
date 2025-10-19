@@ -28,14 +28,10 @@ app.use(
     origin: [
       "https://fundasmile.net",
       "https://www.fundasmile.net",
-      "http://localhost:3000",
-      "http://127.0.0.1:3000",
-      "http://localhost:5500",
-      "http://127.0.0.1:5500",
     ],
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type"],
-    credentials: true,
+    credentials: true, // <-- important
   })
 );
 
@@ -45,7 +41,6 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use("/uploads", express.static(uploadsDir));
 
 // ===== Session =====
-app.set("trust proxy", 1);
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "supersecretkey",
@@ -56,9 +51,9 @@ app.use(
       collectionName: "sessions",
     }),
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      secure: true,           // Always true on Render (uses HTTPS)
       httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      sameSite: "none",       // <-- this is the key fix for cross-domain
       maxAge: 1000 * 60 * 60 * 24, // 1 day
     },
   })
