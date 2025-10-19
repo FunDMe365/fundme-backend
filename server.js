@@ -265,6 +265,7 @@ app.post("/api/waitlist", async (req, res) => {
 
   if (!name || !email || !source || !reason) {
     return res.status(400).json({ success: false, message: "All fields required." });
+  }
 
   try {
     // 1️⃣ Save to Google Sheet
@@ -330,9 +331,6 @@ app.post("/api/waitlist", async (req, res) => {
     });
   }
 });
-  }
-});
-
 // ===== Campaign Routes =====
 app.get("/api/my-campaigns", async (req, res) => {
   if (!req.session.user)
