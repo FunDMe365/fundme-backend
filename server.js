@@ -251,5 +251,41 @@ app.get("/api/id-verification-status", async (req, res) => {
   res.json({ success: true, status: "Not submitted", idPhotoUrl: "" });
 });
 
+// ===== ID Verification Route =====
+app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
+  try {
+    const { name, email } = req.body;
+
+    if (!req.session.user) {
+      return res.status(401).json({ success: false, message: "Not logged in." });
+    }
+
+    if (!name || !email || !req.file) {
+      return res.status(400).json({ success: false, message: "All fields required." });
+    }
+
+    // Save the uploaded file URL
+    const idPhotoUrl = `/uploads/${req.file.filename}`;
+
+    // Append to Google Sheets (ID_Verifications sheet)
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_IDS.users, // or a dedicated ID_Verifications sheet ID
+      range: "ID_Verifications!A:D",
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [
+          [new Date().toISOString(), email, name, "Pending", idPhotoUrl],
+        ],
+      },
+    });
+
+    res.json({ success: true, message: "ID submitted successfully!", idPhotoUrl });
+  } catch (err) {
+    console.error("ID verification error:", err);
+    res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
