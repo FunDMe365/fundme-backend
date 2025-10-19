@@ -32,9 +32,7 @@ const allowedOrigins = [
 // ===== Minimal CORS fix (handles preflight & credentials) =====
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
+  if (allowedOrigins.includes(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -49,23 +47,21 @@ app.use("/uploads", express.static(uploadsDir));
 
 // ===== Session =====
 app.set("trust proxy", 1);
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "supersecretkey",
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI,
-      collectionName: "sessions",
-    }),
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24,
-    },
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || "supersecretkey",
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    collectionName: "sessions",
+  }),
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24,
+  }
+}));
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -102,8 +98,7 @@ async function saveToSheet(sheetId, sheetName, values) {
 // ===== Multer (File Upload) =====
 const storage = multer.diskStorage({
   destination: uploadsDir,
-  filename: (req, file, cb) =>
-    cb(null, `${Date.now()}${path.extname(file.originalname)}`),
+  filename: (req, file, cb) => cb(null, `${Date.now()}${path.extname(file.originalname)}`),
 });
 const upload = multer({ storage });
 
@@ -178,7 +173,7 @@ app.post("/api/signin", async (req, res) => {
     if (!user) return res.status(401).json({ success: false, error: "Invalid credentials." });
 
     req.session.user = user;
-    await new Promise((r) => req.session.save(r));
+    await new Promise(r => req.session.save(r));
 
     const message = user.verified
       ? "Signed in successfully!"
@@ -198,7 +193,6 @@ app.get("/api/check-session", async (req, res) => {
   try {
     const email = req.session.user.email;
 
-    // Fetch latest verification status from Sheets
     const { data: verData } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
       range: "ID_Verifications!A:D",
@@ -211,22 +205,20 @@ app.get("/api/check-session", async (req, res) => {
     const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
     const verified = verificationStatus === "Approved";
 
-    // Update session
     req.session.user.verificationStatus = verificationStatus;
     req.session.user.verified = verified;
-    await new Promise((r) => req.session.save(r));
+    await new Promise(r => req.session.save(r));
 
     res.json({ loggedIn: true, profile: req.session.user });
   } catch (err) {
     console.error(err);
-    // Return session data but warn consumer that sheet check failed
     res.json({ loggedIn: true, profile: req.session.user, warning: "Could not fetch latest verification status" });
   }
 });
 
 // ===== LOGOUT =====
 app.post("/api/logout", (req, res) => {
-  req.session.destroy((err) => {
+  req.session.destroy(err => {
     if (err) return res.status(500).json({ success: false, message: "Logout failed" });
     res.clearCookie("connect.sid");
     res.json({ success: true });
@@ -237,7 +229,6 @@ app.post("/api/logout", (req, res) => {
 app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
     if (!req.file) return res.status(400).json({ success: false, message: "ID photo required" });
 
     const { name, email } = req.session.user;
@@ -253,7 +244,7 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
 
     req.session.user.verificationStatus = "Pending";
     req.session.user.verified = false;
-    await new Promise((r) => req.session.save(r));
+    await new Promise(r => req.session.save(r));
 
     res.json({ success: true, message: "ID submitted successfully" });
   } catch (err) {
@@ -276,11 +267,10 @@ app.post("/api/admin/approve-id", async (req, res) => {
       "",
     ]);
 
-    // If the target user is currently in session, update it
     if (req.session.user && req.session.user.email.toLowerCase() === email.toLowerCase()) {
       req.session.user.verificationStatus = "Approved";
       req.session.user.verified = true;
-      await new Promise((r) => req.session.save(r));
+      await new Promise(r => req.session.save(r));
     }
 
     res.json({ success: true, message: "User ID approved and session updated" });
@@ -307,7 +297,7 @@ app.post("/api/profile/update", async (req, res) => {
 
     req.session.user.name = name;
     req.session.user.email = email;
-    await new Promise((r) => req.session.save(r));
+    await new Promise(r => req.session.save(r));
 
     res.json({ success: true });
   } catch (err) {
@@ -320,7 +310,7 @@ app.post("/api/profile/update", async (req, res) => {
 app.delete("/api/delete-account", async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    req.session.destroy((err) => {
+    req.session.destroy(err => {
       if (err) return res.status(500).json({ success: false, message: "Delete failed" });
       res.clearCookie("connect.sid");
       res.json({ success: true });
@@ -334,54 +324,25 @@ app.delete("/api/delete-account", async (req, res) => {
 // ===== CREATE CAMPAIGN =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
-    if (!req.session.user)
-      return res.status(401).json({ success: false, message: "Not logged in" });
-
-    // Always check latest verification status from Sheets to avoid stale sessions
-    try {
-      const email = req.session.user.email;
-      const { data: verData } = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_IDS.users,
-        range: "ID_Verifications!A:D",
-      });
-      const verRows = (verData.values || []).filter(
-        (r) => r[1]?.toLowerCase() === email.toLowerCase()
-      );
-      const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
-      const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
-      const verified = verificationStatus === "Approved";
-      req.session.user.verificationStatus = verificationStatus;
-      req.session.user.verified = verified;
-      await new Promise((r) => req.session.save(r));
-    } catch (sheetErr) {
-      console.warn("Could not refresh verification status from Sheets:", sheetErr);
-      // proceed — session's value will be used (may be stale)
-    }
-
-    if (!req.session.user.verified)
-      return res
-        .status(403)
-        .json({ success: false, message: "ID verification required" });
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
 
     const { title, goal, description, category } = req.body;
     if (!title || !description || !category)
-      return res
-        .status(400)
-        .json({ success: false, message: "Title, description, and category are required" });
+      return res.status(400).json({ success: false, message: "Title, description, and category required" });
 
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
     const campaignId = Date.now().toString();
 
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      campaignId, // Id
-      title, // title
-      req.session.user.email, // Email
-      goal || "", // Goal
-      description, // Description
-      category, // Category
-      "Pending", // Status
-      new Date().toISOString(), // CreatedAt
-      imageUrl, // ImageURL
+      campaignId,
+      title,
+      req.session.user.email,
+      goal || "",
+      description,
+      category,
+      "Pending",
+      new Date().toISOString(),
+      imageUrl
     ]);
 
     res.json({ success: true, message: "Campaign created!" });
@@ -394,19 +355,17 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 // ===== USER'S CAMPAIGNS =====
 app.get("/api/my-campaigns", async (req, res) => {
   try {
-    if (!req.session.user)
-      return res.status(401).json({ success: false, message: "Not logged in" });
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
 
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I", // read full columns
+      range: "Campaigns!A:I",
     });
 
     const rows = data.values || [];
-    // optional: skip header if you keep a header row in sheet
     const campaigns = rows
-      .filter((r) => r[2] && r[2].toLowerCase() === req.session.user.email.toLowerCase())
-      .map((r) => ({
+      .filter(r => r[2] && r[2].toLowerCase() === req.session.user.email.toLowerCase())
+      .map(r => ({
         id: r[0] || "",
         title: r[1] || "",
         email: r[2] || "",
@@ -425,21 +384,18 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-// ===== DELETE CAMPAIGN (mark deleted by appending a row) =====
+// ===== DELETE CAMPAIGN (mark deleted) =====
 app.delete("/api/campaign/:id", async (req, res) => {
   try {
-    if (!req.session.user)
-      return res.status(401).json({ success: false, message: "Not logged in" });
-
-    const campaignId = req.params.id;
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
 
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
       new Date().toISOString(),
       "Deleted",
-      "", // email
-      "", // goal
-      "", // description
-      "", // category
+      "",
+      "",
+      "",
+      "",
       "Deleted",
       new Date().toISOString(),
       "",
@@ -460,10 +416,10 @@ app.get("/api/campaigns", async (req, res) => {
       range: "Campaigns!A:I",
     });
 
-    const rows = (data.values || []).filter((r, i) => i !== 0 && r.length > 0); // skip header row
+    const rows = data.values || [];
     const campaigns = rows
-      .filter((r) => (r[6] || "").trim().toLowerCase() === "approved")
-      .map((r) => ({
+      .filter(r => (r[6] || "").toLowerCase() === "approved")
+      .map(r => ({
         id: r[0] || "",
         title: r[1] || "",
         email: r[2] || "",
