@@ -460,9 +460,9 @@ app.get("/api/campaigns", async (req, res) => {
       range: "Campaigns!A:I",
     });
 
-    const rows = data.values || [];
+    const rows = (data.values || []).filter((r, i) => i !== 0 && r.length > 0); // skip header row
     const campaigns = rows
-      .filter((r) => (r[6] || "").toLowerCase() === "approved")
+      .filter((r) => (r[6] || "").trim().toLowerCase() === "approved")
       .map((r) => ({
         id: r[0] || "",
         title: r[1] || "",
