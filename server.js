@@ -33,11 +33,10 @@ const allowedOrigins = [
 ];
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
+    origin: ["https://fundasmile.net","https://www.fundasmile.net","http://localhost:3000"],
+    methods: ["GET","POST","OPTIONS"], // add OPTIONS explicitly
+    allowedHeaders: ["Content-Type"],
+    credentials: true
   })
 );
 
