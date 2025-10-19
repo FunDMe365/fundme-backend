@@ -262,13 +262,13 @@ app.get("/api/id-verification-status", async (req, res) => {
 // ===== Waitlist Route =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
-  console.log("Waitlist submission received:", req.body);
 
   if (!name || !email || !source || !reason) {
     return res.status(400).json({ success: false, message: "All fields required." });
   }
 
   try {
+    // Save to Google Sheet
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
       new Date().toISOString(),
       name,
@@ -276,15 +276,37 @@ app.post("/api/waitlist", async (req, res) => {
       source,
       reason,
     ]);
-    console.log("Waitlist saved to sheet:", name, email);
-    return res.json({ success: true, message: "Added to waitlist!" });
-  } catch (err) {
-    console.error("Google Sheets append error:", err.response?.data || err);
 
-    // fallback to local file
+    // Send notification emails
+    if (process.env.SENDGRID_API_KEY) {
+      const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
+      const subject = "Successfully Joined Waitlist!";
+      const html = `<p>Hi ${name},</p><p>Thank you for joining the JoyFund INC waitlist! 🎉 Please check your email for updates.</p>`;
+
+      const messages = [
+        {
+          to: email,
+          from: adminEmail,
+          subject,
+          html,
+        },
+        {
+          to: adminEmail,
+          from: adminEmail,
+          subject: `New waitlist submission from ${name}`,
+          html: `<p>${name} (${email}) just joined the waitlist.</p>`,
+        },
+      ];
+
+      await sgMail.send(messages);
+    }
+
+    // Save a local backup
     try {
       const localFile = path.join(__dirname, "waitlist-backup.json");
-      const existing = fs.existsSync(localFile) ? JSON.parse(fs.readFileSync(localFile)) : [];
+      const existing = fs.existsSync(localFile)
+        ? JSON.parse(fs.readFileSync(localFile))
+        : [];
       existing.push({ timestamp: new Date().toISOString(), name, email, source, reason });
       fs.writeFileSync(localFile, JSON.stringify(existing, null, 2));
       console.log("Saved waitlist entry to local backup.");
@@ -292,10 +314,16 @@ app.post("/api/waitlist", async (req, res) => {
       console.error("Failed to save local backup:", fsErr);
     }
 
-    return res.json({
+    // Single response to client
+    res.json({
       success: true,
-      message:
-        "Added to waitlist! (Note: temporarily stored locally — will sync to Google Sheets later)",
+      message: "Successfully joined waitlist! Please check your email for updates.",
+    });
+  } catch (err) {
+    console.error("Failed to add to waitlist:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to join waitlist. Please try again later.",
     });
   }
 });
