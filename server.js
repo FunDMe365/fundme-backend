@@ -398,5 +398,25 @@ app.post("/api/campaigns", upload.single("image"), async (req, res) => {
   }
 });
 
+app.get("/api/test-email", async (req, res) => {
+  try {
+    const sgMail = require("@sendgrid/mail");
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+    const msg = {
+      to: process.env.ADMIN_EMAIL,
+      from: process.env.ADMIN_EMAIL,
+      subject: "✅ SendGrid Test from JoyFund",
+      text: "This is a test email confirming SendGrid is working correctly.",
+    };
+
+    await sgMail.send(msg);
+    res.status(200).send("✅ Email sent successfully!");
+  } catch (error) {
+    console.error("❌ SendGrid test failed:", error);
+    res.status(500).send("❌ Email test failed. Check Render logs.");
+  }
+});
+
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
