@@ -77,6 +77,7 @@ const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_IDS = {
   users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
+  waitlist: "YOUR_WAITLIST_SPREADSHEET_ID_HERE" // <--- Add your Waitlist sheet ID
 };
 
 // ===== SendGrid =====
@@ -259,19 +260,17 @@ app.get("/api/id-verification-status", async (req, res) => {
   }
 });
 
-// ===== Waitlist Route (Fixed) =====
+// ===== Waitlist Route =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   console.log("Waitlist submission received:", req.body);
 
-  // Check for required fields
   if (!name || !email || !source || !reason) {
     return res.status(400).json({ success: false, message: "All fields required." });
   }
 
   try {
-    // Attempt to append to Google Sheet
-    await saveToSheet(SPREADSHEET_IDS.users, "Waitlist", [
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
       new Date().toISOString(),
       name,
       email,
@@ -281,10 +280,9 @@ app.post("/api/waitlist", async (req, res) => {
     console.log("Waitlist saved to sheet:", name, email);
     return res.json({ success: true, message: "Added to waitlist!" });
   } catch (err) {
-    // Log the exact Google Sheets error, but don't crash
     console.error("Google Sheets append error:", err.response?.data || err);
 
-    // Optional: fallback to saving to a local JSON file for safety
+    // fallback to local file
     try {
       const localFile = path.join(__dirname, "waitlist-backup.json");
       const existing = fs.existsSync(localFile) ? JSON.parse(fs.readFileSync(localFile)) : [];
@@ -295,7 +293,6 @@ app.post("/api/waitlist", async (req, res) => {
       console.error("Failed to save local backup:", fsErr);
     }
 
-    // Always respond success to the frontend so the form doesn’t break
     return res.json({
       success: true,
       message:
