@@ -379,41 +379,45 @@ app.delete("/api/campaign/:id", async (req, res) => {
 // ===== CREATE CAMPAIGN =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
-    if (!req.session.user) 
+    if (!req.session.user)
       return res.status(401).json({ success: false, message: "Not logged in" });
 
-    if (!req.session.user.verified) 
-      return res.status(403).json({ success: false, message: "ID verification required" });
+    if (!req.session.user.verified)
+      return res
+        .status(403)
+        .json({ success: false, message: "ID verification required" });
 
-    const { title, description, goal, category } = req.body;
-    if (!title || !description) 
-      return res.status(400).json({ success: false, message: "Title & description required" });
+    const { title, goal, description, category } = req.body;
+    if (!title || !description || !category)
+      return res
+        .status(400)
+        .json({ success: false, message: "Title, description, and category are required" });
 
-    // Handle uploaded file
+    // Handle image upload
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
 
-    // Save to Google Sheets matching your column order:
-    // Id | title | Email | Goal | Description | Category | Status | CreatedAt | ImageURL
+    // Generate a unique Id for the campaign
+    const campaignId = Date.now().toString();
+
+    // Save to Google Sheets in the correct column order
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      Date.now(),                // Id
-      title,                     // title
-      req.session.user.email,    // Email
-      goal || "",                // Goal
-      description,               // Description
-      category || "",            // Category
-      "Pending",                 // Status
-      new Date().toISOString(),  // CreatedAt
-      imageUrl                   // ImageURL
+      campaignId,             // Id
+      title,                  // title
+      req.session.user.email, // Email
+      goal || "",             // Goal
+      description,            // Description
+      category,               // Category
+      "Pending",              // Status
+      new Date().toISOString(), // CreatedAt
+      imageUrl                // ImageURL
     ]);
 
     res.json({ success: true, message: "Campaign created!" });
-
   } catch (err) {
-    console.error("Error creating campaign:", err);
+    console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
