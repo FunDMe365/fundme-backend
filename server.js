@@ -379,50 +379,41 @@ app.delete("/api/campaign/:id", async (req, res) => {
 // ===== CREATE CAMPAIGN =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+    if (!req.session.user) 
+      return res.status(401).json({ success: false, message: "Not logged in" });
 
-    const email = req.session.user.email;
+    if (!req.session.user.verified) 
+      return res.status(403).json({ success: false, message: "ID verification required" });
 
-    // ✅ Fetch latest ID verification status
-    const { data: verData } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "ID_Verifications!A:D",
-    });
+    const { title, description, goal, category } = req.body;
+    if (!title || !description) 
+      return res.status(400).json({ success: false, message: "Title & description required" });
 
-    const verRows = (verData.values || []).filter(
-      (r) => r[1]?.toLowerCase() === email.toLowerCase()
-    );
-    const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
-    const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
-    const verified = verificationStatus === "Approved";
-
-    req.session.user.verificationStatus = verificationStatus;
-    req.session.user.verified = verified;
-    await new Promise(r => req.session.save(r));
-
-    if (!verified) return res.status(403).json({ success: false, message: "ID verification required" });
-
-    const { title, description } = req.body;
-    if (!title || !description) return res.status(400).json({ success: false, message: "Title & description required" });
-
+    // Handle uploaded file
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
 
+    // Save to Google Sheets matching your column order:
+    // Id | title | Email | Goal | Description | Category | Status | CreatedAt | ImageURL
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      Date.now(),
-      title,
-      description,
-      "Pending",
-      imageUrl,
-      new Date().toISOString(),
-      email
+      Date.now(),                // Id
+      title,                     // title
+      req.session.user.email,    // Email
+      goal || "",                // Goal
+      description,               // Description
+      category || "",            // Category
+      "Pending",                 // Status
+      new Date().toISOString(),  // CreatedAt
+      imageUrl                   // ImageURL
     ]);
 
     res.json({ success: true, message: "Campaign created!" });
+
   } catch (err) {
-    console.error(err);
+    console.error("Error creating campaign:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
