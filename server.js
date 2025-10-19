@@ -268,7 +268,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 
   try {
-    // Save to Google Sheet
+    // 1️⃣ Save to Google Sheet
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
       new Date().toISOString(),
       name,
@@ -277,31 +277,34 @@ app.post("/api/waitlist", async (req, res) => {
       reason,
     ]);
 
-    // Send notification emails
+    // 2️⃣ Send emails (if API key exists), but do NOT block response on failure
     if (process.env.SENDGRID_API_KEY) {
-      const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
-      const subject = "Successfully Joined Waitlist!";
-      const html = `<p>Hi ${name},</p><p>Thank you for joining the JoyFund INC waitlist! 🎉 Please check your email for updates.</p>`;
+      try {
+        const adminEmail = process.env.ADMIN_EMAIL || "admin@example.com";
 
-      const messages = [
-        {
-          to: email,
-          from: adminEmail,
-          subject,
-          html,
-        },
-        {
-          to: adminEmail,
-          from: adminEmail,
-          subject: `New waitlist submission from ${name}`,
-          html: `<p>${name} (${email}) just joined the waitlist.</p>`,
-        },
-      ];
+        const messages = [
+          {
+            to: email,
+            from: adminEmail,
+            subject: "Successfully Joined Waitlist!",
+            html: `<p>Hi ${name},</p><p>Thank you for joining the JoyFund INC waitlist! 🎉</p>`,
+          },
+          {
+            to: adminEmail,
+            from: adminEmail,
+            subject: `New waitlist submission from ${name}`,
+            html: `<p>${name} (${email}) just joined the waitlist.</p>`,
+          },
+        ];
 
-      await sgMail.send(messages);
+        await sgMail.send(messages);
+        console.log("SendGrid emails sent successfully");
+      } catch (emailErr) {
+        console.error("SendGrid email failed:", emailErr.response?.body || emailErr);
+      }
     }
 
-    // Save a local backup
+    // 3️⃣ Save local backup
     try {
       const localFile = path.join(__dirname, "waitlist-backup.json");
       const existing = fs.existsSync(localFile)
@@ -314,17 +317,20 @@ app.post("/api/waitlist", async (req, res) => {
       console.error("Failed to save local backup:", fsErr);
     }
 
-    // Single response to client
+    // 4️⃣ Always respond success if Sheets worked
     res.json({
       success: true,
       message: "Successfully joined waitlist! Please check your email for updates.",
     });
+
   } catch (err) {
     console.error("Failed to add to waitlist:", err);
     res.status(500).json({
       success: false,
       message: "Failed to join waitlist. Please try again later.",
     });
+  }
+});
   }
 });
 
