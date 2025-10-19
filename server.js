@@ -237,8 +237,7 @@ app.get("/api/id-verification-status", async (req, res) => {
     });
 
     const rows = data.values || [];
-    const userRow = rows.find(r => r[1]?.trim().toLowerCase() === userEmail);
-
+    const userRow = rows.find(r => r[1]?.trim().toLowerCase() === userEmail)
     if (!userRow) {
       req.session.user.verified = false;
       req.session.user.verificationStatus = "Not submitted";
@@ -256,6 +255,22 @@ app.get("/api/id-verification-status", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, error: "Failed to fetch ID verification status." });
+  }
+});
+//===== Waitlist Route =====
+app.post("/api/waitlist", async (req, res) => {
+  try {
+    const { name, email } = req.body;
+
+    if (!name || !email) {
+      return res.status(400).json({ success: false, message: "Name and email required." });
+    }
+
+    console.log("New waitlist submission:", name, email);
+    res.json({ success: true, message: "Added to waitlist!" });
+  } catch (error) {
+    console.error("Waitlist error:", error);
+    res.status(500).json({ success: false, message: "Server error." });
   }
 });
 // ===== Campaign Routes =====
