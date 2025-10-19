@@ -76,7 +76,7 @@ const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_IDS = {
   users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
-  waitlist: "YOUR_WAITLIST_SPREADSHEET_ID_HERE" // <--- Add your Waitlist sheet ID
+  waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ" // <--- Add your Waitlist sheet ID
 };
 
 // ===== SendGrid =====
