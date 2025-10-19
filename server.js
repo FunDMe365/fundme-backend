@@ -28,10 +28,9 @@ app.use(
     origin: [
       "https://fundasmile.net",
       "https://www.fundasmile.net",
+      "http://localhost:3000",
     ],
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
-    credentials: true, // <-- important
+    credentials: true,
   })
 );
 
@@ -41,6 +40,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use("/uploads", express.static(uploadsDir));
 
 // ===== Session =====
+app.set("trust proxy", 1); // needed for secure cookies behind proxy
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "supersecretkey",
@@ -51,9 +51,9 @@ app.use(
       collectionName: "sessions",
     }),
     cookie: {
-      secure: true,           // Always true on Render (uses HTTPS)
+      secure: process.env.NODE_ENV === "production", // only HTTPS
       httpOnly: true,
-      sameSite: "none",       // <-- this is the key fix for cross-domain
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 1000 * 60 * 60 * 24, // 1 day
     },
   })
@@ -169,7 +169,10 @@ app.post("/api/signin", async (req, res) => {
     const user = await verifyUser(email, password);
     if (!user) return res.status(401).json({ success: false, error: "Invalid credentials." });
 
+    // ✅ Persist user in session
     req.session.user = user;
+    await new Promise((r) => req.session.save(r)); // force save
+
     const message = user.verified
       ? "Signed in successfully!"
       : "Signed in! ⚠️ Your account is pending ID verification.";
@@ -181,201 +184,17 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-// ✅ KEEP SESSION ALIVE ROUTE
+// ===== CHECK SESSION =====
 app.get("/api/check-session", (req, res) => {
-  if (req.session.user) {
-    return res.json({ loggedIn: true, user: req.session.user });
+  if (!req.session.user) {
+    return res.json({ loggedIn: false });
   }
-  res.json({ loggedIn: false });
-});
-
-app.get("/api/profile", (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated." });
-  res.json({ success: true, profile: req.session.user });
+  res.json({ loggedIn: true, profile: req.session.user });
 });
 
 app.post("/api/logout", (req, res) => {
   req.session.destroy(() => {});
   res.json({ success: true });
-});
-
-// ===== ID VERIFICATION =====
-app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated." });
-
-  try {
-    const idPhoto = req.file?.filename;
-    if (!idPhoto)
-      return res.status(400).json({ success: false, error: "ID photo is required." });
-
-    const baseUrl =
-      process.env.NODE_ENV === "production"
-        ? process.env.BACKEND_BASE_URL || "https://fundme-backend.onrender.com"
-        : `http://localhost:${PORT}`;
-    const idPhotoUrl = `${baseUrl}/uploads/${idPhoto}`;
-
-    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
-      new Date().toISOString(),
-      req.session.user.email,
-      idPhotoUrl,
-      "Pending",
-    ]);
-
-    res.json({ success: true, message: "ID verification submitted successfully!" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: "Failed to submit verification." });
-  }
-});
-
-app.get("/api/id-verification-status", async (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated." });
-
-  try {
-    const userEmail = req.session.user.email.trim().toLowerCase();
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "ID_Verifications!A:D",
-    });
-
-    const rows = data.values || [];
-    const userRow = rows.find((r) => r[1]?.trim().toLowerCase() === userEmail);
-    if (!userRow) {
-      req.session.user.verified = false;
-      req.session.user.verificationStatus = "Not submitted";
-      return res.json({ success: true, status: "Not submitted", idPhotoUrl: null });
-    }
-
-    const status = userRow[3] || "Pending";
-    const idPhotoUrl = userRow[2] || null;
-    req.session.user.verificationStatus = status;
-    req.session.user.verified = status.toLowerCase() === "approved";
-
-    res.json({ success: true, status, idPhotoUrl });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: "Failed to fetch ID verification status." });
-  }
-});
-
-// ===== Waitlist Route =====
-app.post("/api/waitlist", async (req, res) => {
-  const { name, email, source, reason } = req.body;
-
-  if (!name || !email || !source || !reason) {
-    return res.status(400).json({ success: false, message: "All fields required." });
-  }
-
-  try {
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
-      new Date().toISOString(),
-      name,
-      email,
-      source,
-      reason,
-    ]);
-
-    res.json({
-      success: true,
-      message: "Successfully joined waitlist! Please check your email for updates.",
-    });
-  } catch (err) {
-    console.error("Failed to add to waitlist:", err);
-    res.status(500).json({
-      success: false,
-      message: "Failed to join waitlist. Please try again later.",
-    });
-  }
-});
-
-// ===== Campaign Routes =====
-app.get("/api/my-campaigns", async (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated." });
-
-  try {
-    const userEmail = req.session.user.email.trim().toLowerCase();
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I",
-    });
-
-    const rows = data.values || [];
-    const campaigns = rows.slice(1).map((r) => ({
-      id: r[0],
-      title: r[1],
-      email: r[2],
-      goal: r[3],
-      description: r[4],
-      category: r[5],
-      status: r[6],
-      createdAt: r[7],
-      imageUrl: r[8] || "",
-    }));
-
-    const userCampaigns = campaigns.filter((c) => c.email?.toLowerCase() === userEmail);
-    res.json({ success: true, campaigns: userCampaigns });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: "Failed to fetch campaigns." });
-  }
-});
-
-app.post("/api/campaigns", upload.single("image"), async (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, error: "Not authenticated." });
-  if (!req.session.user.verified)
-    return res.status(403).json({ success: false, error: "ID verification required." });
-
-  try {
-    const { title, description, goal, category } = req.body;
-    if (!title || !description || !goal || !category)
-      return res.status(400).json({ success: false, error: "All fields required." });
-
-    const id = Date.now().toString();
-    const baseUrl =
-      process.env.NODE_ENV === "production"
-        ? process.env.BACKEND_BASE_URL || "https://fundme-backend.onrender.com"
-        : `http://localhost:${PORT}`;
-    const imageUrl = req.file ? `${baseUrl}/uploads/${req.file.filename}` : "";
-
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      id,
-      title,
-      req.session.user.email,
-      goal,
-      description,
-      category,
-      "Pending",
-      new Date().toISOString(),
-      imageUrl,
-    ]);
-
-    res.json({ success: true, message: "Campaign created!", id, imageUrl });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: "Failed to create campaign." });
-  }
-});
-
-app.get("/api/test-email", async (req, res) => {
-  try {
-    const msg = {
-      to: process.env.ADMIN_EMAIL,
-      from: process.env.ADMIN_EMAIL,
-      subject: "✅ SendGrid Test from JoyFund",
-      text: "This is a test email confirming SendGrid is working correctly.",
-    };
-
-    await sgMail.send(msg);
-    res.status(200).send("✅ Email sent successfully!");
-  } catch (error) {
-    console.error("❌ SendGrid test failed:", error);
-    res.status(500).send("❌ Email test failed. Check Render logs.");
-  }
 });
 
 // ===== Start Server =====
