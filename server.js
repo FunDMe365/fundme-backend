@@ -29,12 +29,14 @@ const allowedOrigins = [
   "http://127.0.0.1:3000",
 ];
 
-// ===== Minimal CORS fix =====
+// ===== Minimal CORS fix (handles preflight & credentials) =====
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
   res.setHeader("Access-Control-Allow-Credentials", "true");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS,PUT,DELETE");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.sendStatus(200);
   next();
@@ -98,7 +100,8 @@ async function saveToSheet(sheetId, sheetName, values) {
 // ===== Multer (File Upload) =====
 const storage = multer.diskStorage({
   destination: uploadsDir,
-  filename: (req, file, cb) => cb(null, `${Date.now()}${path.extname(file.originalname)}`),
+  filename: (req, file, cb) =>
+    cb(null, `${Date.now()}${path.extname(file.originalname)}`),
 });
 const upload = multer({ storage });
 
@@ -173,7 +176,7 @@ app.post("/api/signin", async (req, res) => {
     if (!user) return res.status(401).json({ success: false, error: "Invalid credentials." });
 
     req.session.user = user;
-    await new Promise((r) => req.session.save(r));
+    await new Promise(r => req.session.save(r));
 
     const message = user.verified
       ? "Signed in successfully!"
@@ -197,33 +200,164 @@ app.get("/api/check-session", (req, res) => {
 
 // ===== LOGOUT =====
 app.post("/api/logout", (req, res) => {
-  req.session.destroy(() => res.json({ success: true }));
+  req.session.destroy(err => {
+    if (err) return res.status(500).json({ success: false, message: "Logout failed" });
+    res.clearCookie("connect.sid");
+    res.json({ success: true });
+  });
 });
 
-// ===== ID VERIFICATION ROUTE =====
+// ===== ID VERIFICATION =====
 app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
   try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in." });
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+
     const { name, email } = req.body;
     if (!name || !email || !req.file) {
-      return res.status(400).json({ success: false, message: "Name, email, and ID photo are required." });
+      return res.status(400).json({ success: false, message: "All fields required" });
     }
 
-    const idPhotoUrl = `/uploads/${req.file.filename}`;
+    const photoUrl = `/uploads/${req.file.filename}`;
 
-    // Save to Google Sheets
     await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
       new Date().toISOString(),
       email,
       name,
       "Pending",
-      idPhotoUrl,
+      photoUrl
     ]);
 
-    res.json({ success: true, message: "ID submitted successfully.", idPhotoUrl });
+    // Update session
+    req.session.user.verificationStatus = "Pending";
+    req.session.user.verified = false;
+    await new Promise(r => req.session.save(r));
+
+    res.json({ success: true, message: "ID submitted successfully" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Server error." });
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ===== PROFILE UPDATE =====
+app.post("/api/profile/update", async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+
+    const { name, email, password } = req.body;
+    // Save updated info to Google Sheets (append new row)
+    const hashed = password ? await bcrypt.hash(password, 10) : null;
+    await saveToSheet(SPREADSHEET_IDS.users, "Users", [
+      new Date().toISOString(),
+      name,
+      email,
+      hashed || "",
+      "false"
+    ]);
+
+    // Update session
+    req.session.user.name = name;
+    req.session.user.email = email;
+    await new Promise(r => req.session.save(r));
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ===== DELETE ACCOUNT =====
+app.delete("/api/delete-account", async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+    // Optionally mark deleted in Google Sheets
+    req.session.destroy(err => {
+      if (err) return res.status(500).json({ success: false, message: "Delete failed" });
+      res.clearCookie("connect.sid");
+      res.json({ success: true });
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ===== CAMPAIGNS =====
+app.get("/api/my-campaigns", async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:H",
+    });
+
+    const campaigns = (data.values || []).map(r => ({
+      id: r[0],
+      title: r[1],
+      description: r[2],
+      status: r[3],
+      imageUrl: r[4],
+      createdAt: r[5],
+      ownerEmail: r[6],
+    })).filter(c => c.ownerEmail.toLowerCase() === req.session.user.email.toLowerCase());
+
+    res.json({ success: true, campaigns });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+app.delete("/api/campaign/:id", async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+    const campaignId = req.params.id;
+
+    // Append a row marking deleted (since Google Sheets can't delete easily)
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
+      new Date().toISOString(),
+      "Deleted",
+      "",
+      "Deleted",
+      "",
+      "",
+      req.session.user.email
+    ]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ===== CREATE CAMPAIGN =====
+app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+    if (!req.session.user.verified) return res.status(403).json({ success: false, message: "ID verification required" });
+
+    const { title, description } = req.body;
+    if (!title || !description) return res.status(400).json({ success: false, message: "Title & description required" });
+
+    const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
+
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
+      Date.now(),
+      title,
+      description,
+      "Pending",
+      imageUrl,
+      new Date().toISOString(),
+      req.session.user.email
+    ]);
+
+    res.json({ success: true, message: "Campaign created!" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
