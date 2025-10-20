@@ -303,9 +303,12 @@ app.get("/api/campaigns", async (req, res) => {
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const campaignId = req.params.campaignId;
-    const { amount } = req.body;
+    let amount = req.body.amount;
 
-    if (!amount || amount < 1) return res.status(400).json({ success: false, message: "Invalid donation amount" });
+    if (!amount) return res.status(400).json({ success: false, message: "Amount required" });
+    
+    amount = parseFloat(amount); // convert string to number
+    if (isNaN(amount) || amount < 1) return res.status(400).json({ success: false, message: "Invalid donation amount" });
 
     // Fetch campaign details from Google Sheets
     const { data } = await sheets.spreadsheets.values.get({
@@ -330,7 +333,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
               name: campaignTitle,
               description: campaignDescription
             },
-            unit_amount: Math.round(amount * 100) // convert dollars to cents
+            unit_amount: Math.round(amount * 100) // dollars → cents
           },
           quantity: 1
         }
@@ -344,6 +347,16 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   } catch (err) {
     console.error("Stripe checkout error:", err);
     res.status(500).json({ success: false, message: "Failed to create checkout session" });
+  }
+});
+
+// Serve uploaded images with correct URLs
+app.get("/images/:filename", (req, res) => {
+  const filePath = path.join(uploadsDir, req.params.filename);
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).send("Image not found");
   }
 });
 
