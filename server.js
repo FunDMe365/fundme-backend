@@ -21,32 +21,35 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 // ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// POST /api/donate-mission
+// ✅ Direct donation to JoyFund (mission donation)
 app.post('/api/donate-mission', async (req, res) => {
   const { amount } = req.body;
-  if (!amount || amount < 1) return res.status(400).json({ message: "Invalid donation amount." });
+  if (!amount || amount < 1) {
+    return res.status(400).json({ message: "Invalid donation amount." });
+  }
 
   try {
-    // Create Stripe checkout session for a fixed JoyFund account
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
         price_data: {
           currency: 'usd',
-          product_data: { name: 'JoyFund Mission Donation' },
+          product_data: {
+            name: 'JoyFund Mission Donation',
+          },
           unit_amount: Math.round(amount * 100),
         },
         quantity: 1,
       }],
       mode: 'payment',
-      success_url: 'https://your-site.com/thankyou.html',
-      cancel_url: 'https://your-site.com/',
+      success_url: 'https://fundasmile.net/thankyou.html',
+      cancel_url: 'https://fundasmile.net/',
     });
 
     res.json({ url: session.url });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to create checkout session." });
+  } catch (error) {
+    console.error('Mission donation route error:', error);
+    res.status(500).json({ message: "Failed to start donation session." });
   }
 });
 
