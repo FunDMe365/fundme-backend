@@ -140,7 +140,9 @@ async function verifyUser(email, password) {
       spreadsheetId: SPREADSHEET_IDS.users,
       range: "ID_Verifications!A:D",
     });
-    const verRows = (verData.values || []).filter((r) => r[1] && r[1].toLowerCase() === email.toLowerCase());
+    const verRows = (verData.values || []).filter(
+      (r) => r[1] && r[1].toLowerCase() === email.toLowerCase()
+    );
     const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
     const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
     const verified = verificationStatus === "Approved";
@@ -158,22 +160,75 @@ async function verifyUser(email, password) {
 }
 
 // ===== AUTH ROUTES (signup/signin/check/logout/etc) =====
-// ... [keep all your existing routes untouched here] ...
+// ✅ SIGN-IN ROUTE (Google Sheets)
+app.post("/api/signin", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required." });
+    }
+
+    // Fetch all rows from your "Users" sheet
+    const sheet = doc.sheetsByTitle["Users"];
+    const rows = await sheet.getRows();
+
+    // Find user by email
+    const user = rows.find(row => row.Email === email);
+
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials." });
+    }
+
+    // Compare passwords (assuming stored in plain text for now)
+    if (user.Password !== password) {
+      return res.status(401).json({ error: "Invalid credentials." });
+    }
+
+    // If successful, create session cookie
+    req.session.user = {
+      email: user.Email,
+      name: user.Name || "",
+      id: user.ID || ""
+    };
+
+    res.status(200).json({
+      message: "Login successful",
+      user: {
+        email: user.Email,
+        name: user.Name || "",
+        id: user.ID || ""
+      }
+    });
+  } catch (error) {
+    console.error("Sign-in error:", error);
+    res.status(500).json({ error: "Failed to sign in." });
+  }
+});
 
 // ===== PUBLIC APPROVED CAMPAIGNS =====
 app.get("/api/campaigns", async (req, res) => {
   try {
-    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
-    const campaigns = (data.values || []).filter((row) => row[6] === "Approved").map((row) => ({
-      id: row[0],
-      title: row[1],
-      goal: row[3],
-      description: row[4],
-      category: row[5],
-      status: row[6],
-      created: row[7],
-      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8].startsWith('/') ? row[8] : '/' + row[8]}` : ""
-    }));
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:I",
+    });
+    const campaigns = (data.values || [])
+      .filter((row) => row[6] === "Approved")
+      .map((row) => ({
+        id: row[0],
+        title: row[1],
+        goal: row[3],
+        description: row[4],
+        category: row[5],
+        status: row[6],
+        created: row[7],
+        image: row[8]
+          ? `${req.protocol}://${req.get("host")}${
+              row[8].startsWith("/") ? row[8] : "/" + row[8]
+            }`
+          : "",
+      }));
     res.json({ success: true, campaigns });
   } catch (err) {
     console.error(err);
@@ -191,25 +246,28 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
 
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I"
+      range: "Campaigns!A:I",
     });
 
-    const row = (data.values || []).find(r => r[0] === campaignId);
-    if (!row) return res.status(404).json({ success: false, message: "Campaign not found" });
+    const row = (data.values || []).find((r) => r[0] === campaignId);
+    if (!row)
+      return res.status(404).json({ success: false, message: "Campaign not found" });
 
     const campaignTitle = row[1];
     const campaignDescription = row[4] || "";
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: "usd",
-          product_data: { name: campaignTitle, description: campaignDescription },
-          unit_amount: Math.round(amount * 100),
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: campaignTitle, description: campaignDescription },
+            unit_amount: Math.round(amount * 100),
+          },
+          quantity: 1,
         },
-        quantity: 1,
-      }],
+      ],
       mode: "payment",
       success_url: `https://fundasmile.net/thankyou.html?campaignId=${campaignId}`,
       cancel_url: `https://fundasmile.net/campaigns.html`,
@@ -218,29 +276,34 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
     res.json({ url: session.url });
   } catch (err) {
     console.error("Stripe checkout error:", err);
-    res.status(500).json({ success: false, message: "Failed to create checkout session" });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to create checkout session" });
   }
 });
 
 // ===== ✅ FIXED: JoyFund Mission Donation =====
 app.post("/api/donate-mission", async (req, res) => {
   const { amount } = req.body;
-  if (!amount || amount < 1) return res.status(400).json({ message: "Invalid donation amount." });
+  if (!amount || amount < 1)
+    return res.status(400).json({ message: "Invalid donation amount." });
 
   try {
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      line_items: [{
-        price_data: {
-          currency: 'usd',
-          product_data: { name: 'JoyFund Mission Donation' },
-          unit_amount: Math.round(amount * 100),
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: "JoyFund Mission Donation" },
+            unit_amount: Math.round(amount * 100),
+          },
+          quantity: 1,
         },
-        quantity: 1,
-      }],
-      mode: 'payment',
-      success_url: 'https://fundasmile.net/thankyou.html',
-      cancel_url: 'https://fundasmile.net/',
+      ],
+      mode: "payment",
+      success_url: "https://fundasmile.net/thankyou.html",
+      cancel_url: "https://fundasmile.net/",
     });
 
     res.json({ url: session.url });
