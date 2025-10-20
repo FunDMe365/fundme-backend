@@ -43,6 +43,8 @@ app.use((req, res, next) => {
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// ===== STATIC UPLOADS ROUTE (visible site-wide) =====
 app.use("/uploads", express.static(uploadsDir));
 
 // ===== Session =====
@@ -126,19 +128,14 @@ async function verifyUser(email, password) {
     });
 
     const allUsers = userData.values || [];
-
-    // Find user row (ignore empty rows)
     const userRow = allUsers.find((row) => row[2] && row[2].toLowerCase() === email.toLowerCase());
     if (!userRow) return false;
-
-    // Ensure password column exists
     const storedHash = userRow[3];
     if (!storedHash) return false;
 
     const passwordMatch = await bcrypt.compare(password, storedHash);
     if (!passwordMatch) return false;
 
-    // Fetch latest verification
     const { data: verData } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
       range: "ID_Verifications!A:D",
@@ -314,13 +311,15 @@ app.get("/api/campaigns", async (req, res) => {
   }
 });
 
-// ===== STRIPE CHECKOUT FOR INDIVIDUAL CAMPAIGNS =====
+// ===== STRIPE CHECKOUT (fixed redirect) =====
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const campaignId = req.params.campaignId;
-    const { amount } = req.body;
+    let { amount } = req.body;
 
-    if (!amount || amount < 1) return res.status(400).json({ success: false, message: "Invalid donation amount" });
+    // Ensure amount is numeric
+    amount = Number(amount);
+    if (!amount || amount < 1) amount = 1;
 
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
@@ -357,7 +356,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   }
 });
 
-// ===== STATIC FILES =====
+// ===== SERVE PUBLIC FILES =====
 app.use(express.static(path.join(__dirname, "public")));
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
