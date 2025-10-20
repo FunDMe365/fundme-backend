@@ -160,48 +160,56 @@ async function verifyUser(email, password) {
 }
 
 // ===== AUTH ROUTES (signup/signin/check/logout/etc) =====
-// ✅ SIGN-IN ROUTE (Google Sheets)
+// ✅ SIGN-IN ROUTE WITH DEBUG LOGS
 app.post("/api/signin", async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log("🟢 Sign-in attempt:", email);
 
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required." });
     }
 
-    // Fetch all rows from your "Users" sheet
     const sheet = doc.sheetsByTitle["Users"];
     const rows = await sheet.getRows();
 
-    // Find user by email
-    const user = rows.find(row => row.Email === email);
+    // Log column names and a sample row
+    console.log("🟢 Sheet columns:", Object.keys(rows[0] || {}));
+    console.log("🟢 First user row:", rows[0] ? rows[0]._rawData : "No rows found");
+
+    // Find user
+    const user = rows.find(row => row.Email === email || row.email === email);
+    console.log("🟢 Matched user:", user ? user.Email || user.email : "None found");
 
     if (!user) {
-      return res.status(401).json({ error: "Invalid credentials." });
+      return res.status(401).json({ error: "Invalid credentials (email not found)." });
     }
 
-    // Compare passwords (assuming stored in plain text for now)
-    if (user.Password !== password) {
-      return res.status(401).json({ error: "Invalid credentials." });
+    // Compare passwords (case-sensitive for now)
+    if (user.Password !== password && user.password !== password) {
+      console.log("🔴 Password mismatch");
+      return res.status(401).json({ error: "Invalid credentials (password mismatch)." });
     }
 
-    // If successful, create session cookie
+    // Success
     req.session.user = {
-      email: user.Email,
-      name: user.Name || "",
-      id: user.ID || ""
+      email: user.Email || user.email,
+      name: user.Name || user.name || "",
+      id: user.ID || user.id || ""
     };
+
+    console.log("✅ Login successful for:", user.Email || user.email);
 
     res.status(200).json({
       message: "Login successful",
       user: {
-        email: user.Email,
-        name: user.Name || "",
-        id: user.ID || ""
+        email: user.Email || user.email,
+        name: user.Name || user.name || "",
+        id: user.ID || user.id || ""
       }
     });
   } catch (error) {
-    console.error("Sign-in error:", error);
+    console.error("❌ Sign-in error:", error);
     res.status(500).json({ error: "Failed to sign in." });
   }
 });
