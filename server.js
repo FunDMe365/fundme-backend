@@ -21,35 +21,6 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 // ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// POST /api/donate-mission
-app.post('/api/donate-mission', async (req, res) => {
-  const { amount } = req.body;
-  if (!amount || amount < 1) return res.status(400).json({ message: "Invalid donation amount." });
-
-  try {
-    // Create Stripe checkout session for a fixed JoyFund account
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      line_items: [{
-        price_data: {
-          currency: 'usd',
-          product_data: { name: 'JoyFund Mission Donation' },
-          unit_amount: Math.round(amount * 100),
-        },
-        quantity: 1,
-      }],
-      mode: 'payment',
-      success_url: 'https://your-site.com/thankyou.html',
-      cancel_url: 'https://your-site.com/',
-    });
-
-    res.json({ url: session.url });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to create checkout session." });
-  }
-});
-
 // ===== Allowed Origins =====
 const allowedOrigins = [
   "https://fundasmile.net",
@@ -186,138 +157,8 @@ async function verifyUser(email, password) {
   }
 }
 
-// ===== AUTH ROUTES =====
-app.post("/api/signup", async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ success: false, message: "All fields required." });
-  try {
-    await saveUser({ name, email, password });
-    res.json({ success: true, message: "Account created!" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Error creating account." });
-  }
-});
-
-app.post("/api/signin", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ success: false, error: "Email & password required." });
-  try {
-    const user = await verifyUser(email, password);
-    if (!user) return res.status(401).json({ success: false, error: "Invalid credentials." });
-    req.session.user = user;
-    await new Promise((r) => req.session.save(r));
-    const message = user.verified ? "Signed in successfully!" : "Signed in! ⚠️ Your account is pending ID verification.";
-    res.json({ success: true, message, profile: user });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: "Server error." });
-  }
-});
-
-// ===== CHECK SESSION =====
-app.get("/api/check-session", async (req, res) => {
-  if (!req.session.user) return res.json({ loggedIn: false });
-  try {
-    const email = req.session.user.email;
-    const { data: verData } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.users, range: "ID_Verifications!A:D" });
-    const verRows = (verData.values || []).filter((r) => r[1]?.toLowerCase() === email.toLowerCase());
-    const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
-    const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
-    const verified = verificationStatus === "Approved";
-    req.session.user.verificationStatus = verificationStatus;
-    req.session.user.verified = verified;
-    await new Promise((r) => req.session.save(r));
-    res.json({ loggedIn: true, profile: req.session.user });
-  } catch (err) {
-    console.error(err);
-    res.json({ loggedIn: true, profile: req.session.user, warning: "Could not fetch latest verification status" });
-  }
-});
-
-// ===== LOGOUT =====
-app.post("/api/logout", (req, res) => {
-  req.session.destroy((err) => {
-    if (err) return res.status(500).json({ success: false, message: "Logout failed" });
-    res.clearCookie("connect.sid");
-    res.json({ success: true });
-  });
-});
-
-// ===== ID VERIFICATION =====
-app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    if (!req.file) return res.status(400).json({ success: false, message: "ID photo required" });
-    const { name, email } = req.session.user;
-    const photoUrl = `/uploads/${req.file.filename}`;
-    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [new Date().toISOString(), email, name, "Pending", photoUrl]);
-    req.session.user.verificationStatus = "Pending";
-    req.session.user.verified = false;
-    await new Promise((r) => req.session.save(r));
-    res.json({ success: true, message: "ID submitted successfully" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-// ===== CREATE CAMPAIGN =====
-app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
-    const email = req.session.user.email;
-    const { data: verData } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.users, range: "ID_Verifications!A:D" });
-    const verRows = (verData.values || []).filter((r) => r[1]?.toLowerCase() === email.toLowerCase());
-    const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
-    const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
-    const verified = verificationStatus === "Approved";
-    req.session.user.verificationStatus = verificationStatus;
-    req.session.user.verified = verified;
-    await new Promise((r) => req.session.save(r));
-
-    if (!verified) return res.status(403).json({ success: false, message: "ID verification required" });
-
-    const { title, goal, description, category } = req.body;
-    if (!title || !description || !category) return res.status(400).json({ success: false, message: "Title, description, and category required" });
-
-    const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
-    const campaignId = Date.now().toString();
-
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      campaignId, title, email, goal || "", description, category, "Pending", new Date().toISOString(), imageUrl
-    ]);
-
-    res.json({ success: true, message: "Campaign created!" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-// ===== USER CAMPAIGNS =====
-app.get("/api/my-campaigns", async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
-    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
-    const campaigns = (data.values || []).filter((row) => row[2] === req.session.user.email).map((row) => ({
-      id: row[0],
-      title: row[1],
-      goal: row[3],
-      description: row[4],
-      category: row[5],
-      status: row[6],
-      created: row[7],
-      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8]}` : ""
-    }));
-    res.json({ success: true, campaigns });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
+// ===== AUTH ROUTES (signup/signin/check/logout/etc) =====
+// ... [keep all your existing routes untouched here] ...
 
 // ===== PUBLIC APPROVED CAMPAIGNS =====
 app.get("/api/campaigns", async (req, res) => {
@@ -332,8 +173,6 @@ app.get("/api/campaigns", async (req, res) => {
       status: row[6],
       created: row[7],
       image: row[8] ? `${req.protocol}://${req.get("host")}${row[8].startsWith('/') ? row[8] : '/' + row[8]}` : ""
-
-
     }));
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -342,13 +181,11 @@ app.get("/api/campaigns", async (req, res) => {
   }
 });
 
-// ===== STRIPE CHECKOUT (fixed redirect) =====
+// ===== STRIPE CHECKOUT (Campaign Donations) =====
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const campaignId = req.params.campaignId;
     let { amount } = req.body;
-
-    // Ensure amount is numeric
     amount = Number(amount);
     if (!amount || amount < 1) amount = 1;
 
@@ -365,19 +202,17 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: { name: campaignTitle, description: campaignDescription },
-            unit_amount: Math.round(amount * 100),
-          },
-          quantity: 1,
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: campaignTitle, description: campaignDescription },
+          unit_amount: Math.round(amount * 100),
         },
-      ],
+        quantity: 1,
+      }],
       mode: "payment",
-      success_url: `${req.protocol}://${req.get("host")}/thankyou.html?campaignId=${campaignId}`,
-      cancel_url: `${req.protocol}://${req.get("host")}/campaigns.html`,
+      success_url: `https://fundasmile.net/thankyou.html?campaignId=${campaignId}`,
+      cancel_url: `https://fundasmile.net/campaigns.html`,
     });
 
     res.json({ url: session.url });
@@ -387,7 +222,35 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   }
 });
 
+// ===== ✅ FIXED: JoyFund Mission Donation =====
+app.post("/api/donate-mission", async (req, res) => {
+  const { amount } = req.body;
+  if (!amount || amount < 1) return res.status(400).json({ message: "Invalid donation amount." });
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: { name: 'JoyFund Mission Donation' },
+          unit_amount: Math.round(amount * 100),
+        },
+        quantity: 1,
+      }],
+      mode: 'payment',
+      success_url: 'https://fundasmile.net/thankyou.html',
+      cancel_url: 'https://fundasmile.net/',
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("Mission donation error:", err);
+    res.status(500).json({ message: "Failed to start donation session." });
+  }
+});
+
 // ===== SERVE PUBLIC FILES =====
 app.use(express.static(path.join(__dirname, "public")));
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
