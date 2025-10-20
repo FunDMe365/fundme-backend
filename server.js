@@ -221,23 +221,6 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
   }
 });
 
-app.post("/api/admin/approve-id", async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: "Email required" });
-    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [new Date().toISOString(), email, email, "Approved", ""]);
-    if (req.session.user && req.session.user.email.toLowerCase() === email.toLowerCase()) {
-      req.session.user.verificationStatus = "Approved";
-      req.session.user.verified = true;
-      await new Promise((r) => req.session.save(r));
-    }
-    res.json({ success: true, message: "User ID approved and session updated" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
 // ===== CREATE CAMPAIGN =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
@@ -252,7 +235,6 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     req.session.user.verificationStatus = verificationStatus;
     req.session.user.verified = verified;
     await new Promise((r) => req.session.save(r));
-// ... [all your existing auth, ID verification, campaign creation, my-campaigns, public campaigns routes] ...
 
     if (!verified) return res.status(403).json({ success: false, message: "ID verification required" });
 
@@ -272,20 +254,11 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-// ===== STATIC FILES =====
-app.use(express.static(path.join(__dirname, "public")));
 
 // ===== USER CAMPAIGNS =====
 app.get("/api/my-campaigns", async (req, res) => {
-// ===== NEW: CREATE STRIPE CHECKOUT SESSION FOR A CAMPAIGN =====
-app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    const campaignId = req.params.campaignId;
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I",
-    });
 
     const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
     const campaigns = (data.values || []).filter((row) => row[2] === req.session.user.email).map((row) => ({
@@ -304,29 +277,6 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-    const row = (data.values || []).find((r) => r[0] === campaignId && r[6] === "Approved");
-    if (!row) return res.status(404).json({ success: false, message: "Campaign not found" });
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: {
-              name: row[1],
-              description: row[4],
-              images: row[8] ? [`${req.protocol}://${req.get("host")}${row[8]}`] : [],
-            },
-            unit_amount: parseInt(row[3]) * 100 || 100, // minimum $1 if goal missing
-          },
-          quantity: 1,
-        },
-      ],
-      mode: "payment",
-      success_url: `${req.protocol}://${req.get("host")}/thankyou.html`,
-      cancel_url: `${req.protocol}://${req.get("host")}/campaigns.html`,
-    });
 
 // ===== PUBLIC APPROVED CAMPAIGNS =====
 app.get("/api/campaigns", async (req, res) => {
@@ -343,12 +293,9 @@ app.get("/api/campaigns", async (req, res) => {
       image: row[8] ? `${req.protocol}://${req.get("host")}${row[8]}` : ""
     }));
     res.json({ success: true, campaigns });
-    res.json({ url: session.url });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
-    console.error("Stripe checkout error:", err);
-    res.status(500).json({ success: false, message: "Failed to create checkout session" });
   }
 });
 
