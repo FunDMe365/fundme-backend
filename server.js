@@ -368,7 +368,7 @@ app.post("/api/create-checkout-session", async (req, res) => {
       payment_method_types: ["card"],
       line_items: [{ price_data: { currency: "usd", product_data: { name: "JoyFund Donation" }, unit_amount: Math.round(amount * 100) }, quantity: 1 }],
       mode: "payment",
-      success_url: `${req.headers.origin}/thank-you`,
+      success_url: `${req.headers.origin}/thankyou.html`,
       cancel_url: `${req.headers.origin}/`,
     });
     res.json({ url: session.url });
