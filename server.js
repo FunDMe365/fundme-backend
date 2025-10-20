@@ -43,9 +43,7 @@ app.use((req, res, next) => {
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-
-// ===== Serve uploaded images publicly (sitewide) =====
-app.use("/uploads", express.static(uploadsDir)); // Allows access to all uploaded images
+app.use("/uploads", express.static(uploadsDir));
 
 // ===== Session =====
 app.set("trust proxy", 1);
@@ -240,44 +238,11 @@ app.post("/api/admin/approve-id", async (req, res) => {
   }
 });
 
-// ===== PROFILE UPDATE =====
-app.post("/api/profile/update", async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    const { name, email, password } = req.body;
-    const hashed = password ? await bcrypt.hash(password, 10) : "";
-    await saveToSheet(SPREADSHEET_IDS.users, "Users", [new Date().toISOString(), name, email, hashed || "", "false"]);
-    req.session.user.name = name;
-    req.session.user.email = email;
-    await new Promise((r) => req.session.save(r));
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-// ===== DELETE ACCOUNT =====
-app.delete("/api/delete-account", async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    req.session.destroy((err) => {
-      if (err) return res.status(500).json({ success: false, message: "Delete failed" });
-      res.clearCookie("connect.sid");
-      res.json({ success: true });
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
 // ===== CREATE CAMPAIGN =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
 
-    // Refresh verification
     const email = req.session.user.email;
     const { data: verData } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.users, range: "ID_Verifications!A:D" });
     const verRows = (verData.values || []).filter((r) => r[1]?.toLowerCase() === email.toLowerCase());
@@ -308,19 +273,20 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 });
 
 // ===== USER CAMPAIGNS =====
-app.get("/api/campaigns", async (req, res) => {
+app.get("/api/my-campaigns", async (req, res) => {
   try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+
     const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
-    const campaigns = (data.values || []).map(row => ({
+    const campaigns = (data.values || []).filter((row) => row[2] === req.session.user.email).map((row) => ({
       id: row[0],
       title: row[1],
-      owner: row[2],
       goal: row[3],
       description: row[4],
       category: row[5],
       status: row[6],
       created: row[7],
-      image: row[8] ? `https://fundme-backend.onrender.com${row[8]}` : "" // ✅ fix: prepend backend URL
+      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8]}` : ""
     }));
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -328,52 +294,24 @@ app.get("/api/campaigns", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-// ===== WAITLIST =====
-app.post("/api/waitlist", async (req, res) => {
+
+// ===== PUBLIC APPROVED CAMPAIGNS =====
+app.get("/api/campaigns", async (req, res) => {
   try {
-    const { name, email, source, reason } = req.body;
-    if (!name || !email || !source || !reason) return res.status(400).json({ success: false, message: "All fields are required" });
-
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [new Date().toISOString(), name, email, source, reason]);
-
-    // SendGrid confirmation email
-    if (process.env.SENDGRID_API_KEY) {
-      try {
-        await sgMail.send({
-          to: email,
-          from: process.env.SENDGRID_SENDER || "no-reply@joyfund.org",
-          subject: "JoyFund Waitlist Confirmation",
-          text: `Hi ${name},\n\nYou have successfully joined the JoyFund waitlist!`,
-          html: `<p>Hi ${name},</p><p>You have successfully joined the JoyFund waitlist!</p>`
-        });
-      } catch (err) {
-        console.error("SendGrid email error:", err);
-      }
-    }
-
-    res.json({ success: true, message: "Successfully joined waitlist!" });
+    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
+    const campaigns = (data.values || []).filter((row) => row[6] === "Approved").map((row) => ({
+      id: row[0],
+      title: row[1],
+      goal: row[3],
+      description: row[4],
+      category: row[5],
+      status: row[6],
+      created: row[7],
+      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8]}` : ""
+    }));
+    res.json({ success: true, campaigns });
   } catch (err) {
-    console.error("Waitlist submission error:", err);
-    res.status(500).json({ success: false, message: "Server error. Please try again later." });
-  }
-});
-
-// ===== DONATION CHECKOUT =====
-app.post("/api/create-checkout-session", async (req, res) => {
-  try {
-    const { amount } = req.body;
-    if (!amount || isNaN(amount)) return res.status(400).json({ success: false, message: "Invalid amount" });
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [{ price_data: { currency: "usd", product_data: { name: "JoyFund Donation" }, unit_amount: Math.round(amount * 100) }, quantity: 1 }],
-      mode: "payment",
-      success_url: `${req.headers.origin}/thankyou.html`,
-      cancel_url: `${req.headers.origin}/`,
-    });
-    res.json({ url: session.url });
-  } catch (err) {
-    console.error("Stripe checkout error:", err);
+    console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
