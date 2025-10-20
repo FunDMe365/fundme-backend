@@ -67,16 +67,8 @@ app.use(
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
-let googleCredentials = {};
-try {
-  if (process.env.GOOGLE_CREDENTIALS_JSON) {
-    googleCredentials = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
-  }
-} catch (err) {
-  console.error("Invalid GOOGLE_CREDENTIALS_JSON", err);
-}
 const auth = new google.auth.GoogleAuth({
-  credentials: googleCredentials,
+  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON || "{}"),
   scopes: SCOPES,
 });
 const sheets = google.sheets({ version: "v4", auth });
@@ -277,7 +269,7 @@ app.get("/api/my-campaigns", async (req, res) => {
       category: row[5],
       status: row[6],
       created: row[7],
-      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8].startsWith("/") ? row[8] : `/uploads/${row[8]}`}` : ""
+      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8]}` : ""
     }));
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -298,7 +290,7 @@ app.get("/api/campaigns", async (req, res) => {
       category: row[5],
       status: row[6],
       created: row[7],
-      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8].startsWith("/") ? row[8] : `/uploads/${row[8]}`}` : ""
+      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8]}` : ""
     }));
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -338,7 +330,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
               name: campaignTitle,
               description: campaignDescription
             },
-            unit_amount: Math.round(amount * 100)
+            unit_amount: Math.round(amount * 100) // convert dollars to cents
           },
           quantity: 1
         }
