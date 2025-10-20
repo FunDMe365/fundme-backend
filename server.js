@@ -37,7 +37,7 @@ app.use(cors({
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use("/uploads", express.static(uploadsDir));
+app.use("/uploads", express.static(uploadsDir)); // Serve uploaded images
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
@@ -167,9 +167,66 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== ID Verification, Campaigns, Stripe Checkout, Donations =====
-// Keep all your existing routes here, just ensure they use req.session.user and upload where needed
-// e.g., /api/verify-id, /api/create-campaign, /api/my-campaigns, /api/create-checkout-session/:campaignId, /api/donate-mission
+// ===== Delete Account Route (requires confirmation from frontend) =====
+app.delete("/api/delete-account", async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+    const email = req.session.user.email;
+
+    // Remove user from Google Sheets (basic example: marking as deleted, could remove row if desired)
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Users!A:E",
+    });
+    const allUsers = data.values || [];
+    const rowIndex = allUsers.findIndex(r => r[2]?.toLowerCase() === email.toLowerCase());
+    if (rowIndex >= 0) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_IDS.users,
+        range: `Users!E${rowIndex + 1}`,
+        valueInputOption: "RAW",
+        requestBody: { values: [["deleted"]] }
+      });
+    }
+
+    req.session.destroy(err => {
+      if (err) return res.status(500).json({ success: false, message: "Failed to delete account" });
+      res.clearCookie("connect.sid");
+      res.json({ success: true, message: "Account deleted" });
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ===== Campaign Routes =====
+
+// Get all campaigns for logged-in user
+app.get("/api/my-campaigns", async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+
+    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
+    const campaigns = (data.values || []).filter((row) => row[2] === req.session.user.email).map((row) => ({
+      id: row[0],
+      title: row[1],
+      goal: row[3],
+      description: row[4],
+      category: row[5],
+      status: row[6], // now reflects the actual status from Google Sheets
+      created: row[7],
+      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8].startsWith('/') ? row[8] : '/' + row[8]}` : ""
+    }));
+
+    res.json({ success: true, campaigns });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to load campaigns" });
+  }
+});
+
+// ===== Keep all other routes as they were (create campaign, ID verification, Stripe checkout, donations, etc.) =====
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
