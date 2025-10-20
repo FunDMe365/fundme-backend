@@ -299,6 +299,54 @@ app.get("/api/campaigns", async (req, res) => {
   }
 });
 
+// ===== STRIPE CHECKOUT FOR INDIVIDUAL CAMPAIGNS =====
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+  try {
+    const campaignId = req.params.campaignId;
+    const { amount } = req.body;
+
+    if (!amount || amount < 1) return res.status(400).json({ success: false, message: "Invalid donation amount" });
+
+    // Fetch campaign details from Google Sheets
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:I"
+    });
+
+    const row = (data.values || []).find(r => r[0] === campaignId);
+    if (!row) return res.status(404).json({ success: false, message: "Campaign not found" });
+
+    const campaignTitle = row[1];
+    const campaignDescription = row[4] || "";
+
+    // Create Stripe Checkout session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: campaignTitle,
+              description: campaignDescription
+            },
+            unit_amount: Math.round(amount * 100) // convert dollars to cents
+          },
+          quantity: 1
+        }
+      ],
+      mode: "payment",
+      success_url: `${req.protocol}://${req.get("host")}/thankyou.html?campaignId=${campaignId}`,
+      cancel_url: `${req.protocol}://${req.get("host")}/campaigns.html`
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("Stripe checkout error:", err);
+    res.status(500).json({ success: false, message: "Failed to create checkout session" });
+  }
+});
+
 // ===== STATIC FILES =====
 app.use(express.static(path.join(__dirname, "public")));
 
