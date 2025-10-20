@@ -43,7 +43,9 @@ app.use((req, res, next) => {
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use("/uploads", express.static(uploadsDir));
+
+// ===== Serve uploaded images publicly (sitewide) =====
+app.use("/uploads", express.static(uploadsDir)); // Allows access to all uploaded images
 
 // ===== Session =====
 app.set("trust proxy", 1);
