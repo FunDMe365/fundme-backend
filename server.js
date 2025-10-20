@@ -256,6 +256,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 });
 
 // ===== USER CAMPAIGNS =====
+// ===== USER CAMPAIGNS =====
 app.get("/api/my-campaigns", async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
@@ -269,7 +270,7 @@ app.get("/api/my-campaigns", async (req, res) => {
       category: row[5],
       status: row[6],
       created: row[7],
-      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8]}` : ""
+      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8].startsWith("/") ? row[8] : `/uploads/${row[8]}`}` : ""
     }));
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -290,7 +291,7 @@ app.get("/api/campaigns", async (req, res) => {
       category: row[5],
       status: row[6],
       created: row[7],
-      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8]}` : ""
+      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8].startsWith("/") ? row[8] : `/uploads/${row[8]}`}` : ""
     }));
     res.json({ success: true, campaigns });
   } catch (err) {
