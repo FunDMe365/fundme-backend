@@ -160,59 +160,70 @@ async function verifyUser(email, password) {
 }
 
 // ===== AUTH ROUTES (signup/signin/check/logout/etc) =====
-// ✅ SIGN-IN ROUTE WITH DEBUG LOGS
 app.post("/api/signin", async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email and password are required." });
+  }
+
   try {
-    const { email, password } = req.body;
+    // ✅ Read the Users sheet
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Users!A:E", // Adjust if your sheet has more columns
+    });
+
+    const rows = data.values || [];
+    const headers = rows[0] || [];
+    const users = rows.slice(1);
+
     console.log("🟢 Sign-in attempt:", email);
+    console.log("🟢 Headers:", headers);
 
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required." });
-    }
+    // Find matching user
+    const match = users.find((r) => {
+      const userEmail = r[2]?.trim().toLowerCase();
+      return userEmail === email.trim().toLowerCase();
+    });
 
-    const sheet = doc.sheetsByTitle["Users"];
-    const rows = await sheet.getRows();
-
-    // Log column names and a sample row
-    console.log("🟢 Sheet columns:", Object.keys(rows[0] || {}));
-    console.log("🟢 First user row:", rows[0] ? rows[0]._rawData : "No rows found");
-
-    // Find user
-    const user = rows.find(row => row.Email === email || row.email === email);
-    console.log("🟢 Matched user:", user ? user.Email || user.email : "None found");
-
-    if (!user) {
+    if (!match) {
+      console.log("🔴 No matching user found for:", email);
       return res.status(401).json({ error: "Invalid credentials (email not found)." });
     }
 
-    // Compare passwords (case-sensitive for now)
-    if (user.Password !== password && user.password !== password) {
-      console.log("🔴 Password mismatch");
-      return res.status(401).json({ error: "Invalid credentials (password mismatch)." });
+    const storedHash = match[3];
+    if (!storedHash) {
+      console.log("🔴 User found but missing password hash.");
+      return res.status(401).json({ error: "Invalid credentials (no password)." });
+    }
+
+    // ✅ Compare password
+    const valid = await bcrypt.compare(password, storedHash);
+    if (!valid) {
+      console.log("🔴 Password mismatch for:", email);
+      return res.status(401).json({ error: "Invalid credentials (wrong password)." });
     }
 
     // Success
     req.session.user = {
-      email: user.Email || user.email,
-      name: user.Name || user.name || "",
-      id: user.ID || user.id || ""
+      email: match[2],
+      name: match[1],
+      verified: match[4] === "true",
     };
 
-    console.log("✅ Login successful for:", user.Email || user.email);
-
-    res.status(200).json({
+    console.log("✅ Login successful for:", match[2]);
+    res.json({
+      success: true,
       message: "Login successful",
-      user: {
-        email: user.Email || user.email,
-        name: user.Name || user.name || "",
-        id: user.ID || user.id || ""
-      }
+      user: req.session.user,
     });
-  } catch (error) {
-    console.error("❌ Sign-in error:", error);
-    res.status(500).json({ error: "Failed to sign in." });
+  } catch (err) {
+    console.error("❌ Sign-in error:", err);
+    res.status(500).json({ error: "Server error while signing in." });
   }
 });
+
 
 // ===== PUBLIC APPROVED CAMPAIGNS =====
 app.get("/api/campaigns", async (req, res) => {
