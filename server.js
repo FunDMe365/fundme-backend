@@ -302,7 +302,9 @@ app.get("/api/campaigns", async (req, res) => {
       category: row[5],
       status: row[6],
       created: row[7],
-      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8]}` : ""
+      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8].startsWith('/') ? row[8] : '/' + row[8]}` : ""
+
+
     }));
     res.json({ success: true, campaigns });
   } catch (err) {
