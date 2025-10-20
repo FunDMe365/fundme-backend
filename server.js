@@ -255,30 +255,6 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
-// ===== USER CAMPAIGNS =====
-// ===== USER CAMPAIGNS =====
-app.get("/api/my-campaigns", async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
-    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
-    const campaigns = (data.values || []).filter((row) => row[2] === req.session.user.email).map((row) => ({
-      id: row[0],
-      title: row[1],
-      goal: row[3],
-      description: row[4],
-      category: row[5],
-      status: row[6],
-      created: row[7],
-      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8].startsWith("/") ? row[8] : `/uploads/${row[8]}`}` : ""
-    }));
-    res.json({ success: true, campaigns });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
 // ===== PUBLIC APPROVED CAMPAIGNS =====
 app.get("/api/campaigns", async (req, res) => {
   try {
@@ -331,7 +307,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
               name: campaignTitle,
               description: campaignDescription
             },
-            unit_amount: Math.round(amount * 100) // convert dollars to cents
+            unit_amount: Math.round(amount * 100)
           },
           quantity: 1
         }
