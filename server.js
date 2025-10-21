@@ -38,6 +38,7 @@ app.use(cors({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use("/uploads", express.static(uploadsDir)); // Serve uploaded images
+app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
 app.set("trust proxy", 1);
@@ -201,41 +202,6 @@ app.delete("/api/delete-account", async (req, res) => {
 
 // ===== Campaign Routes =====
 
-// Get all approved/active campaigns for campaigns.html
-app.get("/api/campaigns", async (req, res) => {
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I",
-    });
-
-    const campaigns = (data.values || [])
-      .filter((r) => {
-        const status = r[6]?.trim().toLowerCase();
-        return status === "approved" || status === "active";
-      })
-      .map((r) => ({
-        id: r[0],
-        title: r[1],
-        goal: r[3],
-        description: r[4],
-        category: r[5],
-        status: r[6],
-        created: r[7],
-        image: r[8]
-          ? r[8].startsWith("http")
-            ? r[8]
-            : `${req.protocol}://${req.get("host")}${r[8].startsWith("/") ? r[8] : "/" + r[8]}`
-          : `${req.protocol}://${req.get("host")}/uploads/default.jpg`
-      }));
-
-    res.json({ success: true, campaigns });
-  } catch (err) {
-    console.error("Error loading campaigns:", err);
-    res.status(500).json({ success: false, message: "Failed to load campaigns" });
-  }
-});
-
 // Get all campaigns for logged-in user
 app.get("/api/my-campaigns", async (req, res) => {
   try {
@@ -251,11 +217,6 @@ app.get("/api/my-campaigns", async (req, res) => {
       status: row[6],
       created: row[7],
       imageUrl: row[8] ? `/${row[8]}` : ""
-      imageUrl: row[8]
-        ? row[8].startsWith("http")
-          ? row[8]
-          : `${req.protocol}://${req.get("host")}${row[8].startsWith("/") ? row[8] : "/" + row[8]}`
-        : `${req.protocol}://${req.get("host")}/uploads/default.jpg`
     }));
 
     res.json({ success: true, campaigns });
@@ -291,31 +252,6 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Failed to create campaign" });
-  }
-});
-
-// Delete a campaign
-app.delete("/api/campaign/:id", async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    const campaignId = req.params.id;
-
-    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
-    const allCampaigns = data.values || [];
-    const rowIndex = allCampaigns.findIndex(r => r[0] === campaignId);
-    if (rowIndex < 0) return res.status(404).json({ success: false, message: "Campaign not found" });
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: `Campaigns!G${rowIndex + 1}`,
-      valueInputOption: "RAW",
-      requestBody: { values: [["Deleted"]] }
-    });
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to delete campaign" });
   }
 });
 
