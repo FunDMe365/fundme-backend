@@ -38,7 +38,6 @@ app.use(cors({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use("/uploads", express.static(uploadsDir)); // Serve uploaded images
-app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
 app.set("trust proxy", 1);
@@ -167,13 +166,13 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Delete Account Route (requires confirmation from frontend) =====
+// ===== Delete Account Route =====
 app.delete("/api/delete-account", async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
     const email = req.session.user.email;
 
-    // Remove user from Google Sheets (basic example: marking as deleted, could remove row if desired)
+    // Mark user as deleted
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
       range: "Users!A:E",
@@ -214,9 +213,9 @@ app.get("/api/my-campaigns", async (req, res) => {
       goal: row[3],
       description: row[4],
       category: row[5],
-      status: row[6], // now reflects the actual status from Google Sheets
+      status: row[6],
       created: row[7],
-      image: row[8] ? `${req.protocol}://${req.get("host")}${row[8].startsWith('/') ? row[8] : '/' + row[8]}` : ""
+      imageUrl: row[8] ? `/${row[8]}` : ""
     }));
 
     res.json({ success: true, campaigns });
@@ -226,7 +225,67 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-// ===== Keep all other routes as they were (create campaign, ID verification, Stripe checkout, donations, etc.) =====
+// Create a new campaign
+app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+
+    const { title, goal, description, category } = req.body;
+    const imagePath = req.file ? `/uploads/${req.file.filename}` : "";
+
+    const newCampaign = [
+      Date.now().toString(), // ID
+      title || "Untitled Campaign",
+      req.session.user.email,
+      goal || "0",
+      description || "",
+      category || "",
+      "Pending", // start as pending
+      new Date().toISOString(),
+      imagePath
+    ];
+
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", newCampaign);
+
+    res.json({ success: true, message: "Campaign created successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to create campaign" });
+  }
+});
+
+// Delete a campaign
+app.delete("/api/campaign/:id", async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+    const campaignId = req.params.id;
+
+    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
+    const allCampaigns = data.values || [];
+    const rowIndex = allCampaigns.findIndex(r => r[0] === campaignId);
+    if (rowIndex < 0) return res.status(404).json({ success: false, message: "Campaign not found" });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: `Campaigns!G${rowIndex + 1}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [["Deleted"]] }
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to delete campaign" });
+  }
+});
+
+// ===== Serve static frontend AFTER API routes =====
+app.use(express.static(path.join(__dirname, "public")));
+
+// ===== Catch-all for API 404 =====
+app.all("/api/*", (req, res) => {
+  res.status(404).json({ success: false, message: "API route not found" });
+});
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
