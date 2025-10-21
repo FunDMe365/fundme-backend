@@ -172,7 +172,6 @@ app.delete("/api/delete-account", async (req, res) => {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
     const email = req.session.user.email;
 
-    // Mark user as deleted
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
       range: "Users!A:E",
@@ -200,8 +199,6 @@ app.delete("/api/delete-account", async (req, res) => {
 });
 
 // ===== Campaign Routes =====
-
-// Get all approved/active campaigns for campaigns.html
 app.get("/api/campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
@@ -210,11 +207,8 @@ app.get("/api/campaigns", async (req, res) => {
     });
 
     const campaigns = (data.values || [])
-      .filter((r) => {
-        const status = r[6]?.trim().toLowerCase();
-        return status === "approved" || status === "active";
-      })
-      .map((r) => ({
+      .filter(r => r[6]?.toLowerCase() === "approved")
+      .map(r => ({
         id: r[0],
         title: r[1],
         goal: r[3],
@@ -222,11 +216,7 @@ app.get("/api/campaigns", async (req, res) => {
         category: r[5],
         status: r[6],
         created: r[7],
-        image: r[8]
-          ? r[8].startsWith("http")
-            ? r[8]
-            : `${req.protocol}://${req.get("host")}${r[8].startsWith("/") ? r[8] : "/" + r[8]}`
-          : `${req.protocol}://${req.get("host")}/uploads/default.jpg`
+        image: r[8]?.startsWith("/uploads/") ? r[8] : `/uploads/${path.basename(r[8] || "")}`,
       }));
 
     res.json({ success: true, campaigns });
@@ -236,56 +226,26 @@ app.get("/api/campaigns", async (req, res) => {
   }
 });
 
-// Get all campaigns for logged-in user
-app.get("/api/my-campaigns", async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
-    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
-    const campaigns = (data.values || []).filter((row) => row[2] === req.session.user.email).map((row) => ({
-      id: row[0],
-      title: row[1],
-      goal: row[3],
-      description: row[4],
-      category: row[5],
-      status: row[6],
-      created: row[7],
-      imageUrl: row[8]
-        ? row[8].startsWith("http")
-          ? row[8]
-          : `${req.protocol}://${req.get("host")}${row[8].startsWith("/") ? row[8] : "/" + row[8]}`
-        : `${req.protocol}://${req.get("host")}/uploads/default.jpg`
-    }));
-
-    res.json({ success: true, campaigns });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to load campaigns" });
-  }
-});
-
-// Create a new campaign
+// Create campaign
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
     if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
     const { title, goal, description, category } = req.body;
     const imagePath = req.file ? `/uploads/${req.file.filename}` : "";
 
     const newCampaign = [
-      Date.now().toString(), // ID
+      Date.now().toString(),
       title || "Untitled Campaign",
       req.session.user.email,
       goal || "0",
       description || "",
       category || "",
-      "Pending", // start as pending
+      "Pending",
       new Date().toISOString(),
       imagePath
     ];
 
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", newCampaign);
-
     res.json({ success: true, message: "Campaign created successfully" });
   } catch (err) {
     console.error(err);
@@ -293,28 +253,35 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
-// Delete a campaign
-app.delete("/api/campaign/:id", async (req, res) => {
+// ===== 🆕 Stripe Checkout Route =====
+app.post("/api/create-checkout-session/:id", async (req, res) => {
   try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    const campaignId = req.params.id;
+    const { id } = req.params;
+    const { amount } = req.body;
 
-    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
-    const allCampaigns = data.values || [];
-    const rowIndex = allCampaigns.findIndex(r => r[0] === campaignId);
-    if (rowIndex < 0) return res.status(404).json({ success: false, message: "Campaign not found" });
+    if (!amount || isNaN(amount) || amount <= 0) {
+      return res.status(400).json({ success: false, message: "Invalid amount" });
+    }
 
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: `Campaigns!G${rowIndex + 1}`,
-      valueInputOption: "RAW",
-      requestBody: { values: [["Deleted"]] }
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: `Donation to Campaign ${id}` },
+          unit_amount: Math.round(amount * 100),
+        },
+        quantity: 1,
+      }],
+      mode: "payment",
+      success_url: "https://fundasmile.net/thankyou.html",
+      cancel_url: "https://fundasmile.net/campaigns.html",
     });
 
-    res.json({ success: true });
+    res.json({ url: session.url });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to delete campaign" });
+    console.error("Stripe checkout error:", err);
+    res.status(500).json({ success: false, message: "Stripe error" });
   }
 });
 
