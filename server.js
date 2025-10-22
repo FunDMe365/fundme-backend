@@ -271,7 +271,7 @@ app.get("/api/my-campaigns", async (req, res) => {
         category: row[5],
         status: row[6], // <-- return exact status from sheet
         created: row[7],
-        imageUrl: row[8] ? `/${row[8]}` : "",
+        image: row[8] || "",
       }));
 
     res.json({ success: true, campaigns });
