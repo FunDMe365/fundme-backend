@@ -25,8 +25,6 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY); // LIVE key from Render en
 const allowedOrigins = [
   "https://fundasmile.net",
   "https://www.fundasmile.net",
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
 ];
 app.use(cors({
   origin: allowedOrigins,
