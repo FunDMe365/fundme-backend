@@ -264,7 +264,8 @@ app.get("/api/my-campaigns", async (req, res) => {
         category: row[5],
         status: row[6], // exact status from sheet
         created: row[7],
-        image: row[8] || "", // <-- FIXED: use exact value from sheet
+        // fixed image path for frontend
+        image: row[8] ? `/uploads/${path.basename(row[8])}` : "",
       }));
 
     res.json({ success: true, campaigns });
