@@ -2,7 +2,6 @@ require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
-// const MongoStore = require("connect-mongo"); // MongoDB not needed
 const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
@@ -20,7 +19,7 @@ const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 // ===== Stripe Setup =====
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY); // Make sure this is the live secret key in Render
 
 // ===== CORS =====
 const allowedOrigins = [
@@ -37,7 +36,7 @@ app.use(cors({
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use("/uploads", express.static(uploadsDir)); // Serve uploaded images
+app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
@@ -166,38 +165,6 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Delete Account Route =====
-app.delete("/api/delete-account", async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    const email = req.session.user.email;
-
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:E",
-    });
-    const allUsers = data.values || [];
-    const rowIndex = allUsers.findIndex(r => r[2]?.toLowerCase() === email.toLowerCase());
-    if (rowIndex >= 0) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SPREADSHEET_IDS.users,
-        range: `Users!E${rowIndex + 1}`,
-        valueInputOption: "RAW",
-        requestBody: { values: [["deleted"]] }
-      });
-    }
-
-    req.session.destroy(err => {
-      if (err) return res.status(500).json({ success: false, message: "Failed to delete account" });
-      res.clearCookie("connect.sid");
-      res.json({ success: true, message: "Account deleted" });
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
 // ===== Campaign Routes =====
 app.get("/api/my-campaigns", async (req, res) => {
   try {
@@ -222,21 +189,19 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-// ===== Stripe Checkout (Mission and Campaigns) =====
+// ===== Stripe Checkout (Live Mode) =====
 app.post('/api/create-checkout-session/:id', async (req, res) => {
-  let { id } = req.params;
+  const { id } = req.params;
   const { amount } = req.body;
 
   try {
-    const campaignName = id === "mission" ? "JoyFund Mission" : `Donation for campaign ${id}`;
-
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
         price_data: {
           currency: 'usd',
-          product_data: { name: campaignName },
-          unit_amount: Math.round(amount * 100)
+          product_data: { name: `Donation for campaign ${id}` },
+          unit_amount: amount * 100
         },
         quantity: 1
       }],
@@ -247,41 +212,12 @@ app.post('/api/create-checkout-session/:id', async (req, res) => {
 
     res.json({ id: session.id });
   } catch (error) {
-    console.error("Stripe checkout error:", error);
-    res.status(500).json({ success: false, message: "Unable to process donation at this time." });
+    console.error("Stripe live session error:", error);
+    res.status(500).send('Unable to process donation at this time.');
   }
 });
 
-// ===== Create a new campaign =====
-app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
-    const { title, goal, description, category } = req.body;
-    const imagePath = req.file ? `/uploads/${req.file.filename}` : "";
-
-    const newCampaign = [
-      Date.now().toString(),
-      title || "Untitled Campaign",
-      req.session.user.email,
-      goal || "0",
-      description || "",
-      category || "",
-      "Pending",
-      new Date().toISOString(),
-      imagePath
-    ];
-
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", newCampaign);
-
-    res.json({ success: true, message: "Campaign created successfully" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to create campaign" });
-  }
-});
-
-// ===== Serve static frontend =====
+// ===== Serve static frontend AFTER API routes =====
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Catch-all for API 404 =====
