@@ -253,6 +253,7 @@ app.get("/api/my-campaigns", async (req, res) => {
       spreadsheetId: SPREADSHEET_IDS.campaigns,
       range: "Campaigns!A:I",
     });
+
     const campaigns = (data.values || [])
       .filter((row) => row[2] === req.session.user.email)
       .map((row) => ({
@@ -261,7 +262,7 @@ app.get("/api/my-campaigns", async (req, res) => {
         goal: row[3],
         description: row[4],
         category: row[5],
-        status: row[6] === "Approved" ? "Active" : row[6],
+        status: row[6], // <-- keep actual status from sheet
         created: row[7],
         imageUrl: row[8] ? `/${row[8]}` : "",
       }));
