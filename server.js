@@ -19,7 +19,7 @@ const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 // ===== Stripe Setup =====
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY); // Make sure this is the live secret key in Render
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY); // Use live secret key in Render
 
 // ===== CORS =====
 const allowedOrigins = [
@@ -194,6 +194,8 @@ app.post('/api/create-checkout-session/:id', async (req, res) => {
   const { id } = req.params;
   const { amount } = req.body;
 
+  if (!amount || amount < 1) return res.status(400).json({ success: false, message: "Invalid donation amount." });
+
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -201,7 +203,7 @@ app.post('/api/create-checkout-session/:id', async (req, res) => {
         price_data: {
           currency: 'usd',
           product_data: { name: `Donation for campaign ${id}` },
-          unit_amount: amount * 100
+          unit_amount: Math.round(amount * 100)
         },
         quantity: 1
       }],
@@ -213,7 +215,7 @@ app.post('/api/create-checkout-session/:id', async (req, res) => {
     res.json({ id: session.id });
   } catch (error) {
     console.error("Stripe live session error:", error);
-    res.status(500).send('Unable to process donation at this time.');
+    res.status(500).json({ success: false, message: "Unable to process donation at this time." });
   }
 });
 
