@@ -2,7 +2,6 @@ require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
-// const MongoStore = require("connect-mongo"); // MongoDB not needed
 const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
@@ -37,7 +36,7 @@ app.use(cors({
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use("/uploads", express.static(uploadsDir)); // Serve uploaded images
+app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
@@ -47,7 +46,6 @@ app.use(
     secret: process.env.SESSION_SECRET || "supersecretkey",
     resave: false,
     saveUninitialized: false,
-    // MongoStore removed since we're using Google Sheets
     cookie: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
@@ -140,9 +138,16 @@ async function verifyUser(email, password) {
 // ===== Auth Routes =====
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ success: false, message: "All fields required." });
-  try { await saveUser({ name, email, password }); res.json({ success: true }); }
-  catch (err) { console.error(err); res.status(500).json({ success: false }); }
+  if (!name || !email || !password)
+    return res.status(400).json({ success: false, message: "All fields required." });
+
+  try {
+    await saveUser({ name, email, password });
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
 });
 
 app.post("/api/signin", async (req, res) => {
@@ -170,10 +175,10 @@ app.post("/api/logout", (req, res) => {
 // ===== Delete Account Route =====
 app.delete("/api/delete-account", async (req, res) => {
   try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-    const email = req.session.user.email;
+    if (!req.session.user)
+      return res.status(401).json({ success: false, message: "Not logged in" });
 
-    // Mark user as deleted
+    const email = req.session.user.email;
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
       range: "Users!A:E",
@@ -202,22 +207,57 @@ app.delete("/api/delete-account", async (req, res) => {
 
 // ===== Campaign Routes =====
 
-// Get all campaigns for logged-in user
+// ✅ NEW: Get all active (approved) campaigns for public campaigns.html
+app.get("/api/active-campaigns", async (req, res) => {
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:I",
+    });
+
+    const campaigns = (data.values || [])
+      .filter(row => row[6] === "Approved")
+      .map(row => ({
+        id: row[0],
+        title: row[1],
+        goal: row[3],
+        description: row[4],
+        category: row[5],
+        status: "Active",
+        created: row[7],
+        imageUrl: row[8] ? `https://fundme-backend.onrender.com${row[8]}` : "",
+      }));
+
+    res.json({ success: true, campaigns });
+  } catch (err) {
+    console.error("Failed to load active campaigns:", err);
+    res.status(500).json({ success: false, message: "Error loading campaigns" });
+  }
+});
+
+// Get logged-in user's campaigns
 app.get("/api/my-campaigns", async (req, res) => {
   try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+    if (!req.session.user)
+      return res.status(401).json({ success: false, message: "Not logged in" });
 
-    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
-    const campaigns = (data.values || []).filter((row) => row[2] === req.session.user.email).map((row) => ({
-      id: row[0],
-      title: row[1],
-      goal: row[3],
-      description: row[4],
-      category: row[5],
-      status: row[6] === "Approved" ? "Active" : row[6],
-      created: row[7],
-      imageUrl: row[8] ? `/${row[8]}` : ""
-    }));
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:I",
+    });
+
+    const campaigns = (data.values || [])
+      .filter(row => row[2] === req.session.user.email)
+      .map(row => ({
+        id: row[0],
+        title: row[1],
+        goal: row[3],
+        description: row[4],
+        category: row[5],
+        status: row[6] === "Approved" ? "Active" : row[6],
+        created: row[7],
+        imageUrl: row[8] ? `/${row[8]}` : ""
+      }));
 
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -226,65 +266,63 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-// stripe checkout on homepage
-app.post('/api/create-checkout-session/:id', async (req, res) => {
+// Stripe checkout for donations
+app.post("/api/create-checkout-session/:id", async (req, res) => {
+  console.log("✅ Stripe donation route active"); // Confirm route exists in Render logs
   const { id } = req.params;
   const { amount } = req.body;
 
   try {
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
+      payment_method_types: ["card"],
       line_items: [{
         price_data: {
-          currency: 'usd',
+          currency: "usd",
           product_data: { name: `Donation for campaign ${id}` },
           unit_amount: amount * 100
         },
         quantity: 1
       }],
-      mode: 'payment',
-      success_url: 'https://www.fundasmile.net/thankyou.html',
-      cancel_url: 'https://www.fundasmile.net/cancel.html'
+      mode: "payment",
+      success_url: "https://www.fundasmile.net/thankyou.html",
+      cancel_url: "https://www.fundasmile.net/cancel.html"
     });
 
     res.json({ id: session.id });
   } catch (error) {
     console.error(error);
-    res.status(500).send('Unable to process donation at this time.');
+    res.status(500).send("Unable to process donation at this time.");
   }
 });
 
 // Create a new campaign
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+    if (!req.session.user)
+      return res.status(401).json({ success: false, message: "Not logged in" });
 
     const { title, goal, description, category } = req.body;
     const imagePath = req.file ? `/uploads/${req.file.filename}` : "";
 
     const newCampaign = [
-      Date.now().toString(), // ID
+      Date.now().toString(),
       title || "Untitled Campaign",
       req.session.user.email,
       goal || "0",
       description || "",
       category || "",
-      "Pending", // start as pending
+      "Pending",
       new Date().toISOString(),
       imagePath
     ];
 
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", newCampaign);
-
     res.json({ success: true, message: "Campaign created successfully" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Failed to create campaign" });
   }
 });
-
-// ===== Serve static frontend AFTER API routes =====
-app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Catch-all for API 404 =====
 app.all("/api/*", (req, res) => {
