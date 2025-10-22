@@ -133,6 +133,32 @@ async function verifyUser(email, password) {
   }
 }
 
+// ===== Volunteer / Street Team Submission =====
+app.post("/api/volunteer", async (req, res) => {
+  const { name, email, role, message } = req.body;
+
+  if (!name || !email || !role || !message) {
+    return res.status(400).json({ success: false, message: "All fields are required." });
+  }
+
+  try {
+    // Save to Google Sheet
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Volunteers", [
+      new Date().toISOString(),
+      name,
+      email,
+      role,
+      message,
+    ]);
+
+    res.json({ success: true, message: "Thank you for volunteering!" });
+  } catch (err) {
+    console.error("Volunteer submission error:", err);
+    res.status(500).json({ success: false, message: "Failed to submit. Try again later." });
+  }
+});
+
+
 // ===== Auth Routes =====
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
@@ -219,6 +245,27 @@ app.post('/api/create-checkout-session/:id', async (req, res) => {
 
 // ===== Serve static frontend AFTER API routes =====
 app.use(express.static(path.join(__dirname, "public")));
+
+// ===== Waitlist Route =====
+app.post("/api/waitlist", async (req, res) => {
+  const { name, email, source, reason } = req.body;
+  if (!name || !email || !source || !reason)
+    return res.status(400).json({ success: false, message: "All fields are required." });
+
+  try {
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
+      new Date().toISOString(),
+      name,
+      email,
+      source,
+      reason
+    ]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Waitlist save error:", err);
+    res.status(500).json({ success: false, message: "Failed to submit waitlist." });
+  }
+});
 
 // ===== Catch-all for API 404 =====
 app.all("/api/*", (req, res) => {
