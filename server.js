@@ -245,9 +245,7 @@ app.post("/api/volunteer", async (req, res) => {
 app.get("/api/my-campaigns", async (req, res) => {
   try {
     if (!req.session.user)
-      return res
-        .status(401)
-        .json({ success: false, message: "Not logged in" });
+      return res.status(401).json({ success: false, message: "Not logged in" });
 
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
@@ -256,24 +254,30 @@ app.get("/api/my-campaigns", async (req, res) => {
 
     const campaigns = (data.values || [])
       .filter((row) => row[2] === req.session.user.email)
-      .map((row) => ({
-        id: row[0],
-        title: row[1],
-        goal: row[3],
-        description: row[4],
-        category: row[5],
-        status: row[6], // exact status from sheet
-        created: row[7],
-        // fixed image path for frontend
-        image: row[8] ? `/uploads/${path.basename(row[8])}` : "",
-      }));
+      .map((row) => {
+        // row[8] = image path stored in sheet
+        let imagePath = row[8] ? row[8].trim() : "";
+        // Ensure URL is relative to /uploads for browser
+        if (imagePath && !imagePath.startsWith("/uploads/")) {
+          imagePath = "/uploads/" + path.basename(imagePath);
+        }
+
+        return {
+          id: row[0],
+          title: row[1],
+          goal: row[3],
+          description: row[4],
+          category: row[5],
+          status: row[6], // exact status from sheet
+          created: row[7],
+          image: imagePath,
+        };
+      });
 
     res.json({ success: true, campaigns });
   } catch (err) {
     console.error(err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to load campaigns" });
+    res.status(500).json({ success: false, message: "Failed to load campaigns" });
   }
 });
 
