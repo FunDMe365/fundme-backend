@@ -19,7 +19,7 @@ const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 // ===== Stripe Setup =====
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY); // Use live secret key in Render
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY); // LIVE key from Render env
 
 // ===== CORS =====
 const allowedOrigins = [
@@ -189,7 +189,7 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-// ===== Stripe Checkout (Live Mode) =====
+// ===== Stripe Checkout (Live) =====
 app.post('/api/create-checkout-session/:id', async (req, res) => {
   const { id } = req.params;
   const { amount } = req.body;
@@ -202,14 +202,14 @@ app.post('/api/create-checkout-session/:id', async (req, res) => {
       line_items: [{
         price_data: {
           currency: 'usd',
-          product_data: { name: `Donation for campaign ${id}` },
-          unit_amount: Math.round(amount * 100)
+          product_data: { name: `Donation for ${id}` },
+          unit_amount: Math.round(amount * 100),
         },
-        quantity: 1
+        quantity: 1,
       }],
       mode: 'payment',
       success_url: 'https://www.fundasmile.net/thankyou.html',
-      cancel_url: 'https://www.fundasmile.net/cancel.html'
+      cancel_url: 'https://www.fundasmile.net/cancel.html',
     });
 
     res.json({ id: session.id });
