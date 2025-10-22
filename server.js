@@ -19,17 +19,31 @@ const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 // ===== Stripe Setup =====
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY); // LIVE key from Render env
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ===== CORS =====
+// ===== Allowed Origins =====
 const allowedOrigins = [
   "https://fundasmile.net",
   "https://www.fundasmile.net",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
 ];
-app.use(cors({
-  origin: allowedOrigins,
+
+// ===== CORS =====
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
   credentials: true,
-}));
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // Preflight support
 
 // ===== Middleware =====
 app.use(bodyParser.json());
@@ -83,7 +97,8 @@ async function saveToSheet(sheetId, sheetName, values) {
 // ===== Multer =====
 const storage = multer.diskStorage({
   destination: uploadsDir,
-  filename: (req, file, cb) => cb(null, `${Date.now()}${path.extname(file.originalname)}`),
+  filename: (req, file, cb) =>
+    cb(null, `${Date.now()}${path.extname(file.originalname)}`),
 });
 const upload = multer({ storage });
 
@@ -106,7 +121,9 @@ async function verifyUser(email, password) {
       range: "Users!A:E",
     });
     const allUsers = data.values || [];
-    const userRow = allUsers.find((r) => r[2]?.toLowerCase() === email.toLowerCase());
+    const userRow = allUsers.find(
+      (r) => r[2]?.toLowerCase() === email.toLowerCase()
+    );
     if (!userRow) return false;
 
     const passwordMatch = await bcrypt.compare(password, userRow[3]);
@@ -116,7 +133,9 @@ async function verifyUser(email, password) {
       spreadsheetId: SPREADSHEET_IDS.users,
       range: "ID_Verifications!A:D",
     });
-    const verRows = (verData.values || []).filter((r) => r[1]?.toLowerCase() === email.toLowerCase());
+    const verRows = (verData.values || []).filter(
+      (r) => r[1]?.toLowerCase() === email.toLowerCase()
+    );
     const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
     const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
     const verified = verificationStatus === "Approved";
@@ -133,44 +152,29 @@ async function verifyUser(email, password) {
   }
 }
 
-// ===== Volunteer / Street Team Submission =====
-app.post("/api/volunteer", async (req, res) => {
-  const { name, email, role, message } = req.body;
-
-  if (!name || !email || !role || !message) {
-    return res.status(400).json({ success: false, message: "All fields are required." });
-  }
-
-  try {
-    // Save to Google Sheet
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Volunteers", [
-      new Date().toISOString(),
-      name,
-      email,
-      role,
-      message,
-    ]);
-
-    res.json({ success: true, message: "Thank you for volunteering!" });
-  } catch (err) {
-    console.error("Volunteer submission error:", err);
-    res.status(500).json({ success: false, message: "Failed to submit. Try again later." });
-  }
-});
-
-
 // ===== Auth Routes =====
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ success: false, message: "All fields required." });
-  try { await saveUser({ name, email, password }); res.json({ success: true }); }
-  catch (err) { console.error(err); res.status(500).json({ success: false }); }
+  if (!name || !email || !password)
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields required." });
+  try {
+    await saveUser({ name, email, password });
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
 });
 
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   const user = await verifyUser(email, password);
-  if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
+  if (!user)
+    return res
+      .status(401)
+      .json({ success: false, message: "Invalid credentials" });
   req.session.user = user;
   await new Promise((r) => req.session.save(r));
   res.json({ success: true, profile: user });
@@ -189,104 +193,13 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Create Campaign =====
-app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
-  try {
-    const { title, description, goal, category, creatorEmail } = req.body;
-    let imageUrl = "";
-
-    // Validate
-    if (!title || !description || !goal || !category || !creatorEmail)
-      return res.status(400).json({ success: false, message: "All fields are required." });
-
-    // Save uploaded image if exists
-    if (req.file) {
-      imageUrl = `uploads/${req.file.filename}`;
-    }
-
-    // Save to Google Sheets
-    const campaignId = Date.now().toString();
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      campaignId,
-      title,
-      creatorEmail,
-      goal,
-      description,
-      category,
-      "Pending",
-      new Date().toISOString(),
-      imageUrl
-    ]);
-
-    res.json({ success: true, message: "Campaign created successfully!", id: campaignId });
-  } catch (err) {
-    console.error("Create campaign error:", err);
-    res.status(500).json({ success: false, message: "Failed to create campaign." });
-  }
-});
-
-// ===== Campaign Routes =====
-app.get("/api/my-campaigns", async (req, res) => {
-  try {
-    if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
-    const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.campaigns, range: "Campaigns!A:I" });
-    const campaigns = (data.values || []).filter((row) => row[2] === req.session.user.email).map((row) => ({
-      id: row[0],
-      title: row[1],
-      goal: row[3],
-      description: row[4],
-      category: row[5],
-      status: row[6] === "Approved" ? "Active" : row[6],
-      created: row[7],
-      imageUrl: row[8] ? `/${row[8]}` : ""
-    }));
-
-    res.json({ success: true, campaigns });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to load campaigns" });
-  }
-});
-
-// ===== Stripe Checkout (Live) =====
-app.post('/api/create-checkout-session/:id', async (req, res) => {
-  const { id } = req.params;
-  const { amount } = req.body;
-
-  if (!amount || amount < 1) return res.status(400).json({ success: false, message: "Invalid donation amount." });
-
-  try {
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      line_items: [{
-        price_data: {
-          currency: 'usd',
-          product_data: { name: `Donation for ${id}` },
-          unit_amount: Math.round(amount * 100),
-        },
-        quantity: 1,
-      }],
-      mode: 'payment',
-      success_url: 'https://www.fundasmile.net/thankyou.html',
-      cancel_url: 'https://www.fundasmile.net/cancel.html',
-    });
-
-    res.json({ id: session.id });
-  } catch (error) {
-    console.error("Stripe live session error:", error);
-    res.status(500).json({ success: false, message: "Unable to process donation at this time." });
-  }
-});
-
-// ===== Serve static frontend AFTER API routes =====
-app.use(express.static(path.join(__dirname, "public")));
-
 // ===== Waitlist Route =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email || !source || !reason)
-    return res.status(400).json({ success: false, message: "All fields are required." });
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields are required." });
 
   try {
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
@@ -294,7 +207,7 @@ app.post("/api/waitlist", async (req, res) => {
       name,
       email,
       source,
-      reason
+      reason,
     ]);
     res.json({ success: true });
   } catch (err) {
@@ -302,6 +215,138 @@ app.post("/api/waitlist", async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to submit waitlist." });
   }
 });
+
+// ===== Volunteer / Street Team Route =====
+app.post("/api/volunteer", async (req, res) => {
+  const { name, email, role, message } = req.body;
+  if (!name || !email || !role || !message)
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields are required." });
+
+  try {
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Volunteers", [
+      new Date().toISOString(),
+      name,
+      email,
+      role,
+      message,
+    ]);
+    res.json({ success: true, message: "Thank you for volunteering!" });
+  } catch (err) {
+    console.error("Volunteer submission error:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to submit. Try again later." });
+  }
+});
+
+// ===== Campaign Routes =====
+app.get("/api/my-campaigns", async (req, res) => {
+  try {
+    if (!req.session.user)
+      return res
+        .status(401)
+        .json({ success: false, message: "Not logged in" });
+
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:I",
+    });
+    const campaigns = (data.values || [])
+      .filter((row) => row[2] === req.session.user.email)
+      .map((row) => ({
+        id: row[0],
+        title: row[1],
+        goal: row[3],
+        description: row[4],
+        category: row[5],
+        status: row[6] === "Approved" ? "Active" : row[6],
+        created: row[7],
+        imageUrl: row[8] ? `/${row[8]}` : "",
+      }));
+
+    res.json({ success: true, campaigns });
+  } catch (err) {
+    console.error(err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to load campaigns" });
+  }
+});
+
+// ===== Create Campaign Route =====
+app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+  const { title, goal, description, category, creatorEmail } = req.body;
+  if (!title || !goal || !description || !category || !creatorEmail)
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields are required." });
+
+  let imageUrl = "";
+  if (req.file) imageUrl = `uploads/${req.file.filename}`;
+
+  try {
+    const id = Date.now().toString();
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
+      id,
+      title,
+      creatorEmail,
+      goal,
+      description,
+      category,
+      "Pending",
+      new Date().toISOString(),
+      imageUrl,
+    ]);
+    res.json({ success: true, message: "Campaign created successfully!", id });
+  } catch (err) {
+    console.error("Error creating campaign:", err);
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to create campaign." });
+  }
+});
+
+// ===== Stripe Checkout Route =====
+app.post("/api/create-checkout-session/:id", async (req, res) => {
+  const { id } = req.params;
+  const { amount } = req.body;
+
+  if (!amount || amount < 1)
+    return res
+      .status(400)
+      .json({ success: false, message: "Invalid donation amount." });
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: `Donation for ${id}` },
+            unit_amount: Math.round(amount * 100),
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      success_url: "https://www.fundasmile.net/thankyou.html",
+      cancel_url: "https://www.fundasmile.net/cancel.html",
+    });
+
+    res.json({ id: session.id });
+  } catch (error) {
+    console.error("Stripe live session error:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Unable to process donation at this time." });
+  }
+});
+
+// ===== Serve static frontend =====
+app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Catch-all for API 404 =====
 app.all("/api/*", (req, res) => {
