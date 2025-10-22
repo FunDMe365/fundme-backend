@@ -175,16 +175,9 @@ app.post("/api/signin", async (req, res) => {
     return res
       .status(401)
       .json({ success: false, message: "Invalid credentials" });
-
-  // Ensure user object stored in session has all expected fields
-  req.session.user = {
-    name: user.name,
-    email: user.email,
-    verified: user.verified,
-    verificationStatus: user.verificationStatus,
-  };
+  req.session.user = user;
   await new Promise((r) => req.session.save(r));
-  res.json({ success: true, profile: req.session.user });
+  res.json({ success: true, profile: user });
 });
 
 app.get("/api/check-session", (req, res) => {
@@ -269,9 +262,9 @@ app.get("/api/my-campaigns", async (req, res) => {
         goal: row[3],
         description: row[4],
         category: row[5],
-        status: row[6], // <-- return exact status from sheet
+        status: row[6], // exact status from sheet
         created: row[7],
-        image: row[8] || "",
+        image: row[8] || "", // <-- FIXED: use exact value from sheet
       }));
 
     res.json({ success: true, campaigns });
