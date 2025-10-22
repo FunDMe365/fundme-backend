@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
-const MongoStore = require("connect-mongo");
+// const MongoStore = require("connect-mongo"); // MongoDB not needed
 const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
@@ -47,7 +47,7 @@ app.use(
     secret: process.env.SESSION_SECRET || "supersecretkey",
     resave: false,
     saveUninitialized: false,
-    store: MongoStore.create({ mongoUrl: process.env.MONGO_URI, collectionName: "sessions" }),
+    // MongoStore removed since we're using Google Sheets
     cookie: {
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
@@ -214,7 +214,7 @@ app.get("/api/my-campaigns", async (req, res) => {
       goal: row[3],
       description: row[4],
       category: row[5],
-      status: row[6],
+      status: row[6] === "Approved" ? "Active" : row[6],
       created: row[7],
       imageUrl: row[8] ? `/${row[8]}` : ""
     }));
