@@ -189,6 +189,37 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
+// ===== Create Campaign Route =====
+app.post("/api/create-campaign", async (req, res) => {
+  const { title, description, goal, category, creatorEmail, imageUrl } = req.body;
+
+  if (!title || !description || !goal || !category || !creatorEmail) {
+    return res.status(400).json({ success: false, message: "All fields are required." });
+  }
+
+  try {
+    // Generate a unique ID for the campaign
+    const campaignId = Date.now().toString();
+
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
+      campaignId,
+      title,
+      creatorEmail,
+      goal,
+      description,
+      category,
+      "Pending", // status
+      new Date().toISOString(),
+      imageUrl || "",
+    ]);
+
+    res.json({ success: true, message: "Campaign created successfully!", id: campaignId });
+  } catch (err) {
+    console.error("Create campaign error:", err);
+    res.status(500).json({ success: false, message: "Failed to create campaign." });
+  }
+});
+
 // ===== Campaign Routes =====
 app.get("/api/my-campaigns", async (req, res) => {
   try {
