@@ -226,6 +226,34 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
+// stripe checkout on homepage
+app.post('/api/create-checkout-session/:id', async (req, res) => {
+  const { id } = req.params;
+  const { amount } = req.body;
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: { name: `Donation for campaign ${id}` },
+          unit_amount: amount * 100
+        },
+        quantity: 1
+      }],
+      mode: 'payment',
+      success_url: 'https://www.fundasmile.net/thankyou.html',
+      cancel_url: 'https://www.fundasmile.net/cancel.html'
+    });
+
+    res.json({ id: session.id });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Unable to process donation at this time.');
+  }
+});
+
 // Create a new campaign
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
