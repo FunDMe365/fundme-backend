@@ -253,27 +253,28 @@ app.get("/api/my-campaigns", async (req, res) => {
     });
 
     const campaigns = (data.values || [])
-  .filter((row) => row[2] === req.session.user.email)
-  .map((row) => {
-    // Ensure the image URL always points to /uploads/<filename>
-    let imageUrl = "";
-    if (row[8] && row[8].trim() !== "") {
-      // Remove any leading slashes just in case
-      const cleanFilename = row[8].replace(/^\/+/, "");
-      imageUrl = `/uploads/${cleanFilename}`;
-    }
+      .filter((row) => row[2] === req.session.user.email)
+      .map((row) => {
+        let imageUrl = "";
+        if (row[8] && row[8].trim() !== "") {
+          const cleanFilename = row[8].replace(/^\/+/, "");
+          // 🩵 FIXED: Prevents double /uploads/uploads/
+          imageUrl = cleanFilename.startsWith("uploads/")
+            ? `/${cleanFilename}`
+            : `/uploads/${cleanFilename}`;
+        }
 
-    return {
-      id: row[0],
-      title: row[1],
-      goal: row[3],
-      description: row[4],
-      category: row[5],
-      status: row[6],
-      created: row[7],
-      image: imageUrl,
-    };
-  });
+        return {
+          id: row[0],
+          title: row[1],
+          goal: row[3],
+          description: row[4],
+          category: row[5],
+          status: row[6],
+          created: row[7],
+          image: imageUrl,
+        };
+      });
 
     res.json({ success: true, campaigns });
   } catch (err) {
