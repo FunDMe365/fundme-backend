@@ -197,14 +197,15 @@ app.post("/api/logout", (req, res) => {
 // ===== Verify ID Route =====
 app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
-    const { email, name } = req.body;
-    if (!email || !req.file) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email and ID image are required" });
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "ID image is required" });
     }
 
-    const idImageUrl = `/uploads/${req.file.filename}`;
+    const { email, name } = req.body;
+    if (!email) return res.status(400).json({ success: false, message: "Email is required" });
+
+    const filename = req.file.filename;
+    const idImageUrl = `/uploads/${filename}`;
 
     // Save to Google Sheet
     await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
@@ -212,19 +213,19 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
       email,
       name || "",
       "Submitted",
-      idImageUrl,
+      filename, // save just filename
     ]);
 
-    return res.json({
-      success: true,
-      message: "ID verification submitted",
-      image: idImageUrl,
-    });
+    return res.json({ success: true, message: "ID verification submitted", image: idImageUrl });
   } catch (err) {
     console.error("verify-id error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Internal server error" });
+
+    // Distinguish Multer errors
+    if (err instanceof multer.MulterError) {
+      return res.status(500).json({ success: false, message: "File upload failed" });
+    }
+
+    return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
