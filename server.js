@@ -82,8 +82,28 @@ const SPREADSHEET_IDS = {
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
 };
 
-// ===== SendGrid =====
+// ===== SendGrid Setup =====
 if (process.env.SENDGRID_API_KEY) sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+// ===== SendGrid Helper =====
+async function sendEmail({ to, subject, text, html }) {
+  if (!process.env.SENDGRID_API_KEY || !process.env.EMAIL_FROM) {
+    console.warn("SendGrid API key or sender email missing. Email not sent.");
+    return;
+  }
+  try {
+    await sgMail.send({
+      to,
+      from: process.env.EMAIL_FROM,
+      subject,
+      text,
+      html,
+    });
+    console.log(`✅ Email sent to ${to}`);
+  } catch (err) {
+    console.error("SendGrid error:", err);
+  }
+}
 
 // ===== Helper Functions =====
 async function saveToSheet(sheetId, sheetName, values) {
@@ -113,6 +133,14 @@ async function saveUser({ name, email, password }) {
     hash,
     "false",
   ]);
+
+  // Send email notification
+  await sendEmail({
+    to: process.env.EMAIL_FROM,
+    subject: `New Signup: ${name}`,
+    text: `New user signed up:\nName: ${name}\nEmail: ${email}`,
+    html: `<p><strong>Name:</strong> ${name}</p><p><strong>Email:</strong> ${email}</p>`,
+  });
 }
 
 async function verifyUser(email, password) {
@@ -194,7 +222,7 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Verify ID Route =====
+// ===== Verify ID Route with Email =====
 app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
     if (!req.file) {
@@ -207,7 +235,6 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
     const filename = req.file.filename;
     const idImageUrl = `/uploads/${filename}`;
 
-    // Save to Google Sheet
     await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
       new Date().toISOString(),
       email,
@@ -216,19 +243,27 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
       filename,
     ]);
 
+    // Send email notification
+    await sendEmail({
+      to: process.env.EMAIL_FROM,
+      subject: `New ID Verification Submitted by ${name || email}`,
+      text: `Name: ${name || "N/A"}\nEmail: ${email}\nID File: ${filename}`,
+      html: `<p><strong>Name:</strong> ${name || "N/A"}</p>
+             <p><strong>Email:</strong> ${email}</p>
+             <p><strong>ID File:</strong> ${filename}</p>`,
+    });
+
     return res.json({ success: true, message: "ID verification submitted", image: idImageUrl });
   } catch (err) {
     console.error("verify-id error:", err);
-
     if (err instanceof multer.MulterError) {
       return res.status(500).json({ success: false, message: "File upload failed" });
     }
-
     return res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
-// ===== Fetch all verifications (dashboard helper) =====
+// ===== Fetch all verifications =====
 app.get("/api/get-verifications", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
@@ -236,15 +271,13 @@ app.get("/api/get-verifications", async (req, res) => {
       range: "ID_Verifications!A:E",
     });
 
-    const verifications = (data.values || [])
-      .map((row) => ({
-        timestamp: row[0],
-        email: row[1],
-        name: row[2],
-        status: row[3],
-        idImageUrl: row[4] ? `/uploads/${path.basename(row[4])}` : "",
-      }))
-      .reverse();
+    const verifications = (data.values || []).map((row) => ({
+      timestamp: row[0],
+      email: row[1],
+      name: row[2],
+      status: row[3],
+      idImageUrl: row[4] ? `/uploads/${path.basename(row[4])}` : "",
+    })).reverse();
 
     res.json({ success: true, verifications });
   } catch (err) {
@@ -253,7 +286,7 @@ app.get("/api/get-verifications", async (req, res) => {
   }
 });
 
-// ===== Waitlist =====
+// ===== Waitlist Route with Email =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email || !source || !reason)
@@ -269,6 +302,18 @@ app.post("/api/waitlist", async (req, res) => {
       source,
       reason,
     ]);
+
+    // Send email notification
+    await sendEmail({
+      to: process.env.EMAIL_FROM,
+      subject: `New Waitlist Submission from ${name}`,
+      text: `Name: ${name}\nEmail: ${email}\nSource: ${source}\nReason: ${reason}`,
+      html: `<p><strong>Name:</strong> ${name}</p>
+             <p><strong>Email:</strong> ${email}</p>
+             <p><strong>Source:</strong> ${source}</p>
+             <p><strong>Reason:</strong> ${reason}</p>`,
+    });
+
     res.json({ success: true });
   } catch (err) {
     console.error("Waitlist save error:", err);
@@ -286,7 +331,6 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing required fields" });
     }
 
-    // Convert amount to cents
     const amountCents = Math.round(amount * 100);
 
     const session = await stripe.checkout.sessions.create({
@@ -295,9 +339,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
         {
           price_data: {
             currency: "usd",
-            product_data: {
-              name: `Donation for ${campaignId}`,
-            },
+            product_data: { name: `Donation for ${campaignId}` },
             unit_amount: amountCents,
           },
           quantity: 1,
