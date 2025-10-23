@@ -256,13 +256,16 @@ app.get("/api/my-campaigns", async (req, res) => {
       .filter((row) => row[2] === req.session.user.email)
       .map((row) => {
         let imageUrl = "";
+
+        // Only if row[8] exists and file actually exists on disk
         if (row[8] && row[8].trim() !== "") {
-          // Remove leading slashes
-          let cleanPath = row[8].replace(/^\/+/, "");
-          // Ensure it always starts with /uploads/
-          if (!cleanPath.startsWith("uploads/")) cleanPath = "uploads/" + cleanPath;
-          imageUrl = "/" + cleanPath;
+          const filePath = path.join(uploadsDir, path.basename(row[8]));
+          if (fs.existsSync(filePath)) {
+            // Always serve as /uploads/filename.jpg
+            imageUrl = `/uploads/${path.basename(row[8])}`;
+          }
         }
+
         return {
           id: row[0],
           title: row[1],
@@ -291,7 +294,10 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       .json({ success: false, message: "All fields are required." });
 
   let imageUrl = "";
-  if (req.file) imageUrl = `uploads/${req.file.filename}`;
+  if (req.file) {
+    // Only store the filename (no folder paths) so /uploads/filename works
+    imageUrl = req.file.filename;
+  }
 
   try {
     const id = Date.now().toString();
@@ -304,7 +310,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       category,
       "Pending",
       new Date().toISOString(),
-      imageUrl,
+      imageUrl, // now just the filename
     ]);
     res.json({ success: true, message: "Campaign created successfully!", id });
   } catch (err) {
