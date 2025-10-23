@@ -264,16 +264,24 @@ app.get("/api/my-campaigns", async (req, res) => {
 
     const campaigns = (data.values || [])
       .filter((row) => row[2] === req.session.user.email)
-      .map((row) => ({
-        id: row[0],
-        title: row[1],
-        goal: row[3],
-        description: row[4],
-        category: row[5],
-        status: row[6] || "Pending",
-        created: row[7],
-        image: getImageUrl(row[8]),
-      }));
+      .map((row) => {
+        let imageUrl = "";
+        if (row[8] && row[8].trim() !== "") {
+          const filename = path.basename(row[8]);
+          imageUrl = `/uploads/${filename}`; // <-- fix for dashboard
+        }
+
+        return {
+          id: row[0],
+          title: row[1],
+          goal: row[3],
+          description: row[4],
+          category: row[5],
+          status: row[6] || "Pending",
+          created: row[7],
+          image: imageUrl, // <-- ensures image shows next to active campaign
+        };
+      });
 
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -281,6 +289,7 @@ app.get("/api/my-campaigns", async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to load campaigns" });
   }
 });
+
 
 // ===== Manage single campaign =====
 app.get("/api/manage-campaign/:id", async (req, res) => {
@@ -371,17 +380,25 @@ app.get("/api/campaigns", async (req, res) => {
       range: "Campaigns!A:I",
     });
 
-    const campaigns = (data.values || []).map((row) => ({
-      id: row[0],
-      title: row[1],
-      creatorEmail: row[2],
-      goal: row[3],
-      description: row[4],
-      category: row[5],
-      status: row[6] || "Pending",
-      created: row[7],
-      image: getImageUrl(row[8]),
-    }));
+    const campaigns = (data.values || []).map((row) => {
+      let imageUrl = "";
+      if (row[8] && row[8].trim() !== "") {
+        const filename = path.basename(row[8]);
+        imageUrl = `/uploads/${filename}`; // <-- ensures frontend path is correct
+      }
+
+      return {
+        id: row[0],
+        title: row[1],
+        creatorEmail: row[2],
+        goal: row[3],
+        description: row[4],
+        category: row[5],
+        status: row[6] || "Pending",
+        created: row[7],
+        image: imageUrl, // <-- frontend will now get /uploads/<filename>
+      };
+    });
 
     const approved = campaigns.filter(
       (c) => (c.status || "").trim().toLowerCase() === "approved"
@@ -393,6 +410,7 @@ app.get("/api/campaigns", async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to load campaigns" });
   }
 });
+
 
 // ===== Create Campaign =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
