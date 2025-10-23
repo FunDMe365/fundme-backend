@@ -43,7 +43,7 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // Preflight support
+app.options("*", cors(corsOptions));
 
 // ===== Middleware =====
 app.use(bodyParser.json());
@@ -257,13 +257,12 @@ app.get("/api/my-campaigns", async (req, res) => {
       .map((row) => {
         let imageUrl = "";
         if (row[8] && row[8].trim() !== "") {
-          const cleanFilename = row[8].replace(/^\/+/, "");
-          // 🩵 FIXED: Prevents double /uploads/uploads/
-          imageUrl = cleanFilename.startsWith("uploads/")
-            ? `/${cleanFilename}`
-            : `/uploads/${cleanFilename}`;
+          // Remove leading slashes
+          let cleanPath = row[8].replace(/^\/+/, "");
+          // Ensure it always starts with /uploads/
+          if (!cleanPath.startsWith("uploads/")) cleanPath = "uploads/" + cleanPath;
+          imageUrl = "/" + cleanPath;
         }
-
         return {
           id: row[0],
           title: row[1],
