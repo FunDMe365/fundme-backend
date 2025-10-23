@@ -51,6 +51,8 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // ===== Serve uploads folder correctly =====
 app.use("/uploads", express.static(uploadsDir));
+
+// Serve public folder
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
@@ -158,7 +160,9 @@ async function verifyUser(email, password) {
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password)
-    return res.status(400).json({ success: false, message: "All fields required." });
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields required." });
   try {
     await saveUser({ name, email, password });
     res.json({ success: true });
@@ -172,7 +176,9 @@ app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   const user = await verifyUser(email, password);
   if (!user)
-    return res.status(401).json({ success: false, message: "Invalid credentials" });
+    return res
+      .status(401)
+      .json({ success: false, message: "Invalid credentials" });
   req.session.user = user;
   await new Promise((r) => req.session.save(r));
   res.json({ success: true, profile: user });
@@ -195,7 +201,9 @@ app.post("/api/logout", (req, res) => {
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email || !source || !reason)
-    return res.status(400).json({ success: false, message: "All fields are required." });
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields are required." });
 
   try {
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
@@ -216,7 +224,9 @@ app.post("/api/waitlist", async (req, res) => {
 app.post("/api/volunteer", async (req, res) => {
   const { name, email, role, message } = req.body;
   if (!name || !email || !role || !message)
-    return res.status(400).json({ success: false, message: "All fields are required." });
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields are required." });
 
   try {
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Volunteers", [
@@ -229,11 +239,13 @@ app.post("/api/volunteer", async (req, res) => {
     res.json({ success: true, message: "Thank you for volunteering!" });
   } catch (err) {
     console.error("Volunteer submission error:", err);
-    res.status(500).json({ success: false, message: "Failed to submit. Try again later." });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to submit. Try again later." });
   }
 });
 
-// ===== Campaign Routes =====
+// ===== My campaigns (user only) =====
 app.get("/api/my-campaigns", async (req, res) => {
   try {
     if (!req.session.user)
@@ -272,47 +284,7 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-// ===== Create Campaign Route =====
-app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
-  const { title, goal, description, category, creatorEmail } = req.body;
-  if (!title || !goal || !description || !category || !creatorEmail)
-    return res.status(400).json({ success: false, message: "All fields are required." });
-
-  let imageUrl = "";
-
-  if (req.file) {
-    imageUrl = `uploads/${req.file.filename}`;
-  } else if (req.body.imagePath) {
-    const sourcePath = path.join(__dirname, "../frontend", req.body.imagePath);
-    if (fs.existsSync(sourcePath)) {
-      const filename = `${Date.now()}_${path.basename(req.body.imagePath)}`;
-      const destPath = path.join(uploadsDir, filename);
-      fs.copyFileSync(sourcePath, destPath);
-      imageUrl = `uploads/${filename}`;
-    }
-  }
-
-  try {
-    const id = Date.now().toString();
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      id,
-      title,
-      creatorEmail,
-      goal,
-      description,
-      category,
-      "Pending",
-      new Date().toISOString(),
-      imageUrl,
-    ]);
-    res.json({ success: true, message: "Campaign created successfully!", id });
-  } catch (err) {
-    console.error("Error creating campaign:", err);
-    res.status(500).json({ success: false, message: "Failed to create campaign." });
-  }
-});
-
-//======campaigns route for all approved====
+// ===== Public approved campaigns (for campaigns.html) =====
 app.get("/api/campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
@@ -340,7 +312,7 @@ app.get("/api/campaigns", async (req, res) => {
       };
     });
 
-    // Only return approved campaigns for the public page
+    // Only return approved campaigns
     const approved = campaigns.filter(c => (c.status || "").trim().toLowerCase() === "approved");
 
     res.json({ success: true, campaigns: approved });
@@ -350,13 +322,44 @@ app.get("/api/campaigns", async (req, res) => {
   }
 });
 
+// ===== Create Campaign Route =====
+app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+  const { title, goal, description, category, creatorEmail } = req.body;
+  if (!title || !goal || !description || !category || !creatorEmail)
+    return res.status(400).json({ success: false, message: "All fields are required." });
+
+  let imageUrl = "";
+  if (req.file) imageUrl = `uploads/${req.file.filename}`;
+
+  try {
+    const id = Date.now().toString();
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
+      id,
+      title,
+      creatorEmail,
+      goal,
+      description,
+      category,
+      "Pending",
+      new Date().toISOString(),
+      imageUrl,
+    ]);
+    res.json({ success: true, message: "Campaign created successfully!", id });
+  } catch (err) {
+    console.error("Error creating campaign:", err);
+    res.status(500).json({ success: false, message: "Failed to create campaign." });
+  }
+});
+
 // ===== Stripe Checkout Route =====
 app.post("/api/create-checkout-session/:id", async (req, res) => {
   const { id } = req.params;
   const { amount } = req.body;
 
   if (!amount || amount < 1)
-    return res.status(400).json({ success: false, message: "Invalid donation amount." });
+    return res
+      .status(400)
+      .json({ success: false, message: "Invalid donation amount." });
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -379,7 +382,9 @@ app.post("/api/create-checkout-session/:id", async (req, res) => {
     res.json({ id: session.id });
   } catch (error) {
     console.error("Stripe live session error:", error);
-    res.status(500).json({ success: false, message: "Unable to process donation at this time." });
+    res
+      .status(500)
+      .json({ success: false, message: "Unable to process donation at this time." });
   }
 });
 
