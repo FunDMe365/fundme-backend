@@ -48,10 +48,8 @@ app.use(cors(corsOptions));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Serve uploads folder correctly =====
+// ===== Serve uploads folder =====
 app.use("/uploads", express.static(uploadsDir));
-
-// Serve public folder
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
@@ -219,7 +217,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Volunteer Route =====
+// ===== Volunteer / Street Team Route =====
 app.post("/api/volunteer", async (req, res) => {
   const { name, email, role, message } = req.body;
   if (!name || !email || !role || !message)
@@ -257,11 +255,11 @@ app.get("/api/my-campaigns", async (req, res) => {
 
     const campaigns = (data.values || [])
       .filter((row) => row[2] === req.session.user.email)
-      .map((row) => {
+      .map((row, i) => {
         let imageUrl = "";
         if (row[8] && row[8].trim() !== "") {
           const filename = path.basename(row[8]);
-          imageUrl = `/uploads/${filename}`;
+          imageUrl = `${req.protocol}://${req.get("host")}/uploads/${filename}`;
         }
         return {
           id: row[0],
@@ -294,7 +292,7 @@ app.get("/api/campaigns", async (req, res) => {
       let imageUrl = "";
       if (row[8] && row[8].trim() !== "") {
         const filename = path.basename(row[8]);
-        imageUrl = `/uploads/${filename}`;
+        imageUrl = `${req.protocol}://${req.get("host")}/uploads/${filename}`;
       }
       return {
         id: row[0],
