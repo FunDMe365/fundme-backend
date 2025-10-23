@@ -43,14 +43,16 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+app.options("*", corsOptions);
 
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Serve uploads and public folders =====
+// ===== Serve uploads folder correctly =====
 app.use("/uploads", express.static(uploadsDir));
+
+// Serve public folder
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
@@ -104,11 +106,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ===== Image helper =====
+// ===== Image URL Helper =====
 function getImageUrl(sheetValue) {
   if (!sheetValue || sheetValue.trim() === "") return "";
   const filename = path.basename(sheetValue);
-  return `/uploads/${filename}`;
+  const filePath = path.join(uploadsDir, filename);
+  if (fs.existsSync(filePath)) return `/uploads/${filename}`;
+  return "";
 }
 
 // ===== User Helpers =====
@@ -202,7 +206,7 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Waitlist Route =====
+// ===== Waitlist =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email || !source || !reason)
@@ -225,7 +229,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Volunteer / Street Team Route =====
+// ===== Volunteer / Street Team =====
 app.post("/api/volunteer", async (req, res) => {
   const { name, email, role, message } = req.body;
   if (!name || !email || !role || !message)
@@ -244,13 +248,11 @@ app.post("/api/volunteer", async (req, res) => {
     res.json({ success: true, message: "Thank you for volunteering!" });
   } catch (err) {
     console.error("Volunteer submission error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to submit. Try again later." });
+    res.status(500).json({ success: false, message: "Failed to submit. Try again later." });
   }
 });
 
-// ===== My campaigns (dashboard) =====
+// ===== My campaigns (user only) =====
 app.get("/api/my-campaigns", async (req, res) => {
   try {
     if (!req.session.user)
@@ -312,7 +314,7 @@ app.get("/api/manage-campaign/:id", async (req, res) => {
   }
 });
 
-// ===== Delete campaign =====
+// ===== Delete Campaign =====
 app.delete("/api/campaign/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -397,9 +399,7 @@ app.get("/api/campaigns", async (req, res) => {
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   const { title, goal, description, category, creatorEmail } = req.body;
   if (!title || !goal || !description || !category || !creatorEmail)
-    return res
-      .status(400)
-      .json({ success: false, message: "All fields are required." });
+    return res.status(400).json({ success: false, message: "All fields are required." });
 
   let imageUrl = "";
   if (req.file) imageUrl = `uploads/${req.file.filename}`;
@@ -420,9 +420,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     res.json({ success: true, message: "Campaign created successfully!", id });
   } catch (err) {
     console.error("Error creating campaign:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to create campaign." });
+    res.status(500).json({ success: false, message: "Failed to create campaign." });
   }
 });
 
@@ -432,9 +430,7 @@ app.post("/api/create-checkout-session/:id", async (req, res) => {
   const { amount } = req.body;
 
   if (!amount || amount < 1)
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid donation amount." });
+    return res.status(400).json({ success: false, message: "Invalid donation amount." });
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -457,9 +453,7 @@ app.post("/api/create-checkout-session/:id", async (req, res) => {
     res.json({ id: session.id });
   } catch (error) {
     console.error("Stripe live session error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Unable to process donation at this time." });
+    res.status(500).json({ success: false, message: "Unable to process donation at this time." });
   }
 });
 
