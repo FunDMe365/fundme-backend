@@ -48,7 +48,7 @@ app.use(cors(corsOptions));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Serve uploads folder correctly =====
+// ===== Serve uploads folder =====
 app.use("/uploads", express.static(uploadsDir));
 
 // Serve public folder
@@ -196,7 +196,7 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Waitlist Route =====
+// ===== Waitlist =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email || !source || !reason)
@@ -219,32 +219,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Volunteer / Street Team Route =====
-app.post("/api/volunteer", async (req, res) => {
-  const { name, email, role, message } = req.body;
-  if (!name || !email || !role || !message)
-    return res
-      .status(400)
-      .json({ success: false, message: "All fields are required." });
-
-  try {
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Volunteers", [
-      new Date().toISOString(),
-      name,
-      email,
-      role,
-      message,
-    ]);
-    res.json({ success: true, message: "Thank you for volunteering!" });
-  } catch (err) {
-    console.error("Volunteer submission error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to submit. Try again later." });
-  }
-});
-
-// ===== My campaigns (user dashboard) =====
+// ===== Campaigns =====
 app.get("/api/my-campaigns", async (req, res) => {
   try {
     if (!req.session.user)
@@ -282,7 +257,6 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-// ===== Public approved campaigns =====
 app.get("/api/campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
@@ -353,13 +327,15 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
-// ===== Stripe Checkout (FIXED) =====
+// ===== Stripe Checkout Route =====
 app.post("/api/create-checkout-session/:id", async (req, res) => {
   const { id } = req.params;
   const { amount } = req.body;
 
   if (!amount || amount < 1)
-    return res.status(400).json({ success: false, message: "Invalid donation amount." });
+    return res
+      .status(400)
+      .json({ success: false, message: "Invalid donation amount." });
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -379,8 +355,7 @@ app.post("/api/create-checkout-session/:id", async (req, res) => {
       cancel_url: "https://www.fundasmile.net/cancel.html",
     });
 
-    // ✅ Only change: return session.url
-    res.json({ url: session.url });
+    res.json({ id: session.id });
   } catch (error) {
     console.error("Stripe live session error:", error);
     res
@@ -389,69 +364,10 @@ app.post("/api/create-checkout-session/:id", async (req, res) => {
   }
 });
 
-// ===== Update Campaign =====
-app.put("/api/campaign/:id", upload.single("image"), async (req, res) => {
-  const { id } = req.params;
-  const { title, description, goal } = req.body;
-  let image = req.file ? `uploads/${req.file.filename}` : null;
-
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I",
-    });
-
-    const rowIdx = (data.values || []).findIndex((r) => r[0] === id);
-    if (rowIdx === -1) return res.status(404).json({ success: false, message: "Campaign not found" });
-
-    const row = data.values[rowIdx];
-    row[1] = title || row[1];
-    row[3] = goal || row[3];
-    row[4] = description || row[4];
-    if (image) row[8] = image;
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: `Campaigns!A${rowIdx + 1}:I${rowIdx + 1}`,
-      valueInputOption: "RAW",
-      requestBody: { values: [row] },
-    });
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to update campaign" });
-  }
-});
-
-// ===== Delete Campaign =====
-app.delete("/api/campaign/:id", async (req, res) => {
-  const { id } = req.params;
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I",
-    });
-
-    const rowIdx = (data.values || []).findIndex((r) => r[0] === id);
-    if (rowIdx === -1) return res.status(404).json({ success: false, message: "Campaign not found" });
-
-    const row = data.values[rowIdx];
-    row[6] = "Deleted";
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: `Campaigns!A${rowIdx + 1}:I${rowIdx + 1}`,
-      valueInputOption: "RAW",
-      requestBody: { values: [row] },
-    });
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to delete campaign" });
-  }
+// ===== Catch-all for API 404 =====
+app.all("/api/*", (req, res) => {
+  res.status(404).json({ success: false, message: "API route not found" });
 });
 
 // ===== Start Server =====
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
