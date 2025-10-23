@@ -49,10 +49,8 @@ app.options("*", cors(corsOptions));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Serve uploads folder correctly =====
+// ===== Serve uploads and public folders =====
 app.use("/uploads", express.static(uploadsDir));
-
-// Serve public folder
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
@@ -106,9 +104,9 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ===== Image URL helper =====
+// ===== Image helper =====
 function getImageUrl(sheetValue) {
-  if (!sheetValue) return "";
+  if (!sheetValue || sheetValue.trim() === "") return "";
   const filename = path.basename(sheetValue);
   return `/uploads/${filename}`;
 }
@@ -252,7 +250,7 @@ app.post("/api/volunteer", async (req, res) => {
   }
 });
 
-// ===== My campaigns (user only) =====
+// ===== My campaigns (dashboard) =====
 app.get("/api/my-campaigns", async (req, res) => {
   try {
     if (!req.session.user)
@@ -283,7 +281,7 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-// ===== Manage Campaign (fetch single) =====
+// ===== Manage single campaign =====
 app.get("/api/manage-campaign/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -314,7 +312,7 @@ app.get("/api/manage-campaign/:id", async (req, res) => {
   }
 });
 
-// ===== Delete Campaign =====
+// ===== Delete campaign =====
 app.delete("/api/campaign/:id", async (req, res) => {
   try {
     const { id } = req.params;
