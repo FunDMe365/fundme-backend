@@ -54,6 +54,31 @@ app.use("/uploads", express.static(uploadsDir));
 // Serve public folder
 app.use(express.static(path.join(__dirname, "public")));
 
+// ===== Verify ID =====
+app.post("/api/verify-id", async (req, res) => {
+  // You can adjust this to whatever verification logic you want
+  // For example, saving uploaded ID images and updating Google Sheets
+
+  const { email, idStatus } = req.body;
+  if (!email || !idStatus) {
+    return res.status(400).json({ success: false, message: "Missing data" });
+  }
+
+  try {
+    // Example: Append verification record to a Google Sheet
+    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
+      new Date().toISOString(),
+      email,
+      idStatus, // e.g., "Submitted"
+    ]);
+
+    res.json({ success: true, message: "ID verification submitted" });
+  } catch (err) {
+    console.error("verify-id error:", err);
+    res.status(500).json({ success: false, message: "Failed to verify ID" });
+  }
+});
+
 // ===== Session =====
 app.set("trust proxy", 1);
 app.use(
