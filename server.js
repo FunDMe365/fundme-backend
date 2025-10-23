@@ -39,8 +39,6 @@ const corsOptions = {
     }
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
 };
 app.use(cors(corsOptions));
 
@@ -82,15 +80,10 @@ const SPREADSHEET_IDS = {
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
 };
 
-// ===== SendGrid Setup =====
+// ===== SendGrid =====
 if (process.env.SENDGRID_API_KEY) sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
-// ===== SendGrid Helper =====
-async function sendEmail({ to, subject, text, html }) {
-  if (!process.env.SENDGRID_API_KEY || !process.env.EMAIL_FROM) {
-    console.warn("SendGrid API key or sender email missing. Email not sent.");
-    return;
-  }
+const sendEmail = async ({ to, subject, text, html }) => {
+  if (!process.env.SENDGRID_API_KEY || !process.env.EMAIL_FROM) return;
   try {
     await sgMail.send({
       to,
@@ -103,7 +96,7 @@ async function sendEmail({ to, subject, text, html }) {
   } catch (err) {
     console.error("SendGrid error:", err);
   }
-}
+};
 
 // ===== Helper Functions =====
 async function saveToSheet(sheetId, sheetName, values) {
@@ -134,7 +127,6 @@ async function saveUser({ name, email, password }) {
     "false",
   ]);
 
-  // Send email notification
   await sendEmail({
     to: process.env.EMAIL_FROM,
     subject: `New Signup: ${name}`,
@@ -154,7 +146,6 @@ async function verifyUser(email, password) {
       (r) => r[2]?.toLowerCase() === email.toLowerCase()
     );
     if (!userRow) return false;
-
     const passwordMatch = await bcrypt.compare(password, userRow[3]);
     if (!passwordMatch) return false;
 
@@ -185,9 +176,7 @@ async function verifyUser(email, password) {
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password)
-    return res
-      .status(400)
-      .json({ success: false, message: "All fields required." });
+    return res.status(400).json({ success: false, message: "All fields required." });
   try {
     await saveUser({ name, email, password });
     res.json({ success: true });
@@ -200,10 +189,7 @@ app.post("/api/signup", async (req, res) => {
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   const user = await verifyUser(email, password);
-  if (!user)
-    return res
-      .status(401)
-      .json({ success: false, message: "Invalid credentials" });
+  if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
   req.session.user = user;
   await new Promise((r) => req.session.save(r));
   res.json({ success: true, profile: user });
@@ -222,77 +208,11 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Verify ID Route with Email =====
-app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: "ID image is required" });
-    }
-
-    const { email, name } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: "Email is required" });
-
-    const filename = req.file.filename;
-    const idImageUrl = `/uploads/${filename}`;
-
-    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
-      new Date().toISOString(),
-      email,
-      name || "",
-      "Submitted",
-      filename,
-    ]);
-
-    // Send email notification
-    await sendEmail({
-      to: process.env.EMAIL_FROM,
-      subject: `New ID Verification Submitted by ${name || email}`,
-      text: `Name: ${name || "N/A"}\nEmail: ${email}\nID File: ${filename}`,
-      html: `<p><strong>Name:</strong> ${name || "N/A"}</p>
-             <p><strong>Email:</strong> ${email}</p>
-             <p><strong>ID File:</strong> ${filename}</p>`,
-    });
-
-    return res.json({ success: true, message: "ID verification submitted", image: idImageUrl });
-  } catch (err) {
-    console.error("verify-id error:", err);
-    if (err instanceof multer.MulterError) {
-      return res.status(500).json({ success: false, message: "File upload failed" });
-    }
-    return res.status(500).json({ success: false, message: "Internal server error" });
-  }
-});
-
-// ===== Fetch all verifications =====
-app.get("/api/get-verifications", async (req, res) => {
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "ID_Verifications!A:E",
-    });
-
-    const verifications = (data.values || []).map((row) => ({
-      timestamp: row[0],
-      email: row[1],
-      name: row[2],
-      status: row[3],
-      idImageUrl: row[4] ? `/uploads/${path.basename(row[4])}` : "",
-    })).reverse();
-
-    res.json({ success: true, verifications });
-  } catch (err) {
-    console.error("get-verifications error:", err);
-    res.status(500).json({ success: false, message: "Failed to fetch verifications" });
-  }
-});
-
-// ===== Waitlist Route with Email =====
+// ===== Waitlist Route (Fixed + Email) =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email || !source || !reason)
-    return res
-      .status(400)
-      .json({ success: false, message: "All fields are required." });
+    return res.status(400).json({ success: false, message: "All fields are required." });
 
   try {
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
@@ -303,7 +223,6 @@ app.post("/api/waitlist", async (req, res) => {
       reason,
     ]);
 
-    // Send email notification
     await sendEmail({
       to: process.env.EMAIL_FROM,
       subject: `New Waitlist Submission from ${name}`,
@@ -321,33 +240,62 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Stripe Checkout Route =====
+// ===== Verify ID Route (Email) =====
+app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: "ID image is required" });
+
+    const { email, name } = req.body;
+    const filename = req.file.filename;
+    const idImageUrl = `/uploads/${filename}`;
+
+    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
+      new Date().toISOString(),
+      email,
+      name || "",
+      "Submitted",
+      filename,
+    ]);
+
+    await sendEmail({
+      to: process.env.EMAIL_FROM,
+      subject: `New ID Verification Submitted by ${name || email}`,
+      text: `Name: ${name || "N/A"}\nEmail: ${email}\nID File: ${filename}`,
+      html: `<p><strong>Name:</strong> ${name || "N/A"}</p>
+             <p><strong>Email:</strong> ${email}</p>
+             <p><strong>ID File:</strong> ${filename}</p>`,
+    });
+
+    res.json({ success: true, message: "ID verification submitted", image: idImageUrl });
+  } catch (err) {
+    console.error("verify-id error:", err);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// ===== Stripe Checkout (Email) =====
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const { campaignId } = req.params;
     const { amount, successUrl, cancelUrl } = req.body;
-
-    if (!amount || !successUrl || !cancelUrl) {
-      return res.status(400).json({ success: false, message: "Missing required fields" });
-    }
+    if (!amount || !successUrl || !cancelUrl)
+      return res.status(400).json({ success: false, message: "Missing fields" });
 
     const amountCents = Math.round(amount * 100);
-
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: { name: `Donation for ${campaignId}` },
-            unit_amount: amountCents,
-          },
-          quantity: 1,
-        },
-      ],
+      line_items: [{ price_data: { currency: "usd", product_data: { name: `Donation for ${campaignId}` }, unit_amount: amountCents }, quantity: 1 }],
       mode: "payment",
       success_url: successUrl,
       cancel_url: cancelUrl,
+    });
+
+    // Send email notification
+    await sendEmail({
+      to: process.env.EMAIL_FROM,
+      subject: `New Donation: $${amount} for ${campaignId}`,
+      text: `A new donation of $${amount} was made for ${campaignId}.`,
+      html: `<p>A new donation of <strong>$${amount}</strong> was made for <strong>${campaignId}</strong>.</p>`,
     });
 
     res.json({ success: true, sessionId: session.id });
@@ -357,10 +305,8 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   }
 });
 
-// ===== Catch-all for API 404 =====
-app.all("/api/*", (req, res) => {
-  res.status(404).json({ success: false, message: "API route not found" });
-});
+// ===== Catch-all API 404 =====
+app.all("/api/*", (req, res) => res.status(404).json({ success: false, message: "API route not found" }));
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
