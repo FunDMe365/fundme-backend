@@ -49,10 +49,10 @@ app.options("*", cors(corsOptions));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Serve uploads folder =====
+// ===== Serve uploads folder correctly =====
 app.use("/uploads", express.static(uploadsDir));
 
-// ===== Serve public folder =====
+// Serve public folder
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
@@ -105,6 +105,13 @@ const storage = multer.diskStorage({
     cb(null, `${Date.now()}${path.extname(file.originalname)}`),
 });
 const upload = multer({ storage });
+
+// ===== Image URL helper =====
+function getImageUrl(sheetValue) {
+  if (!sheetValue) return "";
+  const filename = path.basename(sheetValue);
+  return `/uploads/${filename}`;
+}
 
 // ===== User Helpers =====
 async function saveUser({ name, email, password }) {
@@ -179,7 +186,6 @@ app.post("/api/signin", async (req, res) => {
     return res
       .status(401)
       .json({ success: false, message: "Invalid credentials" });
-
   req.session.user = user;
   await new Promise((r) => req.session.save(r));
   res.json({ success: true, profile: user });
@@ -221,7 +227,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Volunteer Route =====
+// ===== Volunteer / Street Team Route =====
 app.post("/api/volunteer", async (req, res) => {
   const { name, email, role, message } = req.body;
   if (!name || !email || !role || !message)
@@ -259,24 +265,16 @@ app.get("/api/my-campaigns", async (req, res) => {
 
     const campaigns = (data.values || [])
       .filter((row) => row[2] === req.session.user.email)
-      .map((row) => {
-        let imageUrl = "";
-        if (row[8] && row[8].trim() !== "") {
-          const filename = path.basename(row[8]); // ensure just the filename
-          imageUrl = `/uploads/${filename}`;      // correctly reference /uploads
-        }
-
-        return {
-          id: row[0],
-          title: row[1],
-          goal: row[3],
-          description: row[4],
-          category: row[5],
-          status: row[6] || "Pending",
-          created: row[7],
-          image: imageUrl,
-        };
-      });
+      .map((row) => ({
+        id: row[0],
+        title: row[1],
+        goal: row[3],
+        description: row[4],
+        category: row[5],
+        status: row[6] || "Pending",
+        created: row[7],
+        image: getImageUrl(row[8]),
+      }));
 
     res.json({ success: true, campaigns });
   } catch (err) {
@@ -285,8 +283,7 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-
-// ===== Manage Single Campaign =====
+// ===== Manage Campaign (fetch single) =====
 app.get("/api/manage-campaign/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -308,7 +305,7 @@ app.get("/api/manage-campaign/:id", async (req, res) => {
         category: row[5],
         status: row[6],
         created: row[7],
-        image: row[8] ? `/uploads/${path.basename(row[8])}` : "",
+        image: getImageUrl(row[8]),
       },
     });
   } catch (err) {
@@ -367,7 +364,7 @@ app.get("/api/member-since", async (req, res) => {
   }
 });
 
-// ===== Public Approved Campaigns =====
+// ===== Public approved campaigns =====
 app.get("/api/campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
@@ -384,7 +381,7 @@ app.get("/api/campaigns", async (req, res) => {
       category: row[5],
       status: row[6] || "Pending",
       created: row[7],
-      image: row[8] ? `/uploads/${path.basename(row[8])}` : "",
+      image: getImageUrl(row[8]),
     }));
 
     const approved = campaigns.filter(
@@ -402,9 +399,12 @@ app.get("/api/campaigns", async (req, res) => {
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   const { title, goal, description, category, creatorEmail } = req.body;
   if (!title || !goal || !description || !category || !creatorEmail)
-    return res.status(400).json({ success: false, message: "All fields are required." });
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields are required." });
 
-  let imageUrl = req.file ? `uploads/${req.file.filename}` : "";
+  let imageUrl = "";
+  if (req.file) imageUrl = `uploads/${req.file.filename}`;
 
   try {
     const id = Date.now().toString();
@@ -419,11 +419,12 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       new Date().toISOString(),
       imageUrl,
     ]);
-
     res.json({ success: true, message: "Campaign created successfully!", id });
   } catch (err) {
     console.error("Error creating campaign:", err);
-    res.status(500).json({ success: false, message: "Failed to create campaign." });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to create campaign." });
   }
 });
 
@@ -433,7 +434,9 @@ app.post("/api/create-checkout-session/:id", async (req, res) => {
   const { amount } = req.body;
 
   if (!amount || amount < 1)
-    return res.status(400).json({ success: false, message: "Invalid donation amount." });
+    return res
+      .status(400)
+      .json({ success: false, message: "Invalid donation amount." });
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -456,7 +459,9 @@ app.post("/api/create-checkout-session/:id", async (req, res) => {
     res.json({ id: session.id });
   } catch (error) {
     console.error("Stripe live session error:", error);
-    res.status(500).json({ success: false, message: "Unable to process donation at this time." });
+    res
+      .status(500)
+      .json({ success: false, message: "Unable to process donation at this time." });
   }
 });
 
