@@ -246,7 +246,7 @@ app.post("/api/volunteer", async (req, res) => {
   }
 });
 
-// ===== My Campaigns =====
+// ===== My campaigns (user only) =====
 app.get("/api/my-campaigns", async (req, res) => {
   try {
     if (!req.session.user)
@@ -260,7 +260,12 @@ app.get("/api/my-campaigns", async (req, res) => {
     const campaigns = (data.values || [])
       .filter((row) => row[2] === req.session.user.email)
       .map((row) => {
-        let imageUrl = row[8] ? `/uploads/${path.basename(row[8])}` : "";
+        let imageUrl = "";
+        if (row[8] && row[8].trim() !== "") {
+          const filename = path.basename(row[8]); // ensure just the filename
+          imageUrl = `/uploads/${filename}`;      // correctly reference /uploads
+        }
+
         return {
           id: row[0],
           title: row[1],
@@ -279,6 +284,7 @@ app.get("/api/my-campaigns", async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to load campaigns" });
   }
 });
+
 
 // ===== Manage Single Campaign =====
 app.get("/api/manage-campaign/:id", async (req, res) => {
