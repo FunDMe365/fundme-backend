@@ -43,7 +43,6 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 app.use(cors(corsOptions));
-app.options("*", corsOptions);
 
 // ===== Middleware =====
 app.use(bodyParser.json());
