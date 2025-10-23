@@ -268,7 +268,7 @@ app.get("/api/campaigns", async (req, res) => {
       let imageUrl = "";
       if (row[8] && row[8].trim() !== "") {
         const filename = path.basename(row[8]);
-        imageUrl = `/uploads/${filename}`;
+        imageUrl = `/uploads/${filename}`; // <- FIXED
       }
       return {
         id: row[0],
@@ -303,7 +303,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       .json({ success: false, message: "All fields are required." });
 
   let imageUrl = "";
-  if (req.file) imageUrl = `uploads/${req.file.filename}`;
+  if (req.file) imageUrl = `/uploads/${req.file.filename}`; // <- FIXED
 
   try {
     const id = Date.now().toString();
@@ -327,43 +327,6 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
-// ===== Stripe Checkout Route (for index page) =====
-app.post("/api/create-checkout-session/:id", async (req, res) => {
-  const { id } = req.params;
-  const { amount } = req.body;
-
-  if (!amount || amount < 1)
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid donation amount." });
-
-  try {
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: { name: `Donation for ${id}` },
-            unit_amount: Math.round(amount * 100),
-          },
-          quantity: 1,
-        },
-      ],
-      mode: "payment",
-      success_url: "https://www.fundasmile.net/thankyou.html",
-      cancel_url: "https://www.fundasmile.net/cancel.html",
-    });
-
-    res.json({ id: session.id });
-  } catch (error) {
-    console.error("Stripe live session error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Unable to process donation at this time." });
-  }
-});
-
 // ===== Stripe Checkout Route (campaigns page) =====
 app.post("/api/campaign-checkout/:campaignId", async (req, res) => {
   const { campaignId } = req.params;
@@ -375,7 +338,6 @@ app.post("/api/campaign-checkout/:campaignId", async (req, res) => {
       .json({ success: false, message: "Invalid donation amount." });
 
   try {
-    // Fetch campaign title for Stripe product name
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
       range: "Campaigns!A:B", // ID and title
