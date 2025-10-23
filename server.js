@@ -50,8 +50,6 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // ===== Serve uploads folder =====
 app.use("/uploads", express.static(uploadsDir));
-
-// Serve public folder
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
@@ -134,13 +132,13 @@ async function verifyUser(email, password) {
 
     const { data: verData } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
-      range: "ID_Verifications!A:D",
+      range: "ID_Verifications!A:E",
     });
     const verRows = (verData.values || []).filter(
       (r) => r[1]?.toLowerCase() === email.toLowerCase()
     );
     const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
-    const verificationStatus = latestVer ? latestVer[2] : "Not submitted";
+    const verificationStatus = latestVer ? latestVer[3] : "Not submitted"; // ✅ fixed column index
     const verified = verificationStatus === "Approved";
 
     return {
@@ -198,7 +196,7 @@ app.post("/api/logout", (req, res) => {
 
 // ===== Verify ID Route =====
 app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
-  const { email } = req.body;
+  const { email, name } = req.body;
   if (!email || !req.file) {
     return res.status(400).json({ success: false, message: "Email and ID image are required" });
   }
@@ -206,10 +204,11 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   const idImageUrl = `/uploads/${req.file.filename}`;
 
   try {
-    // Save to Google Sheet
+    // Save to Google Sheet with correct columns
     await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
       new Date().toISOString(),
       email,
+      name || "",
       "Submitted",
       idImageUrl
     ]);
