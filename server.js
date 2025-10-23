@@ -312,6 +312,44 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
+//======campaigns route for all approved====
+app.get("/api/campaigns", async (req, res) => {
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:I",
+    });
+
+    const campaigns = (data.values || []).map((row) => {
+      let imageUrl = "";
+      if (row[8] && row[8].trim() !== "") {
+        const filename = path.basename(row[8]);
+        imageUrl = `/uploads/${filename}`;
+      }
+
+      return {
+        id: row[0],
+        title: row[1],
+        creatorEmail: row[2],
+        goal: row[3],
+        description: row[4],
+        category: row[5],
+        status: row[6] || "Pending",
+        created: row[7],
+        image: imageUrl,
+      };
+    });
+
+    // Only return approved campaigns for the public page
+    const approved = campaigns.filter(c => (c.status || "").trim().toLowerCase() === "approved");
+
+    res.json({ success: true, campaigns: approved });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to load campaigns" });
+  }
+});
+
 // ===== Stripe Checkout Route =====
 app.post("/api/create-checkout-session/:id", async (req, res) => {
   const { id } = req.params;
