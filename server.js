@@ -138,7 +138,7 @@ async function verifyUser(email, password) {
       (r) => r[1]?.toLowerCase() === email.toLowerCase()
     );
     const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
-    const verificationStatus = latestVer ? latestVer[3] : "Not submitted"; // ✅ correct column for status
+    const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
     const verified = verificationStatus === "Approved";
 
     return {
@@ -213,14 +213,13 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
       email,
       name || "",
       "Submitted",
-      filename, // save just filename
+      filename,
     ]);
 
     return res.json({ success: true, message: "ID verification submitted", image: idImageUrl });
   } catch (err) {
     console.error("verify-id error:", err);
 
-    // Distinguish Multer errors
     if (err instanceof multer.MulterError) {
       return res.status(500).json({ success: false, message: "File upload failed" });
     }
@@ -243,9 +242,9 @@ app.get("/api/get-verifications", async (req, res) => {
         email: row[1],
         name: row[2],
         status: row[3],
-        idImageUrl: row[4] || "",
+        idImageUrl: row[4] ? `/uploads/${path.basename(row[4])}` : "",
       }))
-      .reverse(); // latest first
+      .reverse();
 
     res.json({ success: true, verifications });
   } catch (err) {
@@ -277,32 +276,42 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Campaigns =====
-// ... (all your existing campaign routes remain untouched) ...
-
-// Get all ID verifications
-app.get("/api/get-verifications", async (req, res) => {
+// ===== Stripe Checkout Route =====
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "ID_Verifications!A:E",
+    const { campaignId } = req.params;
+    const { amount, successUrl, cancelUrl } = req.body;
+
+    if (!amount || !successUrl || !cancelUrl) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    // Convert amount to cents
+    const amountCents = Math.round(amount * 100);
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: `Donation for ${campaignId}`,
+            },
+            unit_amount: amountCents,
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      success_url: successUrl,
+      cancel_url: cancelUrl,
     });
 
-    const verifications = (data.values || []).map((row) => ({
-      timestamp: row[0],
-      email: row[1],
-      name: row[2],
-      status: row[3],
-      idImageUrl: row[4] ? `/uploads/${path.basename(row[4])}` : "",
-    }));
-
-    // Show latest first
-    verifications.reverse();
-
-    res.json({ success: true, verifications });
+    res.json({ success: true, sessionId: session.id });
   } catch (err) {
-    console.error("get-verifications error:", err);
-    res.status(500).json({ success: false, message: "Failed to load verifications" });
+    console.error("Stripe checkout error:", err);
+    res.status(500).json({ success: false, message: "Failed to create checkout session" });
   }
 });
 
