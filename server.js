@@ -105,15 +105,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ===== Image URL Helper =====
-function getImageUrl(sheetValue) {
-  if (!sheetValue || sheetValue.trim() === "") return "";
-  const filename = path.basename(sheetValue);
-  const filePath = path.join(uploadsDir, filename);
-  if (fs.existsSync(filePath)) return `/uploads/${filename}`;
-  return "";
-}
-
 // ===== User Helpers =====
 async function saveUser({ name, email, password }) {
   const hash = await bcrypt.hash(password, 10);
@@ -205,7 +196,7 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Waitlist =====
+// ===== Waitlist Route =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email || !source || !reason)
@@ -228,7 +219,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Volunteer / Street Team =====
+// ===== Volunteer / Street Team Route =====
 app.post("/api/volunteer", async (req, res) => {
   const { name, email, role, message } = req.body;
   if (!name || !email || !role || !message)
@@ -247,11 +238,13 @@ app.post("/api/volunteer", async (req, res) => {
     res.json({ success: true, message: "Thank you for volunteering!" });
   } catch (err) {
     console.error("Volunteer submission error:", err);
-    res.status(500).json({ success: false, message: "Failed to submit. Try again later." });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to submit. Try again later." });
   }
 });
 
-// ===== My campaigns (user only) =====
+// ===== My campaigns (user dashboard) =====
 app.get("/api/my-campaigns", async (req, res) => {
   try {
     if (!req.session.user)
@@ -268,9 +261,8 @@ app.get("/api/my-campaigns", async (req, res) => {
         let imageUrl = "";
         if (row[8] && row[8].trim() !== "") {
           const filename = path.basename(row[8]);
-          imageUrl = `/uploads/${filename}`; // <-- fix for dashboard
+          imageUrl = `/uploads/${filename}`;
         }
-
         return {
           id: row[0],
           title: row[1],
@@ -279,7 +271,7 @@ app.get("/api/my-campaigns", async (req, res) => {
           category: row[5],
           status: row[6] || "Pending",
           created: row[7],
-          image: imageUrl, // <-- ensures image shows next to active campaign
+          image: imageUrl,
         };
       });
 
@@ -287,88 +279,6 @@ app.get("/api/my-campaigns", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Failed to load campaigns" });
-  }
-});
-
-
-// ===== Manage single campaign =====
-app.get("/api/manage-campaign/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I",
-    });
-
-    const row = (data.values || []).find((r) => r[0] === id);
-    if (!row) return res.status(404).json({ success: false, message: "Campaign not found" });
-
-    res.json({
-      success: true,
-      campaign: {
-        id: row[0],
-        title: row[1],
-        goal: row[3],
-        description: row[4],
-        category: row[5],
-        status: row[6],
-        created: row[7],
-        image: getImageUrl(row[8]),
-      },
-    });
-  } catch (err) {
-    console.error("Manage campaign fetch error:", err);
-    res.status(500).json({ success: false, message: "Error loading campaign" });
-  }
-});
-
-// ===== Delete Campaign =====
-app.delete("/api/campaign/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I",
-    });
-
-    const rows = data.values || [];
-    const index = rows.findIndex((r) => r[0] === id);
-    if (index === -1) return res.status(404).json({ success: false, message: "Not found" });
-
-    const emptyRow = new Array(rows[index].length).fill("");
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: `Campaigns!A${index + 1}:I${index + 1}`,
-      valueInputOption: "RAW",
-      requestBody: { values: [emptyRow] },
-    });
-
-    res.json({ success: true, message: "Campaign deleted successfully." });
-  } catch (err) {
-    console.error("Delete campaign error:", err);
-    res.status(500).json({ success: false, message: "Error deleting campaign." });
-  }
-});
-
-// ===== Member Since =====
-app.get("/api/member-since", async (req, res) => {
-  try {
-    if (!req.session.user)
-      return res.status(401).json({ success: false, message: "Not logged in" });
-
-    const { email } = req.session.user;
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:E",
-    });
-
-    const userRow = (data.values || []).find((r) => r[2] === email);
-    if (!userRow) return res.json({ success: false, message: "User not found" });
-
-    res.json({ success: true, memberSince: userRow[0] });
-  } catch (err) {
-    console.error("Member since fetch error:", err);
-    res.status(500).json({ success: false });
   }
 });
 
@@ -384,9 +294,8 @@ app.get("/api/campaigns", async (req, res) => {
       let imageUrl = "";
       if (row[8] && row[8].trim() !== "") {
         const filename = path.basename(row[8]);
-        imageUrl = `/uploads/${filename}`; // <-- ensures frontend path is correct
+        imageUrl = `/uploads/${filename}`;
       }
-
       return {
         id: row[0],
         title: row[1],
@@ -396,7 +305,7 @@ app.get("/api/campaigns", async (req, res) => {
         category: row[5],
         status: row[6] || "Pending",
         created: row[7],
-        image: imageUrl, // <-- frontend will now get /uploads/<filename>
+        image: imageUrl,
       };
     });
 
@@ -411,12 +320,13 @@ app.get("/api/campaigns", async (req, res) => {
   }
 });
 
-
 // ===== Create Campaign =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   const { title, goal, description, category, creatorEmail } = req.body;
   if (!title || !goal || !description || !category || !creatorEmail)
-    return res.status(400).json({ success: false, message: "All fields are required." });
+    return res
+      .status(400)
+      .json({ success: false, message: "All fields are required." });
 
   let imageUrl = "";
   if (req.file) imageUrl = `uploads/${req.file.filename}`;
@@ -437,7 +347,9 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     res.json({ success: true, message: "Campaign created successfully!", id });
   } catch (err) {
     console.error("Error creating campaign:", err);
-    res.status(500).json({ success: false, message: "Failed to create campaign." });
+    res
+      .status(500)
+      .json({ success: false, message: "Failed to create campaign." });
   }
 });
 
@@ -447,7 +359,9 @@ app.post("/api/create-checkout-session/:id", async (req, res) => {
   const { amount } = req.body;
 
   if (!amount || amount < 1)
-    return res.status(400).json({ success: false, message: "Invalid donation amount." });
+    return res
+      .status(400)
+      .json({ success: false, message: "Invalid donation amount." });
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -470,7 +384,9 @@ app.post("/api/create-checkout-session/:id", async (req, res) => {
     res.json({ id: session.id });
   } catch (error) {
     console.error("Stripe live session error:", error);
-    res.status(500).json({ success: false, message: "Unable to process donation at this time." });
+    res
+      .status(500)
+      .json({ success: false, message: "Unable to process donation at this time." });
   }
 });
 
