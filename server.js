@@ -268,7 +268,7 @@ app.get("/api/campaigns", async (req, res) => {
       let imageUrl = "";
       if (row[8] && row[8].trim() !== "") {
         const filename = path.basename(row[8]);
-        imageUrl = `/uploads/${filename}`; // <- FIXED
+        imageUrl = `/uploads/${filename}`;
       }
       return {
         id: row[0],
@@ -303,7 +303,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       .json({ success: false, message: "All fields are required." });
 
   let imageUrl = "";
-  if (req.file) imageUrl = `/uploads/${req.file.filename}`; // <- FIXED
+  if (req.file) imageUrl = `/uploads/${req.file.filename}`;
 
   try {
     const id = Date.now().toString();
@@ -340,7 +340,7 @@ app.post("/api/campaign-checkout/:campaignId", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:B", // ID and title
+      range: "Campaigns!A:B",
     });
     const campaigns = data.values || [];
     const campaign = campaigns.find((row) => row[0] === campaignId);
@@ -369,6 +369,47 @@ app.post("/api/campaign-checkout/:campaignId", async (req, res) => {
     res
       .status(500)
       .json({ success: false, message: "Unable to process donation at this time." });
+  }
+});
+
+// ===== Stripe Checkout Route (homepage donations) =====
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+  try {
+    const { campaignId } = req.params;
+    const { amount } = req.body;
+
+    if (!amount || isNaN(amount) || amount < 1) {
+      return res.status(400).json({ message: "Invalid donation amount." });
+    }
+
+    const amountInCents = Math.round(amount * 100);
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name:
+                campaignId === "mission"
+                  ? "JoyFund General Mission Donation"
+                  : `Donation to Campaign #${campaignId}`,
+            },
+            unit_amount: amountInCents,
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      success_url: "https://www.fundasmile.net/thankyou.html",
+      cancel_url: "https://www.fundasmile.net/cancel.html",
+    });
+
+    res.json({ id: session.id });
+  } catch (error) {
+    console.error("Stripe Checkout error:", error);
+    res.status(500).json({ message: "Failed to create checkout session." });
   }
 });
 
