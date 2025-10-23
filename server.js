@@ -279,6 +279,32 @@ app.post("/api/waitlist", async (req, res) => {
 // ===== Campaigns =====
 // ... (all your existing campaign routes remain untouched) ...
 
+// Get all ID verifications
+app.get("/api/get-verifications", async (req, res) => {
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "ID_Verifications!A:E",
+    });
+
+    const verifications = (data.values || []).map((row) => ({
+      timestamp: row[0],
+      email: row[1],
+      name: row[2],
+      status: row[3],
+      idImageUrl: row[4] ? `/uploads/${path.basename(row[4])}` : "",
+    }));
+
+    // Show latest first
+    verifications.reverse();
+
+    res.json({ success: true, verifications });
+  } catch (err) {
+    console.error("get-verifications error:", err);
+    res.status(500).json({ success: false, message: "Failed to load verifications" });
+  }
+});
+
 // ===== Catch-all for API 404 =====
 app.all("/api/*", (req, res) => {
   res.status(404).json({ success: false, message: "API route not found" });
