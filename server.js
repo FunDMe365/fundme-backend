@@ -327,7 +327,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
-// ===== Stripe Checkout Route =====
+// ===== Stripe Checkout Route (for index page) =====
 app.post("/api/create-checkout-session/:id", async (req, res) => {
   const { id } = req.params;
   const { amount } = req.body;
@@ -358,6 +358,52 @@ app.post("/api/create-checkout-session/:id", async (req, res) => {
     res.json({ id: session.id });
   } catch (error) {
     console.error("Stripe live session error:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Unable to process donation at this time." });
+  }
+});
+
+// ===== Stripe Checkout Route (campaigns page) =====
+app.post("/api/campaign-checkout/:campaignId", async (req, res) => {
+  const { campaignId } = req.params;
+  const { amount } = req.body;
+
+  if (!amount || amount < 1)
+    return res
+      .status(400)
+      .json({ success: false, message: "Invalid donation amount." });
+
+  try {
+    // Fetch campaign title for Stripe product name
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:B", // ID and title
+    });
+    const campaigns = data.values || [];
+    const campaign = campaigns.find((row) => row[0] === campaignId);
+    const campaignName = campaign ? campaign[1] : `Campaign ${campaignId}`;
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: `Donation for ${campaignName}` },
+            unit_amount: Math.round(amount * 100),
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      success_url: "https://www.fundasmile.net/thankyou.html",
+      cancel_url: "https://www.fundasmile.net/cancel.html",
+    });
+
+    res.json({ id: session.id });
+  } catch (error) {
+    console.error("Campaign Stripe session error:", error);
     res
       .status(500)
       .json({ success: false, message: "Unable to process donation at this time." });
