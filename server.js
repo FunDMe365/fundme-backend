@@ -219,7 +219,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Volunteer / Street Team Route =====
+// ===== Volunteer Route =====
 app.post("/api/volunteer", async (req, res) => {
   const { name, email, role, message } = req.body;
   if (!name || !email || !role || !message)
