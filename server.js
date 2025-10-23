@@ -48,7 +48,10 @@ app.options("*", cors(corsOptions));
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// === Serve uploads folder correctly ===
+app.use("/uploads", express.static(uploadsDir));
+
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
@@ -255,10 +258,9 @@ app.get("/api/my-campaigns", async (req, res) => {
     const campaigns = (data.values || [])
       .filter((row) => row[2] === req.session.user.email)
       .map((row) => {
-        // SAFELY handle images
         let imageUrl = "";
         if (row[8] && row[8].trim() !== "") {
-          const filename = path.basename(row[8]); // just filename
+          const filename = path.basename(row[8]);
           imageUrl = `/uploads/${filename}`;
         }
 
@@ -268,7 +270,7 @@ app.get("/api/my-campaigns", async (req, res) => {
           goal: row[3],
           description: row[4],
           category: row[5],
-          status: row[6] || "Pending", // default status if empty
+          status: row[6] || "Pending",
           created: row[7],
           image: imageUrl,
         };
