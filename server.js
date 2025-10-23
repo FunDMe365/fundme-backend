@@ -241,50 +241,6 @@ app.post("/api/volunteer", async (req, res) => {
   }
 });
 
-// ===== Campaign Routes =====
-app.get("/api/my-campaigns", async (req, res) => {
-  try {
-    if (!req.session.user)
-      return res.status(401).json({ success: false, message: "Not logged in" });
-
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I",
-    });
-
-    const campaigns = (data.values || [])
-      .filter((row) => row[2] === req.session.user.email)
-      .map((row) => {
-        let imageUrl = "";
-
-        // Only if row[8] exists and file actually exists on disk
-        if (row[8] && row[8].trim() !== "") {
-          const filePath = path.join(uploadsDir, path.basename(row[8]));
-          if (fs.existsSync(filePath)) {
-            // Always serve as /uploads/filename.jpg
-            imageUrl = `/uploads/${path.basename(row[8])}`;
-          }
-        }
-
-        return {
-          id: row[0],
-          title: row[1],
-          goal: row[3],
-          description: row[4],
-          category: row[5],
-          status: row[6],
-          created: row[7],
-          image: imageUrl,
-        };
-      });
-
-    res.json({ success: true, campaigns });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to load campaigns" });
-  }
-});
-
 // ===== Create Campaign Route =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   const { title, goal, description, category, creatorEmail } = req.body;
@@ -295,8 +251,8 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
   let imageUrl = "";
   if (req.file) {
-    // Only store the filename (no folder paths) so /uploads/filename works
-    imageUrl = req.file.filename;
+    // Always store relative to /uploads/
+    imageUrl = `/uploads/${req.file.filename}`;
   }
 
   try {
@@ -310,9 +266,9 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       category,
       "Pending",
       new Date().toISOString(),
-      imageUrl, // now just the filename
+      imageUrl, // store with /uploads/ prefix
     ]);
-    res.json({ success: true, message: "Campaign created successfully!", id });
+    res.json({ success: true, message: "Campaign created successfully!", id, image: imageUrl });
   } catch (err) {
     console.error("Error creating campaign:", err);
     res
