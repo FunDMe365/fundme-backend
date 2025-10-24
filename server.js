@@ -208,7 +208,7 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Waitlist Route (Fixed + Email) =====
+// ===== Waitlist Route =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email || !source || !reason)
@@ -240,7 +240,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Verify ID Route (Email) =====
+// ===== Verify ID Route =====
 app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: "ID image is required" });
@@ -273,6 +273,75 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   }
 });
 
+// ===== Get Verifications (Dashboard Display) =====
+app.get("/api/get-verifications", async (req, res) => {
+  try {
+    if (!req.session.user) return res.json({ success: false, message: "Not logged in" });
+
+    const { email } = req.session.user;
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "ID_Verifications!A:E",
+    });
+
+    const rows = data.values || [];
+    const verifications = rows
+      .filter((r) => r[1]?.toLowerCase() === email.toLowerCase())
+      .map((r) => ({
+        date: r[0],
+        email: r[1],
+        name: r[2],
+        status: r[3] || "Not submitted",
+        idImageUrl: r[4] ? `/uploads/${r[4]}` : null,
+      }));
+
+    res.json({ success: true, verifications });
+  } catch (err) {
+    console.error("get-verifications error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ===== Admin Route: Update Verification Status =====
+app.post("/api/update-verification-status", async (req, res) => {
+  try {
+    const { email, status } = req.body;
+    if (!email || !status)
+      return res.status(400).json({ success: false, message: "Missing email or status" });
+
+    const range = "ID_Verifications!A:E";
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range,
+    });
+
+    const rows = data.values || [];
+    const rowIndex = rows.findIndex((r) => r[1]?.toLowerCase() === email.toLowerCase());
+    if (rowIndex === -1)
+      return res.status(404).json({ success: false, message: "Record not found" });
+
+    const updateRange = `ID_Verifications!D${rowIndex + 1}`;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: updateRange,
+      valueInputOption: "RAW",
+      requestBody: { values: [[status]] },
+    });
+
+    await sendEmail({
+      to: email,
+      subject: `Your ID Verification has been ${status}`,
+      text: `Your ID verification status was updated to: ${status}`,
+      html: `<p>Your ID verification status was updated to: <strong>${status}</strong>.</p>`,
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("update-verification-status error:", err);
+    res.status(500).json({ success: false, message: "Failed to update verification" });
+  }
+});
+
 // ===== Stripe Checkout (Email) =====
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
@@ -284,13 +353,19 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
     const amountCents = Math.round(amount * 100);
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      line_items: [{ price_data: { currency: "usd", product_data: { name: `Donation for ${campaignId}` }, unit_amount: amountCents }, quantity: 1 }],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: `Donation for ${campaignId}` },
+          unit_amount: amountCents,
+        },
+        quantity: 1,
+      }],
       mode: "payment",
       success_url: successUrl,
       cancel_url: cancelUrl,
     });
 
-    // Send email notification
     await sendEmail({
       to: process.env.EMAIL_FROM,
       subject: `New Donation: $${amount} for ${campaignId}`,
@@ -306,7 +381,9 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
 });
 
 // ===== Catch-all API 404 =====
-app.all("/api/*", (req, res) => res.status(404).json({ success: false, message: "API route not found" }));
+app.all("/api/*", (req, res) =>
+  res.status(404).json({ success: false, message: "API route not found" })
+);
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
