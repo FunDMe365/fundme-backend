@@ -32,8 +32,11 @@ const allowedOrigins = [
 // ===== CORS =====
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) callback(null, true);
-    else callback(new Error("Not allowed by CORS"));
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
   },
   credentials: true,
 };
@@ -82,7 +85,13 @@ if (process.env.SENDGRID_API_KEY) sgMail.setApiKey(process.env.SENDGRID_API_KEY)
 const sendEmail = async ({ to, subject, text, html }) => {
   if (!process.env.SENDGRID_API_KEY || !process.env.EMAIL_FROM) return;
   try {
-    await sgMail.send({ to, from: process.env.EMAIL_FROM, subject, text, html });
+    await sgMail.send({
+      to,
+      from: process.env.EMAIL_FROM,
+      subject,
+      text,
+      html,
+    });
     console.log(`✅ Email sent to ${to}`);
   } catch (err) {
     console.error("SendGrid error:", err);
@@ -91,36 +100,19 @@ const sendEmail = async ({ to, subject, text, html }) => {
 
 // ===== Helper Functions =====
 async function saveToSheet(sheetId, sheetName, values) {
-  try {
-    return await sheets.spreadsheets.values.append({
-      spreadsheetId: sheetId,
-      range: `${sheetName}!A:Z`,
-      valueInputOption: "RAW",
-      requestBody: { values: [values] },
-    });
-  } catch (err) {
-    console.error(`saveToSheet error (${sheetName}):`, err);
-    throw err;
-  }
-}
-
-async function readSheet(sheetId, sheetName) {
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: sheetId,
-      range: `${sheetName}!A:Z`,
-    });
-    return data.values || [];
-  } catch (err) {
-    console.error(`readSheet error (${sheetName}):`, err);
-    return [];
-  }
+  return sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId,
+    range: `${sheetName}!A:Z`,
+    valueInputOption: "RAW",
+    requestBody: { values: [values] },
+  });
 }
 
 // ===== Multer =====
 const storage = multer.diskStorage({
   destination: uploadsDir,
-  filename: (req, file, cb) => cb(null, `${Date.now()}${path.extname(file.originalname)}`),
+  filename: (req, file, cb) =>
+    cb(null, `${Date.now()}${path.extname(file.originalname)}`),
 });
 const upload = multer({ storage });
 
@@ -134,6 +126,7 @@ async function saveUser({ name, email, password }) {
     hash,
     "false",
   ]);
+
   await sendEmail({
     to: process.env.EMAIL_FROM,
     subject: `New Signup: ${name}`,
@@ -143,25 +136,40 @@ async function saveUser({ name, email, password }) {
 }
 
 async function verifyUser(email, password) {
-  const users = await readSheet(SPREADSHEET_IDS.users, "Users");
-  const userRow = users.find((r) => r[2]?.toLowerCase() === email.toLowerCase());
-  if (!userRow) return false;
-  const passwordMatch = await bcrypt.compare(password, userRow[3]);
-  if (!passwordMatch) return false;
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Users!A:E",
+    });
+    const allUsers = data.values || [];
+    const userRow = allUsers.find(
+      (r) => r[2]?.toLowerCase() === email.toLowerCase()
+    );
+    if (!userRow) return false;
+    const passwordMatch = await bcrypt.compare(password, userRow[3]);
+    if (!passwordMatch) return false;
 
-  const verifications = await readSheet(SPREADSHEET_IDS.users, "ID_Verifications");
-  const userVer = verifications
-    .filter((r) => r[1]?.toLowerCase() === email.toLowerCase())
-    .pop();
-  const verificationStatus = userVer ? userVer[3] : "Not submitted";
-  const verified = verificationStatus === "Approved";
+    const { data: verData } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "ID_Verifications!A:E",
+    });
+    const verRows = (verData.values || []).filter(
+      (r) => r[1]?.toLowerCase() === email.toLowerCase()
+    );
+    const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
+    const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
+    const verified = verificationStatus === "Approved";
 
-  return {
-    name: userRow[1],
-    email: userRow[2],
-    verified,
-    verificationStatus,
-  };
+    return {
+      name: userRow[1],
+      email: userRow[2],
+      verified,
+      verificationStatus,
+    };
+  } catch (err) {
+    console.error("verifyUser error:", err);
+    return false;
+  }
 }
 
 // ===== Auth Routes =====
@@ -200,44 +208,98 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Verify ID Route =====
-app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
+// ===== Waitlist Route =====
+app.post("/api/waitlist", async (req, res) => {
+  const { name, email, source, reason } = req.body;
+  if (!name || !email || !source || !reason)
+    return res.status(400).json({ success: false, message: "All fields are required." });
+
   try {
-    if (!req.file) return res.status(400).json({ success: false, message: "ID image is required" });
-
-    const { email, name } = req.body;
-    const filename = req.file.filename;
-    const idImageUrl = `/uploads/${filename}`;
-
-    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
       new Date().toISOString(),
+      name,
       email,
-      name || "",
-      "Submitted",
-      filename,
+      source,
+      reason,
     ]);
 
     await sendEmail({
       to: process.env.EMAIL_FROM,
-      subject: `New ID Verification Submitted by ${name || email}`,
-      text: `Name: ${name || "N/A"}\nEmail: ${email}\nID File: ${filename}`,
-      html: `<p><strong>Name:</strong> ${name || "N/A"}</p><p><strong>Email:</strong> ${email}</p><p><strong>ID File:</strong> ${filename}</p>`,
+      subject: `New Waitlist Submission from ${name}`,
+      text: `Name: ${name}\nEmail: ${email}\nSource: ${source}\nReason: ${reason}`,
+      html: `<p><strong>Name:</strong> ${name}</p>
+             <p><strong>Email:</strong> ${email}</p>
+             <p><strong>Source:</strong> ${source}</p>
+             <p><strong>Reason:</strong> ${reason}</p>`,
     });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Waitlist save error:", err);
+    res.status(500).json({ success: false, message: "Failed to submit waitlist." });
+  }
+});
+
+// ===== Verify ID Route (Fixed) =====
+app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
+  try {
+    console.log("Received verify-id request:", req.body);
+
+    if (!req.file) return res.status(400).json({ success: false, message: "ID image is required" });
+
+    const { email, name } = req.body;
+    if (!email) return res.status(400).json({ success: false, message: "Email is required" });
+
+    const filename = req.file.filename;
+    const idImageUrl = `/uploads/${filename}`;
+
+    // Save to Google Sheets
+    try {
+      await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
+        new Date().toISOString(),
+        email,
+        name || "",
+        "Submitted",
+        filename,
+      ]);
+    } catch (sheetErr) {
+      console.error("Error saving to Google Sheet:", sheetErr);
+      return res.status(500).json({ success: false, message: "Failed to save verification" });
+    }
+
+    // Send notification email
+    try {
+      await sendEmail({
+        to: process.env.EMAIL_FROM,
+        subject: `New ID Verification Submitted by ${name || email}`,
+        text: `Name: ${name || "N/A"}\nEmail: ${email}\nID File: ${filename}`,
+        html: `<p><strong>Name:</strong> ${name || "N/A"}</p>
+               <p><strong>Email:</strong> ${email}</p>
+               <p><strong>ID File:</strong> ${filename}</p>`,
+      });
+    } catch (emailErr) {
+      console.error("SendGrid error:", emailErr);
+    }
 
     res.json({ success: true, message: "ID verification submitted", image: idImageUrl });
   } catch (err) {
-    console.error("verify-id route error:", err);
+    console.error("verify-id route unexpected error:", err);
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
-// ===== Get Verifications Route =====
+// ===== Get Verifications (Dashboard Display) =====
 app.get("/api/get-verifications", async (req, res) => {
   try {
     if (!req.session.user) return res.json({ success: false, message: "Not logged in" });
 
     const { email } = req.session.user;
-    const rows = await readSheet(SPREADSHEET_IDS.users, "ID_Verifications");
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "ID_Verifications!A:E",
+    });
+
+    const rows = data.values || [];
     const verifications = rows
       .filter((r) => r[1]?.toLowerCase() === email.toLowerCase())
       .map((r) => ({
@@ -255,21 +317,28 @@ app.get("/api/get-verifications", async (req, res) => {
   }
 });
 
-// ===== Update Verification Status Route =====
+// ===== Admin Route: Update Verification Status =====
 app.post("/api/update-verification-status", async (req, res) => {
   try {
     const { email, status } = req.body;
     if (!email || !status)
       return res.status(400).json({ success: false, message: "Missing email or status" });
 
-    const rows = await readSheet(SPREADSHEET_IDS.users, "ID_Verifications");
+    const range = "ID_Verifications!A:E";
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range,
+    });
+
+    const rows = data.values || [];
     const rowIndex = rows.findIndex((r) => r[1]?.toLowerCase() === email.toLowerCase());
     if (rowIndex === -1)
       return res.status(404).json({ success: false, message: "Record not found" });
 
+    const updateRange = `ID_Verifications!D${rowIndex + 1}`;
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_IDS.users,
-      range: `ID_Verifications!D${rowIndex + 1}`,
+      range: updateRange,
       valueInputOption: "RAW",
       requestBody: { values: [[status]] },
     });
@@ -288,7 +357,7 @@ app.post("/api/update-verification-status", async (req, res) => {
   }
 });
 
-// ===== Stripe Checkout Route =====
+// ===== Stripe Checkout (Email) =====
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const { campaignId } = req.params;
