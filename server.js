@@ -32,11 +32,8 @@ const allowedOrigins = [
 // ===== CORS =====
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) callback(null, true);
+    else callback(new Error("Not allowed by CORS"));
   },
   credentials: true,
 };
@@ -102,8 +99,21 @@ async function saveToSheet(sheetId, sheetName, values) {
       requestBody: { values: [values] },
     });
   } catch (err) {
-    console.error("saveToSheet error:", err);
-    throw err; // propagate
+    console.error(`saveToSheet error (${sheetName}):`, err);
+    throw err;
+  }
+}
+
+async function readSheet(sheetId, sheetName) {
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${sheetName}!A:Z`,
+    });
+    return data.values || [];
+  } catch (err) {
+    console.error(`readSheet error (${sheetName}):`, err);
+    return [];
   }
 }
 
@@ -124,7 +134,6 @@ async function saveUser({ name, email, password }) {
     hash,
     "false",
   ]);
-
   await sendEmail({
     to: process.env.EMAIL_FROM,
     subject: `New Signup: ${name}`,
@@ -134,38 +143,25 @@ async function saveUser({ name, email, password }) {
 }
 
 async function verifyUser(email, password) {
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:E",
-    });
-    const allUsers = data.values || [];
-    const userRow = allUsers.find((r) => r[2]?.toLowerCase() === email.toLowerCase());
-    if (!userRow) return false;
-    const passwordMatch = await bcrypt.compare(password, userRow[3]);
-    if (!passwordMatch) return false;
+  const users = await readSheet(SPREADSHEET_IDS.users, "Users");
+  const userRow = users.find((r) => r[2]?.toLowerCase() === email.toLowerCase());
+  if (!userRow) return false;
+  const passwordMatch = await bcrypt.compare(password, userRow[3]);
+  if (!passwordMatch) return false;
 
-    const { data: verData } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "ID_Verifications!A:E",
-    });
-    const verRows = (verData.values || []).filter(
-      (r) => r[1]?.toLowerCase() === email.toLowerCase()
-    );
-    const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
-    const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
-    const verified = verificationStatus === "Approved";
+  const verifications = await readSheet(SPREADSHEET_IDS.users, "ID_Verifications");
+  const userVer = verifications
+    .filter((r) => r[1]?.toLowerCase() === email.toLowerCase())
+    .pop();
+  const verificationStatus = userVer ? userVer[3] : "Not submitted";
+  const verified = verificationStatus === "Approved";
 
-    return {
-      name: userRow[1],
-      email: userRow[2],
-      verified,
-      verificationStatus,
-    };
-  } catch (err) {
-    console.error("verifyUser error:", err);
-    return false;
-  }
+  return {
+    name: userRow[1],
+    email: userRow[2],
+    verified,
+    verificationStatus,
+  };
 }
 
 // ===== Auth Routes =====
@@ -204,7 +200,7 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ===== Verify ID Route (Fixed) =====
+// ===== Verify ID Route =====
 app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: "ID image is required" });
@@ -213,37 +209,122 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
     const filename = req.file.filename;
     const idImageUrl = `/uploads/${filename}`;
 
-    // Wrap Sheets append in try/catch
-    try {
-      await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
-        new Date().toISOString(),
-        email,
-        name || "",
-        "Submitted",
-        filename,
-      ]);
-    } catch (sheetErr) {
-      console.error("Google Sheets append failed:", sheetErr);
-      return res.status(500).json({ success: false, message: "Failed to save verification to Sheets" });
-    }
+    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
+      new Date().toISOString(),
+      email,
+      name || "",
+      "Submitted",
+      filename,
+    ]);
 
     await sendEmail({
       to: process.env.EMAIL_FROM,
       subject: `New ID Verification Submitted by ${name || email}`,
       text: `Name: ${name || "N/A"}\nEmail: ${email}\nID File: ${filename}`,
-      html: `<p><strong>Name:</strong> ${name || "N/A"}</p>
-             <p><strong>Email:</strong> ${email}</p>
-             <p><strong>ID File:</strong> ${filename}</p>`,
+      html: `<p><strong>Name:</strong> ${name || "N/A"}</p><p><strong>Email:</strong> ${email}</p><p><strong>ID File:</strong> ${filename}</p>`,
     });
 
     res.json({ success: true, message: "ID verification submitted", image: idImageUrl });
   } catch (err) {
     console.error("verify-id route error:", err);
-    return res.status(500).json({ success: false, message: "Internal server error" });
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
-// ===== All other routes (waitlist, get-verifications, Stripe, etc.) remain unchanged =====
+// ===== Get Verifications Route =====
+app.get("/api/get-verifications", async (req, res) => {
+  try {
+    if (!req.session.user) return res.json({ success: false, message: "Not logged in" });
+
+    const { email } = req.session.user;
+    const rows = await readSheet(SPREADSHEET_IDS.users, "ID_Verifications");
+    const verifications = rows
+      .filter((r) => r[1]?.toLowerCase() === email.toLowerCase())
+      .map((r) => ({
+        date: r[0],
+        email: r[1],
+        name: r[2],
+        status: r[3] || "Not submitted",
+        idImageUrl: r[4] ? `/uploads/${r[4]}` : null,
+      }));
+
+    res.json({ success: true, verifications });
+  } catch (err) {
+    console.error("get-verifications error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ===== Update Verification Status Route =====
+app.post("/api/update-verification-status", async (req, res) => {
+  try {
+    const { email, status } = req.body;
+    if (!email || !status)
+      return res.status(400).json({ success: false, message: "Missing email or status" });
+
+    const rows = await readSheet(SPREADSHEET_IDS.users, "ID_Verifications");
+    const rowIndex = rows.findIndex((r) => r[1]?.toLowerCase() === email.toLowerCase());
+    if (rowIndex === -1)
+      return res.status(404).json({ success: false, message: "Record not found" });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: `ID_Verifications!D${rowIndex + 1}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[status]] },
+    });
+
+    await sendEmail({
+      to: email,
+      subject: `Your ID Verification has been ${status}`,
+      text: `Your ID verification status was updated to: ${status}`,
+      html: `<p>Your ID verification status was updated to: <strong>${status}</strong>.</p>`,
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("update-verification-status error:", err);
+    res.status(500).json({ success: false, message: "Failed to update verification" });
+  }
+});
+
+// ===== Stripe Checkout Route =====
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+  try {
+    const { campaignId } = req.params;
+    const { amount, successUrl, cancelUrl } = req.body;
+    if (!amount || !successUrl || !cancelUrl)
+      return res.status(400).json({ success: false, message: "Missing fields" });
+
+    const amountCents = Math.round(amount * 100);
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: `Donation for ${campaignId}` },
+          unit_amount: amountCents,
+        },
+        quantity: 1,
+      }],
+      mode: "payment",
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+    });
+
+    await sendEmail({
+      to: process.env.EMAIL_FROM,
+      subject: `New Donation: $${amount} for ${campaignId}`,
+      text: `A new donation of $${amount} was made for ${campaignId}.`,
+      html: `<p>A new donation of <strong>$${amount}</strong> was made for <strong>${campaignId}</strong>.</p>`,
+    });
+
+    res.json({ success: true, sessionId: session.id });
+  } catch (err) {
+    console.error("Stripe checkout error:", err);
+    res.status(500).json({ success: false, message: "Failed to create checkout session" });
+  }
+});
 
 // ===== Catch-all API 404 =====
 app.all("/api/*", (req, res) =>
