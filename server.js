@@ -268,6 +268,54 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
       return res.status(500).json({ success: false, message: "Failed to save verification." });
     }
 
+    // ===== Create Campaign Route =====
+app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+  try {
+    if (!req.session.user) {
+      return res.status(401).json({ success: false, message: "You must be signed in." });
+    }
+
+    const { title, creatorEmail, goal, category, description } = req.body;
+    if (!title || !creatorEmail || !goal || !category || !description) {
+      return res.status(400).json({ success: false, message: "All fields are required." });
+    }
+
+    let imageFilename = "";
+    if (req.file) {
+      imageFilename = req.file.filename;
+    }
+
+    // Save campaign to Google Sheets
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
+      new Date().toISOString(),
+      title,
+      creatorEmail,
+      goal,
+      category,
+      description,
+      imageFilename,
+      "Active"
+    ]);
+
+    // Notify admin
+    await sendEmail({
+      to: process.env.EMAIL_FROM,
+      subject: `New Campaign Created: ${title}`,
+      text: `Title: ${title}\nCreator: ${creatorEmail}\nGoal: $${goal}\nCategory: ${category}\nDescription: ${description}`,
+      html: `<p><strong>Title:</strong> ${title}</p>
+             <p><strong>Creator:</strong> ${creatorEmail}</p>
+             <p><strong>Goal:</strong> $${goal}</p>
+             <p><strong>Category:</strong> ${category}</p>
+             <p><strong>Description:</strong> ${description}</p>`
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("create-campaign error:", err);
+    res.status(500).json({ success: false, message: "Failed to create campaign." });
+  }
+});
+
     // Send notification email
     try {
       await sendEmail({
