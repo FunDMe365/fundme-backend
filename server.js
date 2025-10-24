@@ -240,110 +240,43 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Verify ID Route (Fixed) =====
+// ===== Verify ID Route =====
 app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
-    // Must be signed in
-    if (!req.session.user)
-      return res.status(401).json({ success: false, message: "You must be signed in." });
-
-    if (!req.file)
-      return res.status(400).json({ success: false, message: "ID image is required." });
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not signed in." });
+    if (!req.file) return res.status(400).json({ success: false, message: "ID image is required" });
 
     const { email, name } = req.session.user;
     const filename = req.file.filename;
-    const idImageUrl = `/uploads/${filename}`;
 
-    // Save to Google Sheets
-    try {
-      await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
-        new Date().toISOString(),
-        email,
-        name || "",
-        "Submitted",
-        filename,
-      ]);
-    } catch (sheetErr) {
-      console.error("Error saving to Google Sheet:", sheetErr);
-      return res.status(500).json({ success: false, message: "Failed to save verification." });
-    }
-
-    // ===== Create Campaign Route =====
-app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
-  try {
-    if (!req.session.user) {
-      return res.status(401).json({ success: false, message: "You must be signed in." });
-    }
-
-    const { title, creatorEmail, goal, category, description } = req.body;
-    if (!title || !creatorEmail || !goal || !category || !description) {
-      return res.status(400).json({ success: false, message: "All fields are required." });
-    }
-
-    let imageFilename = "";
-    if (req.file) {
-      imageFilename = req.file.filename;
-    }
-
-    // Save campaign to Google Sheets
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
+    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
       new Date().toISOString(),
-      title,
-      creatorEmail,
-      goal,
-      category,
-      description,
-      imageFilename,
-      "Active"
+      email,
+      name,
+      "Submitted",
+      filename,
     ]);
 
-    // Notify admin
     await sendEmail({
       to: process.env.EMAIL_FROM,
-      subject: `New Campaign Created: ${title}`,
-      text: `Title: ${title}\nCreator: ${creatorEmail}\nGoal: $${goal}\nCategory: ${category}\nDescription: ${description}`,
-      html: `<p><strong>Title:</strong> ${title}</p>
-             <p><strong>Creator:</strong> ${creatorEmail}</p>
-             <p><strong>Goal:</strong> $${goal}</p>
-             <p><strong>Category:</strong> ${category}</p>
-             <p><strong>Description:</strong> ${description}</p>`
+      subject: `New ID Verification Submitted by ${name}`,
+      text: `Name: ${name}\nEmail: ${email}\nID File: ${filename}`,
+      html: `<p><strong>Name:</strong> ${name}</p><p><strong>Email:</strong> ${email}</p><p><strong>ID File:</strong> ${filename}</p>`,
     });
 
-    res.json({ success: true });
+    res.json({ success: true, message: "ID verification submitted", image: `/uploads/${filename}` });
   } catch (err) {
-    console.error("create-campaign error:", err);
-    res.status(500).json({ success: false, message: "Failed to create campaign." });
+    console.error("verify-id route error:", err);
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
-    // Send notification email
-    try {
-      await sendEmail({
-        to: process.env.EMAIL_FROM,
-        subject: `New ID Verification Submitted by ${name || email}`,
-        text: `Name: ${name || "N/A"}\nEmail: ${email}\nID File: ${filename}`,
-        html: `<p><strong>Name:</strong> ${name || "N/A"}</p>
-               <p><strong>Email:</strong> ${email}</p>
-               <p><strong>ID File:</strong> ${filename}</p>`,
-      });
-    } catch (emailErr) {
-      console.error("SendGrid error:", emailErr);
-    }
-
-    res.json({ success: true, message: "ID verification submitted successfully.", image: idImageUrl });
-  } catch (err) {
-    console.error("verify-id route unexpected error:", err);
-    res.status(500).json({ success: false, message: "Internal server error." });
-  }
-});
-
-
-// ===== Get Verifications (Dashboard Display) =====
+// ===== Get Verifications =====
 app.get("/api/get-verifications", async (req, res) => {
   try {
     if (!req.session.user) return res.json({ success: false, message: "Not logged in" });
-
     const { email } = req.session.user;
+
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.users,
       range: "ID_Verifications!A:E",
@@ -407,7 +340,7 @@ app.post("/api/update-verification-status", async (req, res) => {
   }
 });
 
-// ===== Stripe Checkout (Email) =====
+// ===== Stripe Checkout =====
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const { campaignId } = req.params;
@@ -442,6 +375,54 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   } catch (err) {
     console.error("Stripe checkout error:", err);
     res.status(500).json({ success: false, message: "Failed to create checkout session" });
+  }
+});
+
+// ===== Create Campaign Route =====
+app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+  try {
+    if (!req.session.user) {
+      return res.status(401).json({ success: false, message: "You must be signed in." });
+    }
+
+    const { title, creatorEmail, goal, category, description } = req.body;
+    if (!title || !creatorEmail || !goal || !category || !description) {
+      return res.status(400).json({ success: false, message: "All fields are required." });
+    }
+
+    let imageFilename = "";
+    if (req.file) {
+      imageFilename = req.file.filename;
+    }
+
+    // Save campaign to Google Sheets
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
+      new Date().toISOString(),
+      title,
+      creatorEmail,
+      goal,
+      category,
+      description,
+      imageFilename,
+      "Active"
+    ]);
+
+    // Notify admin
+    await sendEmail({
+      to: process.env.EMAIL_FROM,
+      subject: `New Campaign Created: ${title}`,
+      text: `Title: ${title}\nCreator: ${creatorEmail}\nGoal: $${goal}\nCategory: ${category}\nDescription: ${description}`,
+      html: `<p><strong>Title:</strong> ${title}</p>
+             <p><strong>Creator:</strong> ${creatorEmail}</p>
+             <p><strong>Goal:</strong> $${goal}</p>
+             <p><strong>Category:</strong> ${category}</p>
+             <p><strong>Description:</strong> ${description}</p>`
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("create-campaign error:", err);
+    res.status(500).json({ success: false, message: "Failed to create campaign." });
   }
 });
 
