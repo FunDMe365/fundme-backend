@@ -240,21 +240,17 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Verify ID Route (Session-protected) =====
-app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
+// ===== Verify ID Route (Fixed) =====
+app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
-    // ✅ Check if user is logged in
-    if (!req.session.user || !req.session.user.email) {
-      return res.status(401).json({ success: false, error: "You must be signed in to submit." });
-    }
+    // Must be signed in
+    if (!req.session.user)
+      return res.status(401).json({ success: false, message: "You must be signed in." });
 
-    if (!req.file) {
-      return res.status(400).json({ success: false, error: "ID image is required." });
-    }
+    if (!req.file)
+      return res.status(400).json({ success: false, message: "ID image is required." });
 
-    const email = req.session.user.email;
-    const name = req.session.user.name || "";
-
+    const { email, name } = req.session.user;
     const filename = req.file.filename;
     const idImageUrl = `/uploads/${filename}`;
 
@@ -263,13 +259,13 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
       await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
         new Date().toISOString(),
         email,
-        name,
+        name || "",
         "Submitted",
         filename,
       ]);
     } catch (sheetErr) {
       console.error("Error saving to Google Sheet:", sheetErr);
-      return res.status(500).json({ success: false, error: "Failed to save verification." });
+      return res.status(500).json({ success: false, message: "Failed to save verification." });
     }
 
     // Send notification email
@@ -286,12 +282,13 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
       console.error("SendGrid error:", emailErr);
     }
 
-    res.json({ success: true, message: "ID verification submitted", image: idImageUrl });
+    res.json({ success: true, message: "ID verification submitted successfully.", image: idImageUrl });
   } catch (err) {
     console.error("verify-id route unexpected error:", err);
-    res.status(500).json({ success: false, error: "Internal server error." });
+    res.status(500).json({ success: false, message: "Internal server error." });
   }
 });
+
 
 // ===== Get Verifications (Dashboard Display) =====
 app.get("/api/get-verifications", async (req, res) => {
