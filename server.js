@@ -385,29 +385,31 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       return res.status(401).json({ success: false, message: "You must be signed in." });
     }
 
-    const { title, creatorEmail, goal, category, description } = req.body;
-    if (!title || !creatorEmail || !goal || !category || !description) {
+    const { title, creatorEmail, goal, description, category } = req.body;
+    if (!title || !creatorEmail || !goal || !description || !category) {
       return res.status(400).json({ success: false, message: "All fields are required." });
     }
 
+    // Save image filename safely
     let imageFilename = "";
     if (req.file) {
-      imageFilename = req.file.filename;
+      imageFilename = path.basename(req.file.filename); // only filename
     }
 
-    // Save campaign to Google Sheets
+    // Save campaign to Google Sheets in correct column order
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      new Date().toISOString(),
-      title,
-      creatorEmail,
-      goal,
-      category,
-      description,
-      imageFilename,
-      "Active"
+      Date.now().toString(),     // Id (unique)
+      title,                     // title
+      creatorEmail,              // Email
+      goal,                      // Goal
+      description,               // Description
+      category,                  // Category
+      "Active",                  // Status
+      new Date().toISOString(),  // CreatedAt
+      imageFilename              // ImageURL
     ]);
 
-    // Notify admin
+    // Notify admin (optional)
     await sendEmail({
       to: process.env.EMAIL_FROM,
       subject: `New Campaign Created: ${title}`,
@@ -431,19 +433,22 @@ app.get("/api/campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:H", // Adjust columns if needed
+      range: "Campaigns!A:I", // Columns A-I
     });
 
     const rows = data.values || [];
-    const campaigns = rows.map((r) => ({
-      createdAt: r[0],
+    if (rows.length <= 1) return res.json({ success: true, campaigns: [] });
+
+    const campaigns = rows.slice(1).map((r) => ({
+      id: r[0],
       title: r[1],
       creatorEmail: r[2],
       goal: r[3],
-      category: r[4],
-      description: r[5],
-      imageUrl: r[6] ? `/uploads/${r[6]}` : null,
-      status: r[7] || "Active",
+      description: r[4],
+      category: r[5],
+      status: r[6]?.trim() || "Active",
+      createdAt: r[7],
+      imageUrl: r[8] ? `/uploads/${path.basename(r[8].trim())}` : null,
     }));
 
     res.json({ success: true, campaigns });
