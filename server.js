@@ -426,6 +426,33 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
+// ===== Get All Campaigns =====
+app.get("/api/campaigns", async (req, res) => {
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:H", // Adjust columns if needed
+    });
+
+    const rows = data.values || [];
+    const campaigns = rows.map((r) => ({
+      createdAt: r[0],
+      title: r[1],
+      creatorEmail: r[2],
+      goal: r[3],
+      category: r[4],
+      description: r[5],
+      imageUrl: r[6] ? `/uploads/${r[6]}` : null,
+      status: r[7] || "Active",
+    }));
+
+    res.json({ success: true, campaigns });
+  } catch (err) {
+    console.error("get campaigns error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch campaigns" });
+  }
+});
+
 // ===== Catch-all API 404 =====
 app.all("/api/*", (req, res) =>
   res.status(404).json({ success: false, message: "API route not found" })
