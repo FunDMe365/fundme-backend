@@ -78,6 +78,7 @@ const SPREADSHEET_IDS = {
   users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
+  donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA"
 };
 
 // ===== SendGrid =====
@@ -390,26 +391,23 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       return res.status(400).json({ success: false, message: "All fields are required." });
     }
 
-    // Save image filename safely
     let imageFilename = "";
     if (req.file) {
-      imageFilename = path.basename(req.file.filename); // only filename
+      imageFilename = path.basename(req.file.filename);
     }
 
-    // Save campaign to Google Sheets in correct column order
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      Date.now().toString(),     // Id (unique)
-      title,                     // title
-      creatorEmail,              // Email
-      goal,                      // Goal
-      description,               // Description
-      category,                  // Category
-      "Pending",                  // Status
-      new Date().toISOString(),  // CreatedAt
-      imageFilename              // ImageURL
+      Date.now().toString(),
+      title,
+      creatorEmail,
+      goal,
+      description,
+      category,
+      "Pending",
+      new Date().toISOString(),
+      imageFilename
     ]);
 
-    // Notify admin (optional)
     await sendEmail({
       to: process.env.EMAIL_FROM,
       subject: `New Campaign Created: ${title}`,
@@ -433,7 +431,7 @@ app.get("/api/campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I", // Columns A-I
+      range: "Campaigns!A:I",
     });
 
     const rows = data.values || [];
@@ -481,7 +479,7 @@ app.get("/api/my-campaigns", async (req, res) => {
         goal: r[3],
         description: r[4],
         category: r[5],
-        status: r[6]?.trim() || "Pending", // ensure Pending if blank
+        status: r[6]?.trim() || "Pending",
         createdAt: r[7],
         image: r[8] ? path.basename(r[8].trim()) : null,
       }));
@@ -490,6 +488,64 @@ app.get("/api/my-campaigns", async (req, res) => {
   } catch (err) {
     console.error("my-campaigns error:", err);
     res.status(500).json({ success: false, message: "Failed to fetch your campaigns" });
+  }
+});
+
+// ===== ===== DONATION ROUTES ===== =====
+
+// Add Donation
+app.post("/api/add-donation", async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not signed in" });
+
+    const { campaignId, amount, date } = req.body;
+    if (!campaignId || !amount) return res.status(400).json({ success: false, message: "Missing required fields" });
+
+    await saveToSheet(SPREADSHEET_IDS.donations, "Donations", [
+      new Date().toISOString(),
+      req.session.user.email,
+      req.session.user.name,
+      campaignId,
+      amount,
+      date || new Date().toISOString(),
+    ]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("add-donation error:", err);
+    res.status(500).json({ success: false, message: "Failed to record donation" });
+  }
+});
+
+// Get My Donations
+app.get("/api/my-donations", async (req, res) => {
+  try {
+    if (!req.session.user) return res.status(401).json({ success: false, message: "Not signed in" });
+    const email = req.session.user.email.toLowerCase();
+
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.donations,
+      range: "Donations!A:F",
+    });
+
+    const rows = data.values || [];
+    if (rows.length <= 1) return res.json({ success: true, donations: [] });
+
+    const donations = rows.slice(1)
+      .filter(r => r[1]?.toLowerCase() === email)
+      .map(r => ({
+        date: r[0],
+        email: r[1],
+        name: r[2],
+        campaignId: r[3],
+        amount: r[4],
+        donationDate: r[5],
+      }));
+
+    res.json({ success: true, donations });
+  } catch (err) {
+    console.error("my-donations error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch donations" });
   }
 });
 
