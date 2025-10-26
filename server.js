@@ -181,7 +181,7 @@ app.post("/api/signout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
 });
 
-// ===== Dashboard Route (Added) =====
+// ===== Dashboard Route =====
 app.get("/dashboard", (req, res) => {
   if (!req.session.user) return res.redirect("/signin.html");
   res.sendFile(path.join(__dirname, "public/dashboard.html"));
@@ -189,10 +189,17 @@ app.get("/dashboard", (req, res) => {
 
 // ===== Waitlist Submission =====
 app.post("/api/waitlist", async (req, res) => {
-  const { name, email } = req.body;
-  if (!name || !email) return res.status(400).json({ success: false, message: "All fields required." });
+  const { name, email, source, reason } = req.body;
+  if (!name || !email) return res.status(400).json({ success: false, message: "Name and email required." });
+
   try {
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [new Date().toISOString(), name, email]);
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
+      new Date().toISOString(),
+      name,
+      email,
+      source || "",
+      reason || ""
+    ]);
     res.json({ success: true });
   } catch (err) {
     console.error("Waitlist error:", err);
