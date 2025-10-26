@@ -404,7 +404,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       goal,                      // Goal
       description,               // Description
       category,                  // Category
-      "Active",                  // Status
+      "Pending",                  // Status
       new Date().toISOString(),  // CreatedAt
       imageFilename              // ImageURL
     ]);
