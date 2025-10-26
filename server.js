@@ -30,19 +30,19 @@ const allowedOrigins = [
 ];
 
 // ===== CORS =====
-app.use(cors({
-  origin: function(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
-      callback(new Error("Not allowed by CORS: " + origin));
+      callback(new Error("Not allowed by CORS"));
     }
   },
-  credentials: true // ✅ allow cookies for session
-}));
+  credentials: true,
+};
+app.use(cors(corsOptions));
 
 // ===== Middleware =====
-// Must come AFTER CORS for proper headers
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
@@ -86,13 +86,7 @@ if (process.env.SENDGRID_API_KEY) sgMail.setApiKey(process.env.SENDGRID_API_KEY)
 const sendEmail = async ({ to, subject, text, html }) => {
   if (!process.env.SENDGRID_API_KEY || !process.env.EMAIL_FROM) return;
   try {
-    await sgMail.send({
-      to,
-      from: process.env.EMAIL_FROM,
-      subject,
-      text,
-      html,
-    });
+    await sgMail.send({ to, from: process.env.EMAIL_FROM, subject, text, html });
     console.log(`✅ Email sent to ${to}`);
   } catch (err) {
     console.error("SendGrid error:", err);
@@ -112,21 +106,14 @@ async function saveToSheet(sheetId, sheetName, values) {
 // ===== Multer =====
 const storage = multer.diskStorage({
   destination: uploadsDir,
-  filename: (req, file, cb) =>
-    cb(null, `${Date.now()}${path.extname(file.originalname)}`),
+  filename: (req, file, cb) => cb(null, `${Date.now()}${path.extname(file.originalname)}`),
 });
 const upload = multer({ storage });
 
 // ===== User Helpers =====
 async function saveUser({ name, email, password }) {
   const hash = await bcrypt.hash(password, 10);
-  await saveToSheet(SPREADSHEET_IDS.users, "Users", [
-    new Date().toISOString(),
-    name,
-    email,
-    hash,
-    "false",
-  ]);
+  await saveToSheet(SPREADSHEET_IDS.users, "Users", [new Date().toISOString(), name, email, hash, "false"]);
 
   await sendEmail({
     to: process.env.EMAIL_FROM,
@@ -136,48 +123,63 @@ async function saveUser({ name, email, password }) {
   });
 }
 
-// ===== Stripe Webhook must come AFTER bodyParser.json() =====
-app.post(
-  "/webhook",
-  express.raw({ type: "application/json" }),
-  async (req, res) => {
-    const sig = req.headers["stripe-signature"];
-    let event;
+async function verifyUser(email, password) {
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Users!A:E",
+    });
+    const allUsers = data.values || [];
+    const userRow = allUsers.find((r) => r[2]?.toLowerCase() === email.toLowerCase());
+    if (!userRow) return false;
+    const passwordMatch = await bcrypt.compare(password, userRow[3]);
+    if (!passwordMatch) return false;
 
-    try {
-      event = stripe.webhooks.constructEvent(
-        req.body,
-        sig,
-        process.env.STRIPE_WEBHOOK_SECRET
-      );
-    } catch (err) {
-      console.error("Webhook signature verification failed.", err.message);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
+    const { data: verData } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "ID_Verifications!A:E",
+    });
+    const verRows = (verData.values || []).filter((r) => r[1]?.toLowerCase() === email.toLowerCase());
+    const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
+    const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
+    const verified = verificationStatus === "Approved";
 
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      try {
-        await saveToSheet(SPREADSHEET_IDS.donations, "Donations", [
-          session.id,
-          session.customer_details?.name || "Anonymous Donor",
-          session.customer_details?.email || "N/A",
-          "JoyFund Mission",
-          (session.amount_total / 100).toFixed(2),
-          new Date().toISOString(),
-          "Stripe",
-          "Completed",
-          "Processed via webhook",
-        ]);
-        console.log(`✅ Donation recorded: ${session.id}`);
-      } catch (sheetErr) {
-        console.error("Error saving donation to sheet:", sheetErr);
-      }
-    }
-
-    res.json({ received: true });
+    return { name: userRow[1], email: userRow[2], verified, verificationStatus };
+  } catch (err) {
+    console.error("verifyUser error:", err);
+    return false;
   }
-);
+}
+
+// ===== Auth Routes =====
+app.post("/api/signup", async (req, res) => {
+  const { name, email, password } = req.body;
+  if (!name || !email || !password) return res.status(400).json({ success: false, message: "All fields required." });
+  try {
+    await saveUser({ name, email, password });
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ===== FIXED Signin Route (Must be above catch-all) =====
+app.post("/api/signin", async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required." });
+  try {
+    const user = await verifyUser(email, password);
+    if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
+
+    req.session.user = user;
+    await new Promise((r) => req.session.save(r));
+    res.json({ success: true, profile: user });
+  } catch (err) {
+    console.error("signin error:", err);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
 
 // ===== Catch-all API 404 =====
 app.all("/api/*", (req, res) =>
