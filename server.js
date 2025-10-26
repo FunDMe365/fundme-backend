@@ -458,6 +458,41 @@ app.get("/api/campaigns", async (req, res) => {
   }
 });
 
+// ===== Get My Campaigns =====
+app.get("/api/my-campaigns", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, message: "Not signed in" });
+  const email = req.session.user.email.toLowerCase();
+
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:I",
+    });
+
+    const rows = data.values || [];
+    if (rows.length <= 1) return res.json({ success: true, campaigns: [] });
+
+    const campaigns = rows.slice(1)
+      .filter(r => r[2]?.toLowerCase() === email)
+      .map(r => ({
+        id: r[0],
+        title: r[1],
+        creatorEmail: r[2],
+        goal: r[3],
+        description: r[4],
+        category: r[5],
+        status: r[6]?.trim() || "Pending", // ensure Pending if blank
+        createdAt: r[7],
+        image: r[8] ? path.basename(r[8].trim()) : null,
+      }));
+
+    res.json({ success: true, campaigns });
+  } catch (err) {
+    console.error("my-campaigns error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch your campaigns" });
+  }
+});
+
 // ===== Catch-all API 404 =====
 app.all("/api/*", (req, res) =>
   res.status(404).json({ success: false, message: "API route not found" })
