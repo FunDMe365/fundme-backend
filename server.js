@@ -181,6 +181,12 @@ app.post("/api/signout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
 });
 
+// ===== Dashboard Route (Added) =====
+app.get("/dashboard", (req, res) => {
+  if (!req.session.user) return res.redirect("/signin.html");
+  res.sendFile(path.join(__dirname, "public/dashboard.html"));
+});
+
 // ===== Waitlist Submission =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email } = req.body;
