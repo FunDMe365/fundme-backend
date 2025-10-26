@@ -30,17 +30,10 @@ const allowedOrigins = [
 ];
 
 // ===== CORS =====
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
+app.use(cors({
+  origin: allowedOrigins,
   credentials: true,
-};
-app.use(cors(corsOptions));
+}));
 
 // ===== Middleware =====
 app.use(bodyParser.json());
@@ -52,19 +45,17 @@ app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
 app.set("trust proxy", 1);
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "supersecretkey",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24,
-    },
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || "supersecretkey",
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24,
+  },
+}));
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -113,7 +104,13 @@ const upload = multer({ storage });
 // ===== User Helpers =====
 async function saveUser({ name, email, password }) {
   const hash = await bcrypt.hash(password, 10);
-  await saveToSheet(SPREADSHEET_IDS.users, "Users", [new Date().toISOString(), name, email, hash, "false"]);
+  await saveToSheet(SPREADSHEET_IDS.users, "Users", [
+    new Date().toISOString(),
+    name,
+    email,
+    hash,
+    "false"
+  ]);
 
   await sendEmail({
     to: process.env.EMAIL_FROM,
@@ -164,7 +161,6 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
-// ===== FIXED Signin Route (Must be above catch-all) =====
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required." });
@@ -173,12 +169,120 @@ app.post("/api/signin", async (req, res) => {
     if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
     req.session.user = user;
-    await new Promise((r) => req.session.save(r));
-    res.json({ success: true, profile: user });
+    req.session.save(() => res.json({ success: true, profile: user }));
   } catch (err) {
     console.error("signin error:", err);
     res.status(500).json({ success: false, message: "Internal server error" });
   }
+});
+
+// ===== Signout Route =====
+app.post("/api/signout", (req, res) => {
+  req.session.destroy(() => res.json({ success: true }));
+});
+
+// ===== Waitlist Submission =====
+app.post("/api/waitlist", async (req, res) => {
+  const { name, email } = req.body;
+  if (!name || !email) return res.status(400).json({ success: false, message: "All fields required." });
+  try {
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [new Date().toISOString(), name, email]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Waitlist error:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ===== Stripe Checkout =====
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+  const { campaignId } = req.params;
+  const { amount, successUrl, cancelUrl } = req.body;
+  if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ success: false, message: "Missing fields" });
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: `Donation for ${campaignId}` },
+          unit_amount: Math.round(amount * 100),
+        },
+        quantity: 1,
+      }],
+      mode: "payment",
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+    });
+
+    res.json({ success: true, sessionId: session.id });
+  } catch (err) {
+    console.error("Stripe checkout error:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ===== JoyFund Mission Checkout =====
+app.post("/api/create-joyfund-checkout", async (req, res) => {
+  const { amount, successUrl, cancelUrl } = req.body;
+  if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ success: false, message: "Missing fields" });
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: "Donation to JoyFund Mission" },
+          unit_amount: Math.round(amount * 100),
+        },
+        quantity: 1,
+      }],
+      mode: "payment",
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+    });
+
+    res.json({ success: true, sessionId: session.id });
+  } catch (err) {
+    console.error("JoyFund checkout error:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ===== Stripe Webhook =====
+app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error("Webhook verification failed:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    try {
+      await saveToSheet(SPREADSHEET_IDS.donations, "Donations", [
+        session.id,
+        session.customer_details?.name || "Anonymous",
+        session.customer_details?.email || "N/A",
+        "JoyFund Mission",
+        (session.amount_total / 100).toFixed(2),
+        new Date().toISOString(),
+        "Stripe",
+        "Completed",
+        "Processed via webhook",
+      ]);
+    } catch (err) {
+      console.error("Error saving donation:", err);
+    }
+  }
+
+  res.json({ received: true });
 });
 
 // ===== Catch-all API 404 =====
