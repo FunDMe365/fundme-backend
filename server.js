@@ -30,21 +30,25 @@ const allowedOrigins = [
 ];
 
 // ===== CORS =====
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error("Not allowed by CORS"));
+      callback(new Error("Not allowed by CORS: " + origin));
     }
   },
-  credentials: true,
-};
-app.use(cors(corsOptions));
+  credentials: true // ✅ allow cookies for session
+}));
 
 // ===== Middleware =====
+// Must come AFTER CORS for proper headers
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// ===== Serve uploads folder =====
+app.use("/uploads", express.static(uploadsDir));
+app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
 app.set("trust proxy", 1);
@@ -82,7 +86,13 @@ if (process.env.SENDGRID_API_KEY) sgMail.setApiKey(process.env.SENDGRID_API_KEY)
 const sendEmail = async ({ to, subject, text, html }) => {
   if (!process.env.SENDGRID_API_KEY || !process.env.EMAIL_FROM) return;
   try {
-    await sgMail.send({ to, from: process.env.EMAIL_FROM, subject, text, html });
+    await sgMail.send({
+      to,
+      from: process.env.EMAIL_FROM,
+      subject,
+      text,
+      html,
+    });
     console.log(`✅ Email sent to ${to}`);
   } catch (err) {
     console.error("SendGrid error:", err);
@@ -126,33 +136,48 @@ async function saveUser({ name, email, password }) {
   });
 }
 
-// ===== AUTH ROUTES =====
-app.post("/api/signup", async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password)
-    return res.status(400).json({ success: false, message: "All fields required." });
-  try {
-    await saveUser({ name, email, password });
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+// ===== Stripe Webhook must come AFTER bodyParser.json() =====
+app.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body,
+        sig,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } catch (err) {
+      console.error("Webhook signature verification failed.", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      try {
+        await saveToSheet(SPREADSHEET_IDS.donations, "Donations", [
+          session.id,
+          session.customer_details?.name || "Anonymous Donor",
+          session.customer_details?.email || "N/A",
+          "JoyFund Mission",
+          (session.amount_total / 100).toFixed(2),
+          new Date().toISOString(),
+          "Stripe",
+          "Completed",
+          "Processed via webhook",
+        ]);
+        console.log(`✅ Donation recorded: ${session.id}`);
+      } catch (sheetErr) {
+        console.error("Error saving donation to sheet:", sheetErr);
+      }
+    }
+
+    res.json({ received: true });
   }
-});
-
-app.post("/api/signin", async (req, res) => {
-  const { email, password } = req.body;
-  const user = await verifyUser(email, password);
-  if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
-  req.session.user = user;
-  await new Promise((r) => req.session.save(r));
-  res.json({ success: true, profile: user });
-});
-
-// ===== All other API routes remain unchanged =====
-
-// ===== Serve static frontend after API routes =====
-app.use(express.static(path.join(__dirname, "public")));
+);
 
 // ===== Catch-all API 404 =====
 app.all("/api/*", (req, res) =>
