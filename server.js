@@ -272,24 +272,28 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
   try {
     const imageUrl = imageFile ? `/uploads/${imageFile.filename}` : "";
-    const now = new Date().toISOString();
+    const campaignId = `CAMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const createdAt = new Date().toISOString();
 
-    // Correct order for your Google Sheet:
-    // Id | title | Email | Goal | Description | Category | Status | CreatedAt | ImageURL
- const campaignId = `CAMP-${Date.now()}-${Math.floor(Math.random()*1000)}`;
-const createdAt = new Date().toISOString();
+    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
+      campaignId, // Id
+      title,
+      creatorEmail,
+      goal,
+      description,
+      category,
+      "Pending",
+      createdAt, // now separate column
+      imageUrl
+    ]);
 
-await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-  campaignId, // Id
-  title,
-  creatorEmail,
-  goal,
-  description,
-  category,
-  "Pending",
-  createdAt, // now separate column
-  imageUrl
-]);
+    res.json({ success: true, campaignId }); // <-- make sure to respond here
+  } catch (err) {
+    console.error("create-campaign error:", err);
+    res.status(500).json({ success: false, message: "Failed to create campaign." });
+  }
+}); // <-- THIS CLOSING BRACE & PARENTHESIS WAS MISSING
+
 
 // ===== Get All Campaigns =====
 app.get("/api/campaigns", async (req, res) => {
