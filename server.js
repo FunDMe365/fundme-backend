@@ -32,7 +32,7 @@ const allowedOrigins = [
 // ===== CORS =====
 app.use(cors({
   origin: allowedOrigins,
-  credentials: true,
+  credentials: true, // ✅ important so browser sends cookies
 }));
 
 // ===== Middleware =====
@@ -44,16 +44,16 @@ app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
-app.set("trust proxy", 1);
+app.set("trust proxy", 1); // if behind a proxy like Render
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: true, // ✅ required for HTTPS on Render
+    secure: process.env.NODE_ENV === "production", // ✅ true for HTTPS
     httpOnly: true,
-    sameSite: "none", // ✅ allow cross-origin cookies
-    maxAge: 1000 * 60 * 60 * 24,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24 * 30, // ✅ persist 30 days until logout
   },
 }));
 
@@ -151,8 +151,7 @@ async function verifyUser(email, password) {
 // ===== Auth Routes =====
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password)
-    return res.status(400).json({ success: false, message: "All fields required." });
+  if (!name || !email || !password) return res.status(400).json({ success: false, message: "All fields required." });
   try {
     await saveUser({ name, email, password });
     res.json({ success: true });
@@ -164,13 +163,14 @@ app.post("/api/signup", async (req, res) => {
 
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ success: false, message: "Email and password required." });
+  if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required." });
   try {
     const user = await verifyUser(email, password);
     if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
+    // ✅ persist session until logout
     req.session.user = user;
+    req.session.cookie.maxAge = 1000 * 60 * 60 * 24 * 30; // 30 days
     req.session.save(() => res.json({ success: true, profile: user }));
   } catch (err) {
     console.error("signin error:", err);
@@ -178,17 +178,17 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-// ===== Signout =====
+// ===== Signout Route =====
 app.post("/api/signout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
 });
 
-// ===== Session Check =====
+// ===== Check Session Route =====
 app.get("/api/check-session", (req, res) => {
   if (req.session.user) {
     res.json({ loggedIn: true, user: req.session.user });
   } else {
-    res.status(401).json({ loggedIn: false });
+    res.json({ loggedIn: false });
   }
 });
 
@@ -201,8 +201,7 @@ app.get("/dashboard", (req, res) => {
 // ===== Waitlist Submission =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
-  if (!name || !email)
-    return res.status(400).json({ success: false, message: "Name and email required." });
+  if (!name || !email) return res.status(400).json({ success: false, message: "Name and email required." });
 
   try {
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
@@ -223,8 +222,7 @@ app.post("/api/waitlist", async (req, res) => {
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   const { campaignId } = req.params;
   const { amount, successUrl, cancelUrl } = req.body;
-  if (!amount || !successUrl || !cancelUrl)
-    return res.status(400).json({ success: false, message: "Missing fields" });
+  if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ success: false, message: "Missing fields" });
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -252,8 +250,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
 // ===== JoyFund Mission Checkout =====
 app.post("/api/create-joyfund-checkout", async (req, res) => {
   const { amount, successUrl, cancelUrl } = req.body;
-  if (!amount || !successUrl || !cancelUrl)
-    return res.status(400).json({ success: false, message: "Missing fields" });
+  if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ success: false, message: "Missing fields" });
 
   try {
     const session = await stripe.checkout.sessions.create({
