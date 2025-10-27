@@ -176,6 +176,26 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
+// ===== Traditional form signin handler (prevents refresh when JS fails) =====
+app.post("/signin", async (req, res) => {
+  // This route handles non-AJAX form submissions (Content-Type: application/x-www-form-urlencoded)
+  // It sets the session and redirects to /dashboard on success, or back to signin on failure.
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.redirect("/signin.html?error=1");
+
+    const user = await verifyUser(email, password);
+    if (!user) return res.redirect("/signin.html?error=1");
+
+    req.session.user = user;
+    await new Promise((r) => req.session.save(r));
+    return res.redirect("/dashboard");
+  } catch (err) {
+    console.error("form signin error:", err);
+    return res.redirect("/signin.html?error=1");
+  }
+});
+
 // ===== Signout Route =====
 app.post("/api/signout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
