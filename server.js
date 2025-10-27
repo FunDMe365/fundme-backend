@@ -44,7 +44,7 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // handle preflight
+app.options("*", cors(corsOptions)); // handle global preflight
 
 // ===== Middleware =====
 app.use(bodyParser.json());
@@ -173,6 +173,9 @@ app.post("/api/signup", async (req, res) => {
     res.status(500).json({ success: false });
   }
 });
+
+// ===== Preflight fix for signin =====
+app.options("/api/signin", cors(corsOptions));
 
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
