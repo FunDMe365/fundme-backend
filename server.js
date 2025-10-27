@@ -30,30 +30,41 @@ const allowedOrigins = [
 ];
 
 // ===== CORS =====
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true, // ✅ important so browser sends cookies
-}));
+const corsOptions = {
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true); // allow curl or mobile apps
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // handle preflight
 
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ===== Serve uploads folder =====
+// ===== Serve uploads folder and public =====
 app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
-app.set("trust proxy", 1); // if behind a proxy like Render
+app.set("trust proxy", 1);
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === "production", // ✅ true for HTTPS
+    secure: process.env.NODE_ENV === "production",
     httpOnly: true,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    maxAge: 1000 * 60 * 60 * 24 * 30, // ✅ persist 30 days until logout
+    maxAge: 1000 * 60 * 60 * 24 * 30, // persist 30 days until logout
   },
 }));
 
@@ -70,7 +81,7 @@ const SPREADSHEET_IDS = {
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
   donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
-  idVerifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0" // Use same users sheet or create separate
+  idVerifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
 };
 
 // ===== SendGrid =====
@@ -179,12 +190,12 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-// ===== Signout Route =====
+// ===== Signout =====
 app.post("/api/signout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
 });
 
-// ===== Check Session Route =====
+// ===== Check Session =====
 app.get("/api/check-session", (req, res) => {
   if (req.session.user) {
     res.json({ loggedIn: true, user: req.session.user });
@@ -193,7 +204,7 @@ app.get("/api/check-session", (req, res) => {
   }
 });
 
-// ===== ID Verification Route =====
+// ===== Get Verifications =====
 app.get("/api/get-verifications", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
 
@@ -223,7 +234,6 @@ app.get("/api/get-verifications", async (req, res) => {
 // ===== ID Verification Submission =====
 app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
   const file = req.file;
   if (!file) return res.status(400).json({ success: false, message: "ID document is required." });
 
@@ -234,8 +244,8 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
     await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
       now,
       req.session.user.email,
-      now,       // submission date
-      "Pending", // default status
+      now,
+      "Pending",
       fileUrl
     ]);
 
@@ -246,8 +256,7 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   }
 });
 
-
-// ===== Create Campaign Route =====
+// ===== Create Campaign =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
 
@@ -260,7 +269,6 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
   try {
     const imageUrl = imageFile ? `/uploads/${imageFile.filename}` : "";
-
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
       new Date().toISOString(),
       title,
@@ -279,7 +287,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
-// ===== Waitlist Submission =====
+// ===== Waitlist =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email) return res.status(400).json({ success: false, message: "Name and email required." });
@@ -299,8 +307,8 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Stripe Checkout and other routes remain unchanged =====
-// (Include all Stripe routes, webhook, dashboard route, etc.)
+// ===== Stripe Routes, Webhook, Dashboard, etc. =====
+// Keep your existing Stripe checkout, JoyFund checkout, webhook, and dashboard routes exactly as before
 
 // ===== Catch-all API 404 =====
 app.all("/api/*", (req, res) =>
