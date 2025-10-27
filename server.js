@@ -276,24 +276,20 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
     // Correct order for your Google Sheet:
     // Id | title | Email | Goal | Description | Category | Status | CreatedAt | ImageURL
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      now,          // Id
-      title,        // title
-      creatorEmail, // Email
-      goal,         // Goal
-      description,  // Description
-      category,     // Category
-      "Pending",    // Status
-      now,          // CreatedAt
-      imageUrl      // ImageURL
-    ]);
+ const campaignId = `CAMP-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+const createdAt = new Date().toISOString();
 
-    res.json({ success: true });
-  } catch (err) {
-    console.error("create-campaign error:", err);
-    res.status(500).json({ success: false, message: "Failed to create campaign." });
-  }
-});
+await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
+  campaignId, // Id
+  title,
+  creatorEmail,
+  goal,
+  description,
+  category,
+  "Pending",
+  createdAt, // now separate column
+  imageUrl
+]);
 
 // ===== Get All Campaigns =====
 app.get("/api/campaigns", async (req, res) => {
