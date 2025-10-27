@@ -295,7 +295,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
-// ===== NEW: Get All Campaigns =====
+// ===== Get All Campaigns =====
 app.get("/api/campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
@@ -342,8 +342,64 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ===== Stripe Routes, Webhook, Dashboard, etc. =====
-// Keep your existing Stripe checkout, JoyFund checkout, webhook, and dashboard routes exactly as before
+// ===== NEW: Stripe Donation Route =====
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+  const { campaignId } = req.params;
+  const { amount, successUrl, cancelUrl } = req.body;
+
+  if (!campaignId || !amount || !successUrl || !cancelUrl) {
+    return res.status(400).json({ success: false, message: "Missing required fields." });
+  }
+
+  try {
+    const donationAmount = Math.round(parseFloat(amount) * 100); // cents
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      mode: "payment",
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: `Donation to Campaign ID: ${campaignId}`,
+          },
+          unit_amount: donationAmount,
+        },
+        quantity: 1,
+      }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: { campaignId, amount: donationAmount },
+    });
+
+    res.json({ success: true, sessionId: session.id });
+  } catch (err) {
+    console.error("create-checkout-session error:", err);
+    res.status(500).json({ success: false, message: "Failed to create checkout session." });
+  }
+});
+
+// ===== NEW: Log Donation =====
+app.post("/api/log-donation", async (req, res) => {
+  const { campaignId, title, amount, timestamp } = req.body;
+  if (!campaignId || !amount || !timestamp || !title) {
+    return res.status(400).json({ success: false, message: "Missing donation fields." });
+  }
+
+  try {
+    await saveToSheet(SPREADSHEET_IDS.donations, "Donations", [
+      timestamp,
+      campaignId,
+      title,
+      amount
+    ]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("log-donation error:", err);
+    res.status(500).json({ success: false, message: "Failed to log donation." });
+  }
+});
 
 // ===== Catch-all API 404 =====
 app.all("/api/*", (req, res) =>
