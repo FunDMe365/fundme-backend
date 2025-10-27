@@ -106,12 +106,45 @@ async function saveToSheet(sheetId, sheetName, values) {
   });
 }
 
+// convert rows (array-of-arrays) to array of objects using header row
+function rowsToObjects(values) {
+  if (!values || values.length < 1) return [];
+  const headers = values[0].map(h => (h || "").toString().trim());
+  const rows = values.slice(1).map(r => r.map(c => (c || "").toString().trim()))
+    .filter(r => r.some(c => c !== ""));
+  return rows.map(r => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h || `col${i}`] = r[i] || "");
+    return obj;
+  });
+}
+
+// helper to get sheet values
+async function getSheetValues(sheetId, range) {
+  const { data } = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range,
+  });
+  return data.values || [];
+}
+
 // ===== Multer =====
 const storage = multer.diskStorage({
   destination: uploadsDir,
   filename: (req, file, cb) => cb(null, `${Date.now()}${path.extname(file.originalname)}`),
 });
 const upload = multer({ storage });
+
+// ===== Admin detection =====
+// Set ADMIN_EMAILS environment variable to a comma-separated list of admin emails (lowercased)
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+
+// middleware to require admin
+function requireAdmin(req, res, next) {
+  if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+  if (!req.session.user.isAdmin) return res.status(403).json({ success: false, message: "Admin access required" });
+  next();
+}
 
 // ===== User Helpers =====
 async function saveUser({ name, email, password }) {
@@ -184,9 +217,12 @@ app.post("/api/signin", async (req, res) => {
     const user = await verifyUser(email, password);
     if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
 
-    req.session.user = user;
+    // detect admin
+    const isAdmin = ADMIN_EMAILS.includes(email.toLowerCase());
+    const sessionUser = { ...user, isAdmin };
+    req.session.user = sessionUser;
     req.session.cookie.maxAge = 1000 * 60 * 60 * 24 * 30; // 30 days
-    req.session.save(() => res.json({ success: true, profile: user }));
+    req.session.save(() => res.json({ success: true, profile: sessionUser }));
   } catch (err) {
     console.error("signin error:", err);
     res.status(500).json({ success: false, message: "Internal server error" });
@@ -294,15 +330,11 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
-// ===== Get All Campaigns =====
+// ===== Get All Campaigns (public) =====
 app.get("/api/campaigns", async (req, res) => {
   try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I", 
-    });
-
-    const allCampaigns = (data.values || []).map(row => ({
+    const values = await getSheetValues(SPREADSHEET_IDS.campaigns, "Campaigns!A:I");
+    const allCampaigns = (values || []).map(row => ({
       id: row[0],
       title: row[1],
       email: row[2],
@@ -325,12 +357,8 @@ app.get("/api/campaigns", async (req, res) => {
 app.get("/api/manage-campaigns", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
   try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I", 
-    });
-
-    const userCampaigns = (data.values || [])
+    const values = await getSheetValues(SPREADSHEET_IDS.campaigns, "Campaigns!A:I");
+    const userCampaigns = (values || [])
       .filter(row => row[2]?.toLowerCase() === req.session.user.email.toLowerCase())
       .map(row => ({
         id: row[0],
@@ -351,7 +379,7 @@ app.get("/api/manage-campaigns", async (req, res) => {
   }
 });
 
-// ===== Waitlist =====
+// ===== Waitlist submission (public) =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
   if (!name || !email) return res.status(400).json({ success: false, message: "Name and email required." });
@@ -427,6 +455,118 @@ app.post("/api/log-donation", async (req, res) => {
   } catch (err) {
     console.error("log-donation error:", err);
     res.status(500).json({ success: false, message: "Failed to log donation." });
+  }
+});
+
+// ===== ADMIN: Get campaigns (admin) =====
+app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
+  try {
+    const values = await getSheetValues(SPREADSHEET_IDS.campaigns, "Campaigns!A:I");
+    const campaigns = (values || []).map(row => ({
+      id: row[0],
+      title: row[1],
+      email: row[2],
+      goal: row[3],
+      description: row[4],
+      category: row[5],
+      status: row[6],
+      createdAt: row[7],
+      imageUrl: row[8] || "",
+    }));
+    res.json({ success: true, campaigns });
+  } catch (err) {
+    console.error("admin get campaigns error:", err);
+    res.status(500).json({ success: false, campaigns: [] });
+  }
+});
+
+// ===== ADMIN: Update campaign status (approve/reject) =====
+app.put("/api/admin/campaign/:id/status", requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  if (!id || !status) return res.status(400).json({ success: false, message: "Missing id or status" });
+
+  try {
+    const values = await getSheetValues(SPREADSHEET_IDS.campaigns, "Campaigns!A:I");
+    const rows = values || [];
+    const rowIndex = rows.findIndex(row => row[0] === id);
+    if (rowIndex === -1) return res.status(404).json({ success: false, message: "Campaign not found" });
+
+    // Update status column (index 6)
+    rows[rowIndex][6] = status;
+
+    // Write back the single row (A..I)
+    const sheetRowNumber = rowIndex + 1; // sheet rows are 1-indexed
+    const range = `Campaigns!A${sheetRowNumber}:I${sheetRowNumber}`;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range,
+      valueInputOption: "RAW",
+      requestBody: { values: [rows[rowIndex]] },
+    });
+
+    res.json({ success: true, message: "Status updated" });
+  } catch (err) {
+    console.error("admin update campaign status error:", err);
+    res.status(500).json({ success: false, message: "Failed to update campaign status" });
+  }
+});
+
+// ===== ADMIN: Get donations =====
+app.get("/api/admin/donations", requireAdmin, async (req, res) => {
+  try {
+    const values = await getSheetValues(SPREADSHEET_IDS.donations, "Donations!A:D");
+    // Expecting rows: timestamp, campaignId, title, amount
+    const donations = (values || []).map(row => ({
+      timestamp: row[0] || "",
+      campaignId: row[1] || "",
+      title: row[2] || "",
+      amount: row[3] || "",
+    }));
+    res.json({ success: true, donations });
+  } catch (err) {
+    console.error("admin get donations error:", err);
+    res.status(500).json({ success: false, donations: [] });
+  }
+});
+
+// ===== ADMIN: Get users (admin) =====
+app.get("/api/admin/users", requireAdmin, async (req, res) => {
+  try {
+    const values = await getSheetValues(SPREADSHEET_IDS.users, "Users!A:Z");
+    const users = rowsToObjects(values);
+    res.json({ success: true, users });
+  } catch (err) {
+    console.error("admin get users error:", err);
+    res.status(500).json({ success: false, users: [] });
+  }
+});
+
+// ===== ADMIN: Get volunteers (admin) =====
+app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
+  try {
+    // You previously referenced a volunteers sheet client-side; if you have an ID, add it to SPREADSHEET_IDS or adjust here
+    const VOLUNTEERS_SHEET_ID = process.env.VOLUNTEERS_SHEET_ID || null;
+    if (!VOLUNTEERS_SHEET_ID) return res.json({ success: true, volunteers: [] });
+
+    const values = await getSheetValues(VOLUNTEERS_SHEET_ID, "Sheet1!A:Z");
+    const volunteers = rowsToObjects(values);
+    res.json({ success: true, volunteers });
+  } catch (err) {
+    console.error("admin get volunteers error:", err);
+    res.status(500).json({ success: false, volunteers: [] });
+  }
+});
+
+// ===== ADMIN: Get waitlist (admin) =====
+app.get("/api/admin/waitlist", requireAdmin, async (req, res) => {
+  try {
+    const values = await getSheetValues(SPREADSHEET_IDS.waitlist, "Waitlist!A:Z");
+    const waitlist = rowsToObjects(values);
+    res.json({ success: true, waitlist });
+  } catch (err) {
+    console.error("admin get waitlist error:", err);
+    res.status(500).json({ success: false, waitlist: [] });
   }
 });
 
