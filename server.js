@@ -473,6 +473,27 @@ app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
       createdAt: row[7],
       imageUrl: row[8] || "",
     }));
+// Add this BEFORE the line: // ===== ADMIN: Get campaigns (admin) =====
+app.post("/api/admin/login", (req, res) => {
+  const { username, password } = req.body;
+
+  // hardcoded credentials
+  if (username === "Admin" && password === "FunDMe$123") {
+    req.session.user = {
+      name: "Admin",
+      email: "admin@fundasmile.net",
+      isAdmin: true,
+    };
+    req.session.save(() => res.json({ success: true }));
+  } else {
+    res.status(401).json({ success: false, message: "Invalid credentials" });
+  }
+});
+
+app.post("/api/admin/logout", (req, res) => {
+  req.session.destroy(() => res.json({ success: true }));
+});
+
     res.json({ success: true, campaigns });
   } catch (err) {
     console.error("admin get campaigns error:", err);
