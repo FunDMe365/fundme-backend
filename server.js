@@ -287,20 +287,19 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       imageUrl
     ]);
 
-    res.json({ success: true, campaignId }); // <-- make sure to respond here
+    res.json({ success: true, campaignId }); 
   } catch (err) {
     console.error("create-campaign error:", err);
     res.status(500).json({ success: false, message: "Failed to create campaign." });
   }
-}); // <-- THIS CLOSING BRACE & PARENTHESIS WAS MISSING
-
+});
 
 // ===== Get All Campaigns =====
 app.get("/api/campaigns", async (req, res) => {
   try {
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I", // all columns
+      range: "Campaigns!A:I", 
     });
 
     const allCampaigns = (data.values || []).map(row => ({
@@ -318,6 +317,36 @@ app.get("/api/campaigns", async (req, res) => {
     res.json({ success: true, campaigns: allCampaigns });
   } catch (err) {
     console.error("get-campaigns error:", err);
+    res.status(500).json({ success: false, campaigns: [] });
+  }
+});
+
+// ===== NEW: Manage Campaigns (user-specific) =====
+app.get("/api/manage-campaigns", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:I", 
+    });
+
+    const userCampaigns = (data.values || [])
+      .filter(row => row[2]?.toLowerCase() === req.session.user.email.toLowerCase())
+      .map(row => ({
+        id: row[0],
+        title: row[1],
+        email: row[2],
+        goal: row[3],
+        description: row[4],
+        category: row[5],
+        status: row[6],
+        createdAt: row[7],
+        imageUrl: row[8] || "",
+      }));
+
+    res.json({ success: true, campaigns: userCampaigns });
+  } catch (err) {
+    console.error("manage-campaigns error:", err);
     res.status(500).json({ success: false, campaigns: [] });
   }
 });
