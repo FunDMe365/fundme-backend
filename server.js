@@ -256,7 +256,7 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   }
 });
 
-// ===== Create Campaign =====
+// ===== Create Campaign (updated column order) =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
 
@@ -269,15 +269,20 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
   try {
     const imageUrl = imageFile ? `/uploads/${imageFile.filename}` : "";
+    const now = new Date().toISOString();
+
+    // Correct order for your Google Sheet:
+    // Id | title | Email | Goal | Description | Category | Status | CreatedAt | ImageURL
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      new Date().toISOString(),
-      title,
-      creatorEmail,
-      goal,
-      category,
-      description,
-      imageUrl,
-      "Pending"
+      now,          // Id
+      title,        // title
+      creatorEmail, // Email
+      goal,         // Goal
+      description,  // Description
+      category,     // Category
+      "Pending",    // Status
+      now,          // CreatedAt
+      imageUrl      // ImageURL
     ]);
 
     res.json({ success: true });
