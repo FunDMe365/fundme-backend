@@ -50,9 +50,9 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: process.env.NODE_ENV === "production",
+    secure: true, // ✅ required for HTTPS on Render
     httpOnly: true,
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    sameSite: "none", // ✅ allow cross-origin cookies
     maxAge: 1000 * 60 * 60 * 24,
   },
 }));
@@ -151,7 +151,8 @@ async function verifyUser(email, password) {
 // ===== Auth Routes =====
 app.post("/api/signup", async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ success: false, message: "All fields required." });
+  if (!name || !email || !password)
+    return res.status(400).json({ success: false, message: "All fields required." });
   try {
     await saveUser({ name, email, password });
     res.json({ success: true });
@@ -163,7 +164,8 @@ app.post("/api/signup", async (req, res) => {
 
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required." });
+  if (!email || !password)
+    return res.status(400).json({ success: false, message: "Email and password required." });
   try {
     const user = await verifyUser(email, password);
     if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
@@ -176,29 +178,18 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-// ===== Traditional form signin handler (prevents refresh when JS fails) =====
-app.post("/signin", async (req, res) => {
-  // This route handles non-AJAX form submissions (Content-Type: application/x-www-form-urlencoded)
-  // It sets the session and redirects to /dashboard on success, or back to signin on failure.
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.redirect("/signin.html?error=1");
-
-    const user = await verifyUser(email, password);
-    if (!user) return res.redirect("/signin.html?error=1");
-
-    req.session.user = user;
-    await new Promise((r) => req.session.save(r));
-    return res.redirect("/dashboard");
-  } catch (err) {
-    console.error("form signin error:", err);
-    return res.redirect("/signin.html?error=1");
-  }
-});
-
-// ===== Signout Route =====
+// ===== Signout =====
 app.post("/api/signout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
+});
+
+// ===== Session Check =====
+app.get("/api/check-session", (req, res) => {
+  if (req.session.user) {
+    res.json({ loggedIn: true, user: req.session.user });
+  } else {
+    res.status(401).json({ loggedIn: false });
+  }
 });
 
 // ===== Dashboard Route =====
@@ -210,7 +201,8 @@ app.get("/dashboard", (req, res) => {
 // ===== Waitlist Submission =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
-  if (!name || !email) return res.status(400).json({ success: false, message: "Name and email required." });
+  if (!name || !email)
+    return res.status(400).json({ success: false, message: "Name and email required." });
 
   try {
     await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
@@ -231,7 +223,8 @@ app.post("/api/waitlist", async (req, res) => {
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   const { campaignId } = req.params;
   const { amount, successUrl, cancelUrl } = req.body;
-  if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ success: false, message: "Missing fields" });
+  if (!amount || !successUrl || !cancelUrl)
+    return res.status(400).json({ success: false, message: "Missing fields" });
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -259,7 +252,8 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
 // ===== JoyFund Mission Checkout =====
 app.post("/api/create-joyfund-checkout", async (req, res) => {
   const { amount, successUrl, cancelUrl } = req.body;
-  if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ success: false, message: "Missing fields" });
+  if (!amount || !successUrl || !cancelUrl)
+    return res.status(400).json({ success: false, message: "Missing fields" });
 
   try {
     const session = await stripe.checkout.sessions.create({
