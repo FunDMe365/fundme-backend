@@ -295,6 +295,33 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
+// ===== NEW: Get All Campaigns =====
+app.get("/api/campaigns", async (req, res) => {
+  try {
+    const { data } = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Campaigns!A:I", // all columns
+    });
+
+    const allCampaigns = (data.values || []).map(row => ({
+      id: row[0],
+      title: row[1],
+      email: row[2],
+      goal: row[3],
+      description: row[4],
+      category: row[5],
+      status: row[6],
+      createdAt: row[7],
+      imageUrl: row[8] || "",
+    }));
+
+    res.json({ success: true, campaigns: allCampaigns });
+  } catch (err) {
+    console.error("get-campaigns error:", err);
+    res.status(500).json({ success: false, campaigns: [] });
+  }
+});
+
 // ===== Waitlist =====
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
