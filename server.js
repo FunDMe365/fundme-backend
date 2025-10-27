@@ -220,6 +220,33 @@ app.get("/api/get-verifications", async (req, res) => {
   }
 });
 
+// ===== ID Verification Submission =====
+app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
+
+  const file = req.file;
+  if (!file) return res.status(400).json({ success: false, message: "ID document is required." });
+
+  try {
+    const fileUrl = `/uploads/${file.filename}`;
+    const now = new Date().toISOString();
+
+    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
+      now,
+      req.session.user.email,
+      now,       // submission date
+      "Pending", // default status
+      fileUrl
+    ]);
+
+    res.json({ success: true, message: "ID submitted successfully." });
+  } catch (err) {
+    console.error("verify-id error:", err);
+    res.status(500).json({ success: false, message: "Failed to submit ID." });
+  }
+});
+
+
 // ===== Create Campaign Route =====
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
