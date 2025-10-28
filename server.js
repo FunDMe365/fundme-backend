@@ -32,7 +32,7 @@ const allowedOrigins = [
 // ===== CORS =====
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // allow curl or mobile apps
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -182,6 +182,21 @@ app.post("/api/admin/logout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
 });
 
+// ===== NEW SIGNIN ROUTE =====
+app.post("/api/signin", (req, res) => {
+  const { email, password } = req.body;
+  // For now, only admin login is supported
+  if (email === "admin@fundasmile.net" && password === "FunDMe$123") {
+    req.session.user = { name: "Admin", email, isAdmin: true };
+    req.session.save((err) => {
+      if (err) return res.status(500).json({ success: false, message: "Session error" });
+      res.json({ success: true, message: "Signed in" });
+    });
+  } else {
+    res.status(401).json({ success: false, message: "Invalid email or password" });
+  }
+});
+
 // ===== ADMIN ROUTES =====
 
 // Get live visitor count
@@ -200,7 +215,7 @@ app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
       goal: row[3],
       description: row[4],
       category: row[5],
-      status: row[6] ? row[6].toLowerCase() : "", // normalize for comparison
+      status: row[6] ? row[6].toLowerCase() : "",
       createdAt: row[7],
       imageUrl: row[8] || "",
     }));
