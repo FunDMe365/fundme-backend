@@ -44,8 +44,6 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 app.use(cors(corsOptions));
-
-// ✅ Handle all OPTIONS (preflight) requests globally
 app.options("*", (req, res) => {
   res.header("Access-Control-Allow-Origin", req.headers.origin);
   res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
@@ -73,7 +71,7 @@ app.use(
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24 * 30, // persist 30 days until logout
+      maxAge: 1000 * 60 * 60 * 24 * 30,
     },
   })
 );
@@ -91,8 +89,14 @@ const SPREADSHEET_IDS = {
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
   donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
-  idVerifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
 };
+
+// ===== Visitor Count =====
+let siteVisitors = 0;
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/admin")) siteVisitors++;
+  next();
+});
 
 // ===== SendGrid =====
 if (process.env.SENDGRID_API_KEY) sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -116,7 +120,6 @@ async function saveToSheet(sheetId, sheetName, values) {
   });
 }
 
-// convert rows (array-of-arrays) to array of objects using header row
 function rowsToObjects(values) {
   if (!values || values.length < 1) return [];
   const headers = values[0].map((h) => (h || "").toString().trim());
@@ -131,7 +134,6 @@ function rowsToObjects(values) {
   });
 }
 
-// helper to get sheet values
 async function getSheetValues(sheetId, range) {
   const { data } = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
@@ -154,7 +156,6 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
   .map((s) => s.trim().toLowerCase())
   .filter(Boolean);
 
-// middleware to require admin
 function requireAdmin(req, res, next) {
   if (!req.session.user)
     return res.status(401).json({ success: false, message: "Not logged in" });
@@ -166,7 +167,6 @@ function requireAdmin(req, res, next) {
 // ===== ADMIN LOGIN / LOGOUT =====
 app.post("/api/admin/login", (req, res) => {
   const { username, password } = req.body;
-
   if (username === "Admin" && password === "FunDMe$123") {
     req.session.user = { name: "Admin", email: "admin@fundasmile.net", isAdmin: true };
     req.session.save((err) => {
@@ -182,9 +182,14 @@ app.post("/api/admin/logout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
 });
 
-// ===== Auth, Campaign, Waitlist, Donation, Admin routes stay unchanged below =====
+// ===== ADMIN ROUTES =====
 
-// ===== ADMIN: Get campaigns =====
+// Get live visitor count
+app.get("/api/admin/visitors", requireAdmin, (req, res) => {
+  res.json({ success: true, count: siteVisitors });
+});
+
+// Get campaigns
 app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
   try {
     const values = await getSheetValues(SPREADSHEET_IDS.campaigns, "Campaigns!A:I");
@@ -195,7 +200,7 @@ app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
       goal: row[3],
       description: row[4],
       category: row[5],
-      status: row[6],
+      status: row[6] ? row[6].toLowerCase() : "", // normalize for comparison
       createdAt: row[7],
       imageUrl: row[8] || "",
     }));
@@ -206,20 +211,16 @@ app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
   }
 });
 
-// ===== ADMIN: Update campaign status =====
+// Update campaign status
 app.put("/api/admin/campaign/:id/status", requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
-  if (!id || !status)
-    return res.status(400).json({ success: false, message: "Missing id or status" });
-
+  if (!id || !status) return res.status(400).json({ success: false, message: "Missing id or status" });
   try {
     const values = await getSheetValues(SPREADSHEET_IDS.campaigns, "Campaigns!A:I");
     const rows = values || [];
     const rowIndex = rows.findIndex((row) => row[0] === id);
-    if (rowIndex === -1)
-      return res.status(404).json({ success: false, message: "Campaign not found" });
-
+    if (rowIndex === -1) return res.status(404).json({ success: false, message: "Campaign not found" });
     rows[rowIndex][6] = status;
     const range = `Campaigns!A${rowIndex + 1}:I${rowIndex + 1}`;
     await sheets.spreadsheets.values.update({
@@ -235,7 +236,7 @@ app.put("/api/admin/campaign/:id/status", requireAdmin, async (req, res) => {
   }
 });
 
-// ===== ADMIN: Get donations =====
+// Get donations
 app.get("/api/admin/donations", requireAdmin, async (req, res) => {
   try {
     const values = await getSheetValues(SPREADSHEET_IDS.donations, "Donations!A:D");
@@ -252,7 +253,7 @@ app.get("/api/admin/donations", requireAdmin, async (req, res) => {
   }
 });
 
-// ===== ADMIN: Get users =====
+// Get users
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
     const values = await getSheetValues(SPREADSHEET_IDS.users, "Users!A:Z");
@@ -264,7 +265,7 @@ app.get("/api/admin/users", requireAdmin, async (req, res) => {
   }
 });
 
-// ===== ADMIN: Get waitlist =====
+// Get waitlist
 app.get("/api/admin/waitlist", requireAdmin, async (req, res) => {
   try {
     const values = await getSheetValues(SPREADSHEET_IDS.waitlist, "Waitlist!A:Z");
