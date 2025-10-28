@@ -29,7 +29,7 @@ const allowedOrigins = [
   "http://127.0.0.1:3000",
 ];
 
-// ===== CORS =====
+// ===== CORS FIX =====
 const corsOptions = {
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
@@ -41,14 +41,31 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "Set-Cookie"],
 };
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Credentials", "true");
+  }
+  next();
+});
+
 app.use(cors(corsOptions));
+
 app.options("*", (req, res) => {
-  res.header("Access-Control-Allow-Origin", req.headers.origin);
-  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.header("Access-Control-Allow-Credentials", "true");
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+    res.header(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, Set-Cookie"
+    );
+    res.header("Access-Control-Allow-Credentials", "true");
+  }
   res.sendStatus(200);
 });
 
@@ -222,11 +239,10 @@ app.post("/api/signup", async (req, res) => {
       return res.status(400).json({ success: false, message: "Email already registered" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const joinDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    const joinDate = new Date().toISOString().split("T")[0];
 
     await saveToSheet(SPREADSHEET_IDS.users, "Users", [joinDate, name, email, hashedPassword]);
 
-    // Log in immediately
     req.session.user = { name, email, isAdmin: false };
     req.session.save(err => {
       if (err) return res.status(500).json({ success: false, message: "Session error" });
@@ -237,9 +253,6 @@ app.post("/api/signup", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
-// ===== ADMIN ROUTES =====
-// ... all admin routes remain the same
 
 // ===== Catch-all API 404 =====
 app.all("/api/*", (req, res) =>
