@@ -62,9 +62,9 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      secure: process.env.NODE_ENV === "production", // HTTPS required in production
       httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // "none" for cross-site cookies in production
       maxAge: 1000 * 60 * 60 * 24 * 30, // persist 30 days until logout
     },
   })
@@ -158,9 +158,14 @@ function requireAdmin(req, res, next) {
 // ===== ADMIN LOGIN / LOGOUT =====
 app.post("/api/admin/login", (req, res) => {
   const { username, password } = req.body;
+
   if (username === "Admin" && password === "FunDMe$123") {
     req.session.user = { name: "Admin", email: "admin@fundasmile.net", isAdmin: true };
-    req.session.save(() => res.json({ success: true }));
+    // save session and respond
+    req.session.save((err) => {
+      if (err) return res.status(500).json({ success: false, message: "Session error" });
+      res.json({ success: true });
+    });
   } else {
     res.status(401).json({ success: false, message: "Invalid credentials" });
   }
