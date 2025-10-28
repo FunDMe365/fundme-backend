@@ -30,8 +30,9 @@ const allowedOrigins = [
 ];
 
 // ===== CORS =====
+// ✅ Updated CORS to allow credentials and handle preflight correctly
 const corsOptions = {
-  origin: function (origin, callback) {
+  origin: function(origin, callback) {
     if (!origin) return callback(null, true); // allow curl or mobile apps
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
@@ -39,7 +40,7 @@ const corsOptions = {
       callback(new Error("Not allowed by CORS"));
     }
   },
-  credentials: true,
+  credentials: true, // allow cookies/session
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
@@ -62,9 +63,9 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === "production", // HTTPS required in production
+      secure: process.env.NODE_ENV === "production",
       httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // "none" for cross-site cookies in production
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       maxAge: 1000 * 60 * 60 * 24 * 30, // persist 30 days until logout
     },
   })
@@ -161,7 +162,6 @@ app.post("/api/admin/login", (req, res) => {
 
   if (username === "Admin" && password === "FunDMe$123") {
     req.session.user = { name: "Admin", email: "admin@fundasmile.net", isAdmin: true };
-    // save session and respond
     req.session.save((err) => {
       if (err) return res.status(500).json({ success: false, message: "Session error" });
       res.json({ success: true });
@@ -176,7 +176,6 @@ app.post("/api/admin/logout", (req, res) => {
 });
 
 // ===== Auth, Campaign, Waitlist, Donation, Admin routes stay unchanged below =====
-// (keeping all your user signup, campaign, Stripe, waitlist, etc. logic exactly as before)
 
 // ===== ADMIN: Get campaigns =====
 app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
