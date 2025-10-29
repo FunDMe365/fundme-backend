@@ -79,7 +79,7 @@ const SPREADSHEET_IDS = {
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
   volunteers: "1fCvuVLlPr1UzPaUhIkWMiQyC0pOGkBkYo-KkPshwW7s",
-  iD_Verifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
+  iD_Verifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0", // ✅ Correct sheet for ID Verification
 };
 
 // ===== SendGrid =====
@@ -131,15 +131,17 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // ===== EXISTING ENDPOINTS =====
-// ... (all your existing signup, signin, check-session, signout, volunteer, waitlist, campaign submission, donation, verify-id, etc.) ...
+// ... all your signup, signin, check-session, signout, volunteer, waitlist, campaign, donate, verify-id endpoints remain unchanged ...
 
-// ===== NEW ENDPOINT: Get ID Verifications =====
+// ===== NEW ENDPOINT: Get ID Verifications for Dashboard =====
 app.get("/api/get-verifications", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
   try {
     const values = await getSheetValues(SPREADSHEET_IDS.iD_Verifications, "ID_Verifications!A:E");
     const allVerifications = rowsToObjects(values);
-    const userVerifications = allVerifications.filter(v => v.Email.toLowerCase() === req.session.user.email.toLowerCase());
+    const userVerifications = allVerifications.filter(
+      (v) => v.Email.toLowerCase() === req.session.user.email.toLowerCase()
+    );
     res.json({ success: true, verifications: userVerifications });
   } catch (err) {
     console.error("get-verifications error:", err);
@@ -147,18 +149,18 @@ app.get("/api/get-verifications", async (req, res) => {
   }
 });
 
-// ===== NEW ENDPOINT: Get User Campaigns =====
+// ===== NEW ENDPOINT: Get User Campaigns for Dashboard =====
 app.get("/api/campaigns", async (req, res) => {
   if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
   try {
     const values = await getSheetValues(SPREADSHEET_IDS.campaigns, "Campaigns!A:H");
     const allCampaigns = rowsToObjects(values);
     const userCampaigns = allCampaigns
-      .filter(c => c.Email.toLowerCase() === req.session.user.email.toLowerCase())
-      .map(c => ({
+      .filter((c) => c.Email.toLowerCase() === req.session.user.email.toLowerCase())
+      .map((c) => ({
         title: c.Title || "",
         status: c.Status || "Pending",
-        imageUrl: c.ImageUrl || ""
+        imageUrl: c.ImageUrl || "",
       }));
     res.json({ success: true, campaigns: userCampaigns });
   } catch (err) {
