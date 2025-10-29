@@ -311,14 +311,16 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
     return res.status(401).json({ success: false, message: "Not logged in" });
 
   const user = req.session.user;
-  if (!req.file) return res.status(400).json({ success: false, message: "No ID photo uploaded" });
+  if (!req.file)
+    return res.status(400).json({ success: false, message: "No ID photo uploaded" });
 
   try {
     const date = new Date().toLocaleString();
     const imageUrl = `/uploads/${req.file.filename}`;
     const status = "Pending";
 
-    await saveToSheet(SPREADSHEET_IDS.verifications, "ID_Verification", [
+    // Use the correct SPREADSHEET_IDS key
+    await saveToSheet(SPREADSHEET_IDS.iD_Verifications, "ID_Verification", [
       date,
       user.email,
       user.name,
@@ -332,6 +334,7 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
     res.status(500).json({ success: false, message: "Error saving verification" });
   }
 });
+
 
 // ===== Catch-all =====
 app.all("/api/*", (req, res) =>
