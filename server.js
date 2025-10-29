@@ -1,4 +1,4 @@
-require("dotenv").config();
+idrequire("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
@@ -319,6 +319,11 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
     const imageUrl = `/uploads/${req.file.filename}`;
     const status = "Pending";
 
+    console.log("Saving to sheet ID_Verifications:", {
+      sheetId: SPREADSHEET_IDS.idVerifications,
+      values: [date, user.email, user.name, status, imageUrl],
+    });
+
     await saveToSheet(SPREADSHEET_IDS.idVerifications, "ID_Verifications", [
       date,
       user.email,
@@ -329,10 +334,15 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
 
     res.json({ success: true, message: "ID submitted successfully", imageUrl, status });
   } catch (err) {
-    console.error("ID verification error:", err.response?.data || err.message || err);
-    res.status(500).json({ success: false, message: "Error saving verification", error: err.message });
+    console.error("ID verification error full:", err.response?.data || err);
+    res.status(500).json({
+      success: false,
+      message: "Error saving verification",
+      error: err.response?.data || err.message || err,
+    });
   }
 });
+
 
 // ===== Catch-all =====
 app.all("/api/*", (req, res) =>
