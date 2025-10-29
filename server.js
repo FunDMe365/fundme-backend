@@ -79,7 +79,7 @@ const SPREADSHEET_IDS = {
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
   volunteers: "1fCvuVLlPr1UzPaUhIkWMiQyC0pOGkBkYo-KkPshwW7s",
-  idVerifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
+  iD_Verifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0", // ✅ Correct sheet for ID Verification
 };
 
 // ===== SendGrid =====
@@ -306,25 +306,20 @@ app.post("/api/donate", async (req, res) => {
 });
 
 // ===== ID VERIFICATION =====
-app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
+app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   if (!req.session.user)
     return res.status(401).json({ success: false, message: "Not logged in" });
 
   const user = req.session.user;
   if (!req.file)
-    return res.status(400).json({ success: false, message: "No ID photo uploaded" });
+    return res.status(400).json({ success: false, message: "No ID file uploaded" });
 
   try {
     const date = new Date().toLocaleString();
     const imageUrl = `/uploads/${req.file.filename}`;
     const status = "Pending";
 
-    console.log("Saving to sheet ID_Verifications:", {
-      sheetId: SPREADSHEET_IDS.idVerifications,
-      values: [date, user.email, user.name, status, imageUrl],
-    });
-
-    await saveToSheet(SPREADSHEET_IDS.idVerifications, "ID_Verifications", [
+    await saveToSheet(SPREADSHEET_IDS.iD_Verifications, "ID_Verifications", [
       date,
       user.email,
       user.name,
@@ -334,15 +329,10 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
 
     res.json({ success: true, message: "ID submitted successfully", imageUrl, status });
   } catch (err) {
-    console.error("ID verification error full:", err.response?.data || err);
-    res.status(500).json({
-      success: false,
-      message: "Error saving verification",
-      error: err.response?.data || err.message || err,
-    });
+    console.error("ID verification error:", err);
+    res.status(500).json({ success: false, message: "Error saving verification" });
   }
 });
-
 
 // ===== Catch-all =====
 app.all("/api/*", (req, res) =>
