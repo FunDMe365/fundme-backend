@@ -79,7 +79,7 @@ const SPREADSHEET_IDS = {
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
   volunteers: "1fCvuVLlPr1UzPaUhIkWMiQyC0pOGkBkYo-KkPshwW7s",
-  iD_Verifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0", // ✅ Correct sheet for ID Verification
+  iD_Verifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
 };
 
 // ===== SendGrid =====
@@ -130,207 +130,40 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ===== USER SIGNUP =====
-app.post("/api/signup", async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password)
-    return res.status(400).json({ success: false, message: "Missing fields" });
+// ===== EXISTING ENDPOINTS =====
+// ... (all your existing signup, signin, check-session, signout, volunteer, waitlist, campaign submission, donation, verify-id, etc.) ...
 
+// ===== NEW ENDPOINT: Get ID Verifications =====
+app.get("/api/get-verifications", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
   try {
-    const values = await getSheetValues(SPREADSHEET_IDS.users, "Users!A:D");
-    const users = rowsToObjects(values);
-
-    if (users.find((u) => u.Email.toLowerCase() === email.toLowerCase())) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email already registered" });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const joinDate = new Date().toISOString().split("T")[0];
-
-    await saveToSheet(SPREADSHEET_IDS.users, "Users", [
-      joinDate,
-      name,
-      email,
-      hashedPassword,
-    ]);
-
-    req.session.user = { name, email, isAdmin: false };
-    req.session.save((err) => {
-      if (err)
-        return res.status(500).json({ success: false, message: "Session error" });
-      res.json({ success: true, user: { name, email } });
-    });
+    const values = await getSheetValues(SPREADSHEET_IDS.iD_Verifications, "ID_Verifications!A:E");
+    const allVerifications = rowsToObjects(values);
+    const userVerifications = allVerifications.filter(v => v.Email.toLowerCase() === req.session.user.email.toLowerCase());
+    res.json({ success: true, verifications: userVerifications });
   } catch (err) {
-    console.error("signup error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("get-verifications error:", err);
+    res.status(500).json({ success: false, message: "Error fetching verifications" });
   }
 });
 
-// ===== USER SIGNIN =====
-app.post("/api/signin", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ success: false, message: "Missing email or password" });
-
+// ===== NEW ENDPOINT: Get User Campaigns =====
+app.get("/api/campaigns", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
   try {
-    const values = await getSheetValues(SPREADSHEET_IDS.users, "Users!A:D");
-    const users = rowsToObjects(values);
-
-    const user = users.find((u) => u.Email.toLowerCase() === email.toLowerCase());
-    if (!user)
-      return res.status(401).json({ success: false, message: "Invalid email or password" });
-
-    const match = await bcrypt.compare(password, user.PasswordHash || "");
-    if (!match)
-      return res.status(401).json({ success: false, message: "Invalid email or password" });
-
-    req.session.user = { name: user.Name, email: user.Email, isAdmin: false };
-    req.session.save((err) => {
-      if (err)
-        return res.status(500).json({ success: false, message: "Session error" });
-      res.json({ success: true, user: { name: user.Name, email: user.Email } });
-    });
+    const values = await getSheetValues(SPREADSHEET_IDS.campaigns, "Campaigns!A:H");
+    const allCampaigns = rowsToObjects(values);
+    const userCampaigns = allCampaigns
+      .filter(c => c.Email.toLowerCase() === req.session.user.email.toLowerCase())
+      .map(c => ({
+        title: c.Title || "",
+        status: c.Status || "Pending",
+        imageUrl: c.ImageUrl || ""
+      }));
+    res.json({ success: true, campaigns: userCampaigns });
   } catch (err) {
-    console.error("signin error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-// ===== CHECK SESSION =====
-app.get("/api/check-session", (req, res) => {
-  if (req.session.user) {
-    res.json({ loggedIn: true, user: req.session.user });
-  } else {
-    res.json({ loggedIn: false });
-  }
-});
-
-// ===== SIGNOUT =====
-app.post("/api/signout", (req, res) => {
-  req.session.destroy((err) => {
-    if (err) return res.status(500).json({ success: false, message: "Logout failed" });
-    res.clearCookie("connect.sid");
-    res.json({ success: true });
-  });
-});
-
-// ===== VOLUNTEER / STREET TEAM =====
-app.post("/api/volunteer", async (req, res) => {
-  const { name, email, city, state, reason } = req.body;
-  if (!name || !email)
-    return res.status(400).json({ success: false, message: "Missing name or email" });
-
-  try {
-    const date = new Date().toLocaleString();
-    await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [
-      date,
-      name,
-      email,
-      city || "",
-      state || "",
-      reason || "",
-    ]);
-    res.json({ success: true, message: "Volunteer submission received!" });
-  } catch (err) {
-    console.error("Volunteer error:", err);
-    res.status(500).json({ success: false, message: "Error saving volunteer" });
-  }
-});
-
-// ===== WAITLIST =====
-app.post("/api/waitlist", async (req, res) => {
-  const { name, email, source, reason } = req.body;
-  if (!name || !email)
-    return res.status(400).json({ success: false, message: "Missing name or email" });
-
-  try {
-    const date = new Date().toLocaleString();
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
-      date,
-      name,
-      email,
-      source || "",
-      reason || "",
-    ]);
-    res.json({ success: true, message: "Added to waitlist!" });
-  } catch (err) {
-    console.error("Waitlist error:", err);
-    res.status(500).json({ success: false, message: "Error saving to sheet" });
-  }
-});
-
-// ===== CAMPAIGN SUBMISSION =====
-app.post("/api/campaigns", upload.single("image"), async (req, res) => {
-  const { name, email, title, description, goal } = req.body;
-  const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
-
-  try {
-    const date = new Date().toLocaleString();
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      date,
-      name,
-      email,
-      title,
-      description,
-      goal,
-      imageUrl,
-      "Pending",
-    ]);
-    res.json({ success: true, message: "Campaign submitted successfully" });
-  } catch (err) {
-    console.error("Campaign error:", err);
-    res.status(500).json({ success: false, message: "Error saving campaign" });
-  }
-});
-
-// ===== DONATION =====
-app.post("/api/donate", async (req, res) => {
-  const { amount, email } = req.body;
-  if (!amount || !email)
-    return res.status(400).json({ success: false, message: "Missing fields" });
-
-  try {
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount * 100),
-      currency: "usd",
-      receipt_email: email,
-      description: "JoyFund Donation",
-    });
-    res.json({ success: true, clientSecret: paymentIntent.client_secret });
-  } catch (err) {
-    console.error("Stripe error:", err);
-    res.status(500).json({ success: false, message: "Payment failed" });
-  }
-});
-
-// ===== ID VERIFICATION =====
-app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, message: "Not logged in" });
-
-  const user = req.session.user;
-  if (!req.file)
-    return res.status(400).json({ success: false, message: "No ID file uploaded" });
-
-  try {
-    const date = new Date().toLocaleString();
-    const imageUrl = `/uploads/${req.file.filename}`;
-    const status = "Pending";
-
-    await saveToSheet(SPREADSHEET_IDS.iD_Verifications, "ID_Verifications", [
-      date,
-      user.email,
-      user.name,
-      status,
-      imageUrl,
-    ]);
-
-    res.json({ success: true, message: "ID submitted successfully", imageUrl, status });
-  } catch (err) {
-    console.error("ID verification error:", err);
-    res.status(500).json({ success: false, message: "Error saving verification" });
+    console.error("campaigns error:", err);
+    res.status(500).json({ success: false, message: "Error fetching campaigns" });
   }
 });
 
