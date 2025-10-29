@@ -28,7 +28,6 @@ const allowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
 ];
-
 app.use(
   cors({
     origin: (origin, callback) => {
@@ -79,6 +78,7 @@ const SPREADSHEET_IDS = {
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
   volunteers: "1fCvuVLlPr1UzPaUhIkWMiQyC0pOGkBkYo-KkPshwW7s",
+  verifications: "1abcd1234VerificationSheetID", // Add your actual Google Sheet ID for ID verification
 };
 
 // ===== SendGrid =====
@@ -215,88 +215,51 @@ app.post("/api/signout", (req, res) => {
   });
 });
 
-// ===== VOLUNTEER / STREET TEAM =====
-app.post("/api/volunteer", async (req, res) => {
-  const { name, email, city, state, reason } = req.body;
-  if (!name || !email)
-    return res.status(400).json({ success: false, message: "Missing name or email" });
+// ===== ID VERIFICATION SUBMISSION =====
+app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, message: "Not signed in" });
+  const { name, email } = req.session.user;
+
+  if (!req.file)
+    return res.status(400).json({ success: false, message: "No ID image uploaded" });
+
+  const imageUrl = `/uploads/${req.file.filename}`;
+  const status = "Pending";
+  const date = new Date().toLocaleString();
 
   try {
-    const date = new Date().toLocaleString();
-    await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [
+    await saveToSheet(SPREADSHEET_IDS.verifications, "Verifications", [
       date,
       name,
       email,
-      city || "",
-      state || "",
-      reason || "",
-    ]);
-    res.json({ success: true, message: "Volunteer submission received!" });
-  } catch (err) {
-    console.error("Volunteer error:", err);
-    res.status(500).json({ success: false, message: "Error saving volunteer" });
-  }
-});
-
-// ===== WAITLIST =====
-app.post("/api/waitlist", async (req, res) => {
-  const { name, email, source, reason } = req.body;
-  if (!name || !email)
-    return res.status(400).json({ success: false, message: "Missing name or email" });
-
-  try {
-    const date = new Date().toLocaleString();
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [date, name, email, source || "", reason || ""]);
-    res.json({ success: true, message: "Added to waitlist!" });
-  } catch (err) {
-    console.error("Waitlist error:", err);
-    res.status(500).json({ success: false, message: "Error saving to sheet" });
-  }
-});
-
-// ===== CAMPAIGN SUBMISSION =====
-app.post("/api/campaigns", upload.single("image"), async (req, res) => {
-  const { name, email, title, description, goal } = req.body;
-  const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
-
-  try {
-    const date = new Date().toLocaleString();
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      date,
-      name,
-      email,
-      title,
-      description,
-      goal,
       imageUrl,
-      "Pending",
+      status,
     ]);
-    res.json({ success: true, message: "Campaign submitted successfully" });
+    res.json({ success: true, message: "ID submitted successfully", imageUrl, status });
   } catch (err) {
-    console.error("Campaign error:", err);
-    res.status(500).json({ success: false, message: "Error saving campaign" });
+    console.error("ID verification error:", err);
+    res.status(500).json({ success: false, message: "Error saving verification" });
   }
 });
 
-// ===== DONATION =====
-app.post("/api/donate", async (req, res) => {
-  const { amount, email } = req.body;
-  if (!amount || !email)
-    return res.status(400).json({ success: false, message: "Missing fields" });
+// ===== GET USER VERIFICATIONS =====
+app.get("/api/get-verifications", async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, message: "Not signed in" });
+  const { email } = req.session.user;
 
   try {
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount * 100),
-      currency: "usd",
-      receipt_email: email,
-      description: "JoyFund Donation",
-    });
-    res.json({ success: true, clientSecret: paymentIntent.client_secret });
+    const values = await getSheetValues(SPREADSHEET_IDS.verifications, "Verifications!A:E");
+    const allVerifications = rowsToObjects(values);
+    const userVerifications = allVerifications.filter(v => v.Email === email);
+    res.json({ success: true, verifications: userVerifications });
   } catch (err) {
-    console.error("Stripe error:", err);
-    res.status(500).json({ success: false, message: "Payment failed" });
+    console.error("Get verifications error:", err);
+    res.status(500).json({ success: false, message: "Error fetching verifications" });
   }
 });
+
+// ===== Other existing routes (volunteer, waitlist, campaigns, donations) =====
+// ... Keep your previous /api/volunteer, /api/waitlist, /api/campaigns, /api/donate routes intact
 
 // ===== Catch-all =====
 app.all("/api/*", (req, res) =>
