@@ -78,6 +78,7 @@ const SPREADSHEET_IDS = {
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
+  volunteers: "1fCvuVLlPr1UzPaUhIkWMiQyC0pOGkBkYo-KkPshwW7s", // add your volunteer sheet ID
 };
 
 // ===== SendGrid =====
@@ -196,15 +197,38 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-// ===== WAITLIST =====
-app.post("/api/waitlist", async (req, res) => {
-  const { name, email } = req.body;
+// ===== VOLUNTEER / STREET TEAM =====
+app.post("/api/volunteer", async (req, res) => {
+  const { name, email, city, state, reason } = req.body;
   if (!name || !email)
     return res.status(400).json({ success: false, message: "Missing name or email" });
 
   try {
     const date = new Date().toLocaleString();
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [date, name, email]);
+    await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [
+      date,
+      name,
+      email,
+      city || "",
+      state || "",
+      reason || "",
+    ]);
+    res.json({ success: true, message: "Volunteer submission received!" });
+  } catch (err) {
+    console.error("Volunteer error:", err);
+    res.status(500).json({ success: false, message: "Error saving volunteer" });
+  }
+});
+
+// ===== WAITLIST =====
+app.post("/api/waitlist", async (req, res) => {
+  const { name, email, source, reason } = req.body;
+  if (!name || !email)
+    return res.status(400).json({ success: false, message: "Missing name or email" });
+
+  try {
+    const date = new Date().toLocaleString();
+    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [date, name, email, source || "", reason || ""]);
     res.json({ success: true, message: "Added to waitlist!" });
   } catch (err) {
     console.error("Waitlist error:", err);
