@@ -79,7 +79,7 @@ const SPREADSHEET_IDS = {
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
   volunteers: "1fCvuVLlPr1UzPaUhIkWMiQyC0pOGkBkYo-KkPshwW7s",
-  iD_Verifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0", // replace with your sheet ID
+  idVerifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
 };
 
 // ===== SendGrid =====
@@ -319,8 +319,7 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
     const imageUrl = `/uploads/${req.file.filename}`;
     const status = "Pending";
 
-    // Use the correct SPREADSHEET_IDS key
-    await saveToSheet(SPREADSHEET_IDS.iD_Verifications, "ID_Verification", [
+    await saveToSheet(SPREADSHEET_IDS.idVerifications, "ID_Verifications", [
       date,
       user.email,
       user.name,
@@ -330,11 +329,10 @@ app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
 
     res.json({ success: true, message: "ID submitted successfully", imageUrl, status });
   } catch (err) {
-    console.error("ID verification error:", err);
-    res.status(500).json({ success: false, message: "Error saving verification" });
+    console.error("ID verification error:", err.response?.data || err.message || err);
+    res.status(500).json({ success: false, message: "Error saving verification", error: err.message });
   }
 });
-
 
 // ===== Catch-all =====
 app.all("/api/*", (req, res) =>
