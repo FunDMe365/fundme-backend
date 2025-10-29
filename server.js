@@ -78,7 +78,7 @@ const SPREADSHEET_IDS = {
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
-  volunteers: "1fCvuVLlPr1UzPaUhIkWMiQyC0pOGkBkYo-KkPshwW7s", // add your volunteer sheet ID
+  volunteers: "1fCvuVLlPr1UzPaUhIkWMiQyC0pOGkBkYo-KkPshwW7s",
 };
 
 // ===== SendGrid =====
@@ -195,6 +195,24 @@ app.post("/api/signin", async (req, res) => {
     console.error("signin error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
+});
+
+// ===== CHECK SESSION =====
+app.get("/api/check-session", (req, res) => {
+  if (req.session.user) {
+    res.json({ loggedIn: true, user: req.session.user });
+  } else {
+    res.json({ loggedIn: false });
+  }
+});
+
+// ===== SIGNOUT =====
+app.post("/api/signout", (req, res) => {
+  req.session.destroy((err) => {
+    if (err) return res.status(500).json({ success: false, message: "Logout failed" });
+    res.clearCookie("connect.sid");
+    res.json({ success: true });
+  });
 });
 
 // ===== VOLUNTEER / STREET TEAM =====
