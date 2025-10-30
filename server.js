@@ -317,9 +317,11 @@ app.post("/api/donations", async (req, res) => {
   }
 });
 
-app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
-  const { campaignId } = req.params;
-  const { amount, donorEmail } = req.body;
+// ===== CREATE CHECKOUT SESSION FOR GENERAL DONATIONS =====
+app.post("/api/create-checkout-session/mission", async (req, res) => {
+  const { amount } = req.body;
+  if (!amount) return res.status(400).json({ success: false, message: "Missing donation amount" });
+
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -327,21 +329,21 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
         {
           price_data: {
             currency: "usd",
-            product_data: { name: `Donation to Campaign ${campaignId}` },
+            product_data: { name: "General Donation to JoyFund" },
             unit_amount: Math.round(amount * 100),
           },
           quantity: 1,
         },
       ],
       mode: "payment",
-      success_url: `${process.env.FRONTEND_URL || "https://fundasmile.net"}/success.html`,
-      cancel_url: `${process.env.FRONTEND_URL || "https://fundasmile.net"}/cancel.html`,
-      customer_email: donorEmail,
+      success_url: `${process.env.FRONTEND_URL || "https://fundasmile.net"}/thank-you.html`,
+      cancel_url: `${process.env.FRONTEND_URL || "https://fundasmile.net"}/`,
     });
-    res.json({ url: session.url });
+
+    res.json({ success: true, sessionId: session.id });
   } catch (err) {
     console.error("Checkout session error:", err);
-    res.status(500).json({ success: false, message: "Error creating checkout session" });
+    res.status(500).json({ success: false, message: "Checkout session failed" });
   }
 });
 
