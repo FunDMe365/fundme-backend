@@ -29,7 +29,7 @@ const allowedOrigins = [
 ];
 
 // ===== CORS =====
-const corsOptions = {
+app.use(cors({
   origin: function(origin, callback) {
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) callback(null, true);
@@ -38,9 +38,8 @@ const corsOptions = {
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
-};
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
+}));
+app.options("*", cors());
 
 // ===== Middleware =====
 app.use(bodyParser.json());
@@ -48,19 +47,17 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // ===== Session =====
 app.set("trust proxy", 1);
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "supersecretkey",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
-    },
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || "supersecretkey",
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24 * 30, 
+  },
+}));
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -75,25 +72,8 @@ const SPREADSHEET_IDS = {
   campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
   donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
-  volunteers: "1O_y1yDiYfO0RT8eGwBMtaiPWYYvSR8jIDIdZkZPlvNA",
+  idVerifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
 };
-
-async function fetchSheet(sheetId, range) {
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range,
-  });
-  return res.data.values || [];
-}
-
-async function appendSheet(sheetId, range, values) {
-  return sheets.spreadsheets.values.append({
-    spreadsheetId: sheetId,
-    range,
-    valueInputOption: "RAW",
-    requestBody: { values: [values] },
-  });
-}
 
 // ===== SendGrid =====
 if (process.env.SENDGRID_API_KEY) sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -107,23 +87,30 @@ const sendEmail = async ({ to, subject, text, html }) => {
   }
 };
 
+// ===== Helper Functions =====
+async function saveToSheet(sheetId, sheetName, values) {
+  return sheets.spreadsheets.values.append({
+    spreadsheetId: sheetId,
+    range: `${sheetName}!A:Z`,
+    valueInputOption: "RAW",
+    requestBody: { values: [values] },
+  });
+}
+
 // ===== Multer =====
 const storage = multer.diskStorage({
   destination: uploadsDir,
-  filename: (req, file, cb) =>
-    cb(null, `${Date.now()}${path.extname(file.originalname)}`),
+  filename: (req, file, cb) => cb(null, `${Date.now()}${path.extname(file.originalname)}`),
 });
 const upload = multer({ storage });
 
 // ===== Admin Credentials =====
 const ADMIN_CREDENTIALS = {
   username: "Admin",
-  password: "FunDMe$123",
+  password: "FunDMe$123"
 };
 
 // ===== Admin Routes =====
-
-// Serve admin page if logged in, otherwise login page
 app.get("/admin", (req, res) => {
   if (req.session.isAdmin) {
     res.sendFile(path.join(__dirname, "public/admin.html"));
@@ -132,12 +119,10 @@ app.get("/admin", (req, res) => {
   }
 });
 
-// Check admin session
 app.get("/admin-session", (req, res) => {
   res.json({ isAdmin: !!req.session.isAdmin });
 });
 
-// Admin login
 app.post("/admin-login", (req, res) => {
   const { username, password } = req.body;
   if (
@@ -145,98 +130,75 @@ app.post("/admin-login", (req, res) => {
     password === ADMIN_CREDENTIALS.password
   ) {
     req.session.isAdmin = true;
-    res.json({ success: true });
+    return res.json({ success: true });
   } else {
-    res.status(401).json({ success: false, message: "Invalid credentials" });
+    return res.status(401).json({ success: false, message: "Invalid credentials" });
   }
 });
 
-// Admin logout
 app.post("/admin-logout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
-});
-
-// ===== Middleware to protect admin APIs =====
-function requireAdmin(req, res, next) {
-  if (req.session.isAdmin) next();
-  else res.status(401).json({ success: false, message: "Unauthorized" });
-}
-
-// ===== Admin API routes =====
-app.get("/api/admin/users", requireAdmin, async (req, res) => {
-  try {
-    const vals = await fetchSheet(SPREADSHEET_IDS.users, "Sheet1!A:Z");
-    const headers = vals[0] || [];
-    const rows = vals.slice(1).map((r) =>
-      Object.fromEntries(r.map((v, i) => [headers[i] || `col${i}`, v]))
-    );
-    res.json({ users: rows });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
-  try {
-    const vals = await fetchSheet(SPREADSHEET_IDS.volunteers, "Sheet1!A:Z");
-    const headers = vals[0] || [];
-    const rows = vals.slice(1).map((r) =>
-      Object.fromEntries(r.map((v, i) => [headers[i] || `col${i}`, v]))
-    );
-    res.json({ volunteers: rows });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get("/api/admin/waitlist", requireAdmin, async (req, res) => {
-  try {
-    const vals = await fetchSheet(SPREADSHEET_IDS.waitlist, "Sheet1!A:Z");
-    const headers = vals[0] || [];
-    const rows = vals.slice(1).map((r) =>
-      Object.fromEntries(r.map((v, i) => [headers[i] || `col${i}`, v]))
-    );
-    res.json({ waitlist: rows });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Stub campaigns & donations endpoints for admin dashboard
-app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
-  try {
-    const vals = await fetchSheet(SPREADSHEET_IDS.campaigns, "Sheet1!A:Z");
-    const headers = vals[0] || [];
-    const rows = vals.slice(1).map((r) =>
-      Object.fromEntries(r.map((v, i) => [headers[i] || `col${i}`, v]))
-    );
-    res.json({ campaigns: rows });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.put("/api/admin/campaign/:id/status", requireAdmin, async (req, res) => {
-  // Implement your campaign status update logic here
-  res.json({ success: true });
-});
-
-app.get("/api/admin/donations", requireAdmin, async (req, res) => {
-  try {
-    const vals = await fetchSheet(SPREADSHEET_IDS.donations, "Sheet1!A:Z");
-    const headers = vals[0] || [];
-    const rows = vals.slice(1).map((r) =>
-      Object.fromEntries(r.map((v, i) => [headers[i] || `col${i}`, v]))
-    );
-    res.json({ donations: rows });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
 });
 
 // ===== Serve static files =====
 app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(path.join(__dirname, "public")));
+
+// ===== Example existing backend routes =====
+// Waitlist
+app.get("/api/waitlist", async (req, res) => {
+  try {
+    const vals = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.waitlist,
+      range: "Sheet1!A:Z",
+    });
+    res.json({ waitlist: vals.data.values || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Users
+app.get("/api/users", async (req, res) => {
+  try {
+    const vals = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.users,
+      range: "Sheet1!A:Z",
+    });
+    res.json({ users: vals.data.values || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Campaigns
+app.get("/api/admin/campaigns", async (req, res) => {
+  if (!req.session.isAdmin) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    const vals = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.campaigns,
+      range: "Sheet1!A:Z",
+    });
+    res.json({ campaigns: vals.data.values || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Donations
+app.get("/api/admin/donations", async (req, res) => {
+  if (!req.session.isAdmin) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    const vals = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_IDS.donations,
+      range: "Sheet1!A:Z",
+    });
+    res.json({ donations: vals.data.values || [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Update Campaign Status
+app.put("/api/admin/campaign/:id/status", async (req, res) => {
+  if (!req.session.isAdmin) return res.status(401).json({ error: "Unauthorized" });
+  const { id } = req.params;
+  const { status } = req.body;
+  // Placeholder: Implement your sheet update logic here
+  res.json({ success: true, message: `Campaign ${id} set to ${status}` });
+});
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
