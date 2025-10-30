@@ -52,19 +52,17 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // ===== Session =====
 app.set("trust proxy", 1);
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "supersecretkey",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
-    },
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || "supersecretkey",
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24 * 30, 
+  },
+}));
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -114,18 +112,27 @@ const upload = multer({ storage });
 // ===== Admin Credentials =====
 const ADMIN_CREDENTIALS = {
   username: "Admin",
-  password: "FunDMe$123",
+  password: "FunDMe$123"
 };
+
+// ===== Serve static files first =====
+app.use("/uploads", express.static(uploadsDir));
+app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Admin Routes =====
 
-// Serve admin-login.html if not signed in
+// Serve admin login page or dashboard
 app.get("/admin", (req, res) => {
   if (req.session.isAdmin) {
     res.sendFile(path.join(__dirname, "public/admin.html"));
   } else {
     res.sendFile(path.join(__dirname, "public/admin-login.html"));
   }
+});
+
+// Admin session check
+app.get("/admin-session", (req, res) => {
+  res.json({ loggedIn: !!req.session.isAdmin });
 });
 
 // Admin login POST
@@ -142,37 +149,13 @@ app.post("/admin-login", (req, res) => {
   }
 });
 
-// Admin logout POST
+// Admin logout
 app.post("/admin-logout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
 });
 
-// API endpoint to check admin session
-app.get("/api/check-admin-session", (req, res) => {
-  res.json({ isAdmin: !!req.session.isAdmin });
-});
-
-// ===== Serve static files =====
-app.use("/uploads", express.static(uploadsDir));
-app.use(express.static(path.join(__dirname, "public")));
-
-// ===== Protect all admin API routes =====
-app.use("/api/admin", (req, res, next) => {
-  if (!req.session.isAdmin) return res.status(401).json({ success: false, message: "Unauthorized" });
-  next();
-});
-
-// ===== Existing backend routes go here =====
-// Example placeholders (replace with your actual logic)
-app.get("/api/admin/campaigns", (req, res) => {
-  // your campaigns fetch logic
-  res.json({ campaigns: [] });
-});
-
-app.get("/api/admin/donations", (req, res) => {
-  // your donations fetch logic
-  res.json({ donations: [] });
-});
+// ===== Other routes (users/campaigns/donations/etc.) =====
+// Keep all your current backend routes here exactly as they are
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
