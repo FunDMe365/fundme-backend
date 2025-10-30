@@ -115,24 +115,15 @@ const ADMIN_CREDENTIALS = {
   password: "FunDMe$123"
 };
 
-// ===== Serve static files first =====
-app.use("/uploads", express.static(uploadsDir));
-app.use(express.static(path.join(__dirname, "public")));
+// ===== ADMIN ROUTES FIXED =====
 
-// ===== Admin Routes =====
-
-// Serve admin login page or dashboard
+// Serve admin login page if not signed in
 app.get("/admin", (req, res) => {
   if (req.session.isAdmin) {
     res.sendFile(path.join(__dirname, "public/admin.html"));
   } else {
     res.sendFile(path.join(__dirname, "public/admin-login.html"));
   }
-});
-
-// Admin session check
-app.get("/admin-session", (req, res) => {
-  res.json({ loggedIn: !!req.session.isAdmin });
 });
 
 // Admin login POST
@@ -149,13 +140,25 @@ app.post("/admin-login", (req, res) => {
   }
 });
 
+// Admin session check
+app.get("/admin-session", (req, res) => {
+  res.json({ loggedIn: !!req.session.isAdmin });
+});
+
 // Admin logout
 app.post("/admin-logout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
 });
 
-// ===== Other routes (users/campaigns/donations/etc.) =====
-// Keep all your current backend routes here exactly as they are
+// ===== Serve static files AFTER admin routes =====
+app.use("/uploads", express.static(uploadsDir));
+app.use(express.static(path.join(__dirname, "public")));
+
+// ===== OTHER EXISTING ROUTES =====
+// Keep all your existing user/campaign/donation routes here
+// Example:
+// app.get("/api/users", ...)
+// app.post("/api/donation", ...)
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
