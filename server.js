@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
+const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
@@ -32,8 +33,11 @@ const allowedOrigins = [
 const corsOptions = {
   origin: function(origin, callback) {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) callback(null, true);
-    else callback(new Error("Not allowed by CORS"));
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -48,19 +52,17 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // ===== Session =====
 app.set("trust proxy", 1);
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "supersecretkey",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24 * 30,
-    },
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || "supersecretkey",
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === "production",
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24 * 30, 
+  },
+}));
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
@@ -110,26 +112,12 @@ const upload = multer({ storage });
 // ===== Admin Credentials =====
 const ADMIN_CREDENTIALS = {
   username: "Admin",
-  password: "FunDMe$123",
+  password: "FunDMe$123"
 };
 
-// ===== ADMIN ROUTES (must be above static middleware) =====
+// ===== Admin Routes =====
 
-// Serve admin page if session exists
-app.get("/admin", (req, res) => {
-  if (req.session.isAdmin) {
-    res.sendFile(path.join(__dirname, "public/admin.html"));
-  } else {
-    res.sendFile(path.join(__dirname, "public/admin-login.html"));
-  }
-});
-
-// Check admin session
-app.get("/admin-session", (req, res) => {
-  res.json({ isAdmin: !!req.session.isAdmin });
-});
-
-// Admin login
+// Admin login POST
 app.post("/admin-login", (req, res) => {
   const { username, password } = req.body;
   if (
@@ -148,22 +136,27 @@ app.post("/admin-logout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
 });
 
+// Admin session check
+app.get("/admin-session", (req, res) => {
+  res.json({ isAdmin: !!req.session.isAdmin });
+});
+
+// Serve admin pages
+app.get("/admin", (req, res) => {
+  if (req.session.isAdmin) {
+    res.sendFile(path.join(__dirname, "public/admin.html"));
+  } else {
+    res.sendFile(path.join(__dirname, "public/admin-login.html"));
+  }
+});
+
 // ===== Serve static files AFTER admin routes =====
 app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(path.join(__dirname, "public")));
 
-// ===== Other backend routes (keep existing API, Stripe, sheets, etc.) =====
-// Example placeholders — replace with your actual logic
-app.get("/api/users", async (req, res) => {
-  res.json({ users: [] });
-});
-app.get("/api/campaigns", async (req, res) => {
-  res.json({ campaigns: [] });
-});
-app.get("/api/donations", async (req, res) => {
-  res.json({ donations: [] });
-});
-// ... keep all other existing routes intact
+// ===== Your other existing routes here =====
+// e.g., /api/users, /api/campaigns, /api/donations, etc.
+// Keep everything unchanged
 
-// ===== Start server =====
+// ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
