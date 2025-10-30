@@ -231,15 +231,31 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
+// ===== CREATE CAMPAIGN =====
 app.post("/api/campaigns", upload.single("image"), async (req, res) => {
-  const { name, email, title, description, goal } = req.body;
-  const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
+  if (!req.session.user)
+    return res.status(401).json({ success: false, message: "You must be logged in to create a campaign." });
+
+  const { title, description, goal } = req.body;
+  if (!title || !description || !goal)
+    return res.status(400).json({ success: false, message: "Missing fields" });
+
   try {
+    // Check if user has an approved ID
+    const values = await getSheetValues(SPREADSHEET_IDS.iD_Verifications, "ID_Verifications!A:E");
+    const verifications = rowsToObjects(values);
+    const userVerification = verifications.find(
+      (v) => v.user_email.toLowerCase() === req.session.user.email.toLowerCase()
+    );
+    if (!userVerification || userVerification.status !== "Approved")
+      return res.status(403).json({ success: false, message: "You must have an approved ID to create a campaign." });
+
+    const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
     const date = new Date().toLocaleString();
     await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
       date,
-      name,
-      email,
+      req.session.user.name,
+      req.session.user.email,
       title,
       description,
       goal,
@@ -317,11 +333,8 @@ app.post("/api/donations", async (req, res) => {
   }
 });
 
-// ===== CREATE CHECKOUT SESSION FOR GENERAL DONATIONS =====
-app.post("/api/create-checkout-session/mission", async (req, res) => {
-  const { amount } = req.body;
-  if (!amount) return res.status(400).json({ success: false, message: "Missing donation amount" });
-
+app.post("/api/create-checkout-session/general", async (req, res) => {
+  const { amount, donorEmail } = req.body;
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
@@ -329,21 +342,21 @@ app.post("/api/create-checkout-session/mission", async (req, res) => {
         {
           price_data: {
             currency: "usd",
-            product_data: { name: "General Donation to JoyFund" },
+            product_data: { name: `General Donation to JoyFund` },
             unit_amount: Math.round(amount * 100),
           },
           quantity: 1,
         },
       ],
       mode: "payment",
-      success_url: `${process.env.FRONTEND_URL || "https://fundasmile.net"}/thank-you.html`,
-      cancel_url: `${process.env.FRONTEND_URL || "https://fundasmile.net"}/`,
+      success_url: `${process.env.FRONTEND_URL || "https://fundasmile.net"}/success.html`,
+      cancel_url: `${process.env.FRONTEND_URL || "https://fundasmile.net"}/cancel.html`,
+      customer_email: donorEmail,
     });
-
-    res.json({ success: true, sessionId: session.id });
+    res.json({ url: session.url });
   } catch (err) {
     console.error("Checkout session error:", err);
-    res.status(500).json({ success: false, message: "Checkout session failed" });
+    res.status(500).json({ success: false, message: "Error creating checkout session" });
   }
 });
 
