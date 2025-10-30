@@ -154,7 +154,7 @@ async function verifyUser(email, password) {
     const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
     const verified = verificationStatus === "Approved";
 
-    return { name: userRow[1], email: userRow[2], verified, verificationStatus };
+    return { name: userRow[1], email: userRow[2], verified, verificationStatus, isAdmin: userRow[4] === "true" };
   } catch (err) {
     console.error("verifyUser error:", err);
     return false;
@@ -174,7 +174,6 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
-// ===== Preflight fix for signin =====
 app.options("/api/signin", cors(corsOptions));
 
 app.post("/api/signin", async (req, res) => {
@@ -207,233 +206,15 @@ app.get("/api/check-session", (req, res) => {
   }
 });
 
-// ===== Get Verifications =====
-app.get("/api/get-verifications", async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "ID_Verifications!A:E",
-    });
-
-    const allVerifications = (data.values || [])
-      .filter(r => r[1]?.toLowerCase() === req.session.user.email.toLowerCase())
-      .map(r => ({
-        id: r[0],
-        email: r[1],
-        submittedAt: r[2],
-        status: r[3],
-        note: r[4] || "",
-      }));
-
-    res.json({ success: true, verifications: allVerifications });
-  } catch (err) {
-    console.error("get-verifications error:", err);
-    res.status(500).json({ success: false, verifications: [] });
+// ===== Serve Admin Page with Protection =====
+app.get("/admin", (req, res) => {
+  if (!req.session.user || !req.session.user.isAdmin) {
+    // If not signed in or not admin, show admin login page
+    return res.sendFile(path.join(__dirname, "public", "admin-login.html"));
   }
+  // Otherwise serve the normal admin page
+  res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
-
-// ===== ID Verification Submission =====
-app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-  const file = req.file;
-  if (!file) return res.status(400).json({ success: false, message: "ID document is required." });
-
-  try {
-    const fileUrl = `/uploads/${file.filename}`;
-    const now = new Date().toISOString();
-
-    await saveToSheet(SPREADSHEET_IDS.users, "ID_Verifications", [
-      now,
-      req.session.user.email,
-      now,
-      "Pending",
-      fileUrl
-    ]);
-
-    res.json({ success: true, message: "ID submitted successfully." });
-  } catch (err) {
-    console.error("verify-id error:", err);
-    res.status(500).json({ success: false, message: "Failed to submit ID." });
-  }
-});
-
-// ===== Create Campaign (updated column order) =====
-app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-
-  const { title, creatorEmail, goal, category, description } = req.body;
-  const imageFile = req.file;
-
-  if (!title || !creatorEmail || !goal || !category || !description) {
-    return res.status(400).json({ success: false, message: "All fields are required." });
-  }
-
-  try {
-    const imageUrl = imageFile ? `/uploads/${imageFile.filename}` : "";
-    const campaignId = `CAMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const createdAt = new Date().toISOString();
-
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      campaignId, // Id
-      title,
-      creatorEmail,
-      goal,
-      description,
-      category,
-      "Pending",
-      createdAt, // now separate column
-      imageUrl
-    ]);
-
-    res.json({ success: true, campaignId }); 
-  } catch (err) {
-    console.error("create-campaign error:", err);
-    res.status(500).json({ success: false, message: "Failed to create campaign." });
-  }
-});
-
-// ===== Get All Campaigns =====
-app.get("/api/campaigns", async (req, res) => {
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I", 
-    });
-
-    const allCampaigns = (data.values || []).map(row => ({
-      id: row[0],
-      title: row[1],
-      email: row[2],
-      goal: row[3],
-      description: row[4],
-      category: row[5],
-      status: row[6],
-      createdAt: row[7],
-      imageUrl: row[8] || "",
-    }));
-
-    res.json({ success: true, campaigns: allCampaigns });
-  } catch (err) {
-    console.error("get-campaigns error:", err);
-    res.status(500).json({ success: false, campaigns: [] });
-  }
-});
-
-// ===== NEW: Manage Campaigns (user-specific) =====
-app.get("/api/manage-campaigns", async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, message: "Not logged in" });
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.campaigns,
-      range: "Campaigns!A:I", 
-    });
-
-    const userCampaigns = (data.values || [])
-      .filter(row => row[2]?.toLowerCase() === req.session.user.email.toLowerCase())
-      .map(row => ({
-        id: row[0],
-        title: row[1],
-        email: row[2],
-        goal: row[3],
-        description: row[4],
-        category: row[5],
-        status: row[6],
-        createdAt: row[7],
-        imageUrl: row[8] || "",
-      }));
-
-    res.json({ success: true, campaigns: userCampaigns });
-  } catch (err) {
-    console.error("manage-campaigns error:", err);
-    res.status(500).json({ success: false, campaigns: [] });
-  }
-});
-
-// ===== Waitlist =====
-app.post("/api/waitlist", async (req, res) => {
-  const { name, email, source, reason } = req.body;
-  if (!name || !email) return res.status(400).json({ success: false, message: "Name and email required." });
-
-  try {
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
-      new Date().toISOString(),
-      name,
-      email,
-      source || "",
-      reason || ""
-    ]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("Waitlist error:", err);
-    res.status(500).json({ success: false });
-  }
-});
-
-// ===== NEW: Stripe Donation Route =====
-app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
-  const { campaignId } = req.params;
-  const { amount, successUrl, cancelUrl } = req.body;
-
-  if (!campaignId || !amount || !successUrl || !cancelUrl) {
-    return res.status(400).json({ success: false, message: "Missing required fields." });
-  }
-
-  try {
-    const donationAmount = Math.round(parseFloat(amount) * 100); // cents
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      mode: "payment",
-      line_items: [{
-        price_data: {
-          currency: "usd",
-          product_data: {
-            name: `Donation to Campaign ID: ${campaignId}`,
-          },
-          unit_amount: donationAmount,
-        },
-        quantity: 1,
-      }],
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      metadata: { campaignId, amount: donationAmount },
-    });
-
-    res.json({ success: true, sessionId: session.id });
-  } catch (err) {
-    console.error("create-checkout-session error:", err);
-    res.status(500).json({ success: false, message: "Failed to create checkout session." });
-  }
-});
-
-// ===== NEW: Log Donation =====
-app.post("/api/log-donation", async (req, res) => {
-  const { campaignId, title, amount, timestamp } = req.body;
-  if (!campaignId || !amount || !timestamp || !title) {
-    return res.status(400).json({ success: false, message: "Missing donation fields." });
-  }
-
-  try {
-    await saveToSheet(SPREADSHEET_IDS.donations, "Donations", [
-      timestamp,
-      campaignId,
-      title,
-      amount
-    ]);
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error("log-donation error:", err);
-    res.status(500).json({ success: false, message: "Failed to log donation." });
-  }
-});
-
-// ===== Catch-all API 404 =====
-app.all("/api/*", (req, res) =>
-  res.status(404).json({ success: false, message: "API route not found" })
-);
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
