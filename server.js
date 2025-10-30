@@ -154,7 +154,10 @@ async function verifyUser(email, password) {
     const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
     const verified = verificationStatus === "Approved";
 
-    return { name: userRow[1], email: userRow[2], verified, verificationStatus, isAdmin: userRow[4] === "true" };
+    // Check if admin
+    const isAdmin = userRow[4] === "true";
+
+    return { name: userRow[1], email: userRow[2], verified, verificationStatus, isAdmin };
   } catch (err) {
     console.error("verifyUser error:", err);
     return false;
@@ -174,8 +177,8 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
+// ===== Signin =====
 app.options("/api/signin", cors(corsOptions));
-
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required." });
@@ -206,15 +209,24 @@ app.get("/api/check-session", (req, res) => {
   }
 });
 
-// ===== Serve Admin Page with Protection =====
+// ===== Admin Route Protection =====
 app.get("/admin", (req, res) => {
   if (!req.session.user || !req.session.user.isAdmin) {
-    // If not signed in or not admin, show admin login page
+    // Not an admin → show login page
     return res.sendFile(path.join(__dirname, "public", "admin-login.html"));
   }
-  // Otherwise serve the normal admin page
-  res.sendFile(path.join(__dirname, "public", "admin.html"));
+  // Admin → show admin dashboard
+  return res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
+
+// ===== All other existing routes remain unchanged =====
+// (You would include your campaigns, donations, waitlist, ID verification, etc. routes here)
+
+
+// ===== Catch-all API 404 =====
+app.all("/api/*", (req, res) =>
+  res.status(404).json({ success: false, message: "API route not found" })
+);
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
