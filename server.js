@@ -32,7 +32,7 @@ const allowedOrigins = [
 // ===== CORS =====
 const corsOptions = {
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true); // allow curl or mobile apps
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -44,15 +44,11 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // handle global preflight
+app.options("*", cors(corsOptions));
 
 // ===== Middleware =====
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-
-// ===== Serve uploads folder and public =====
-app.use("/uploads", express.static(uploadsDir));
-app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
 app.set("trust proxy", 1);
@@ -64,7 +60,7 @@ app.use(session({
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    maxAge: 1000 * 60 * 60 * 24 * 30, // persist 30 days until logout
+    maxAge: 1000 * 60 * 60 * 24 * 30, 
   },
 }));
 
@@ -113,120 +109,47 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// ===== User Helpers =====
-async function saveUser({ name, email, password }) {
-  const hash = await bcrypt.hash(password, 10);
-  await saveToSheet(SPREADSHEET_IDS.users, "Users", [
-    new Date().toISOString(),
-    name,
-    email,
-    hash,
-    "false"
-  ]);
+// ===== Admin Credentials =====
+const ADMIN_CREDENTIALS = {
+  username: "Admin",
+  password: "FunDMe$123"
+};
 
-  await sendEmail({
-    to: process.env.EMAIL_FROM,
-    subject: `New Signup: ${name}`,
-    text: `New user signed up:\nName: ${name}\nEmail: ${email}`,
-    html: `<p><strong>Name:</strong> ${name}</p><p><strong>Email:</strong> ${email}</p>`,
-  });
-}
+// ===== Admin Routes =====
 
-async function verifyUser(email, password) {
-  try {
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "Users!A:E",
-    });
-    const allUsers = data.values || [];
-    const userRow = allUsers.find((r) => r[2]?.toLowerCase() === email.toLowerCase());
-    if (!userRow) return false;
-    const passwordMatch = await bcrypt.compare(password, userRow[3]);
-    if (!passwordMatch) return false;
-
-    // Check verification status
-    const { data: verData } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_IDS.users,
-      range: "ID_Verifications!A:E",
-    });
-    const verRows = (verData.values || []).filter((r) => r[1]?.toLowerCase() === email.toLowerCase());
-    const latestVer = verRows.length ? verRows[verRows.length - 1] : null;
-    const verificationStatus = latestVer ? latestVer[3] : "Not submitted";
-    const verified = verificationStatus === "Approved";
-
-    // Check if admin
-    const isAdmin = userRow[4] === "true";
-
-    return { name: userRow[1], email: userRow[2], verified, verificationStatus, isAdmin };
-  } catch (err) {
-    console.error("verifyUser error:", err);
-    return false;
-  }
-}
-
-// ===== Auth Routes =====
-app.post("/api/signup", async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ success: false, message: "All fields required." });
-  try {
-    await saveUser({ name, email, password });
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+// Serve admin login page if not signed in
+app.get("/admin", (req, res) => {
+  if (req.session.isAdmin) {
+    res.sendFile(path.join(__dirname, "public/admin.html"));
+  } else {
+    res.sendFile(path.join(__dirname, "public/admin-login.html"));
   }
 });
 
-// ===== Signin =====
-app.options("/api/signin", cors(corsOptions));
-app.post("/api/signin", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ success: false, message: "Email and password required." });
-  try {
-    const user = await verifyUser(email, password);
-    if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
-
-    req.session.user = user;
-    req.session.cookie.maxAge = 1000 * 60 * 60 * 24 * 30; // 30 days
-    req.session.save(() => res.json({ success: true, profile: user }));
-  } catch (err) {
-    console.error("signin error:", err);
-    res.status(500).json({ success: false, message: "Internal server error" });
+// Admin login POST
+app.post("/admin-login", (req, res) => {
+  const { username, password } = req.body;
+  if (
+    username?.toLowerCase() === ADMIN_CREDENTIALS.username.toLowerCase() &&
+    password === ADMIN_CREDENTIALS.password
+  ) {
+    req.session.isAdmin = true;
+    return res.json({ success: true });
+  } else {
+    return res.status(401).json({ success: false, message: "Invalid credentials" });
   }
 });
 
-// ===== Signout =====
-app.post("/api/signout", (req, res) => {
+// Admin logout
+app.post("/admin-logout", (req, res) => {
   req.session.destroy(() => res.json({ success: true }));
 });
 
-// ===== Check Session =====
-app.get("/api/check-session", (req, res) => {
-  if (req.session.user) {
-    res.json({ loggedIn: true, user: req.session.user });
-  } else {
-    res.json({ loggedIn: false });
-  }
-});
+// ===== Serve static files after admin routes =====
+app.use("/uploads", express.static(uploadsDir));
+app.use(express.static(path.join(__dirname, "public")));
 
-// ===== Admin Route Protection =====
-app.get("/admin", (req, res) => {
-  if (!req.session.user || !req.session.user.isAdmin) {
-    // Not an admin → show login page
-    return res.sendFile(path.join(__dirname, "public", "admin-login.html"));
-  }
-  // Admin → show admin dashboard
-  return res.sendFile(path.join(__dirname, "public", "admin.html"));
-});
-
-// ===== All other existing routes remain unchanged =====
-// (You would include your campaigns, donations, waitlist, ID verification, etc. routes here)
-
-
-// ===== Catch-all API 404 =====
-app.all("/api/*", (req, res) =>
-  res.status(404).json({ success: false, message: "API route not found" })
-);
+// ===== Other routes (keep all your current user/campaign/donation routes) =====
 
 // ===== Start Server =====
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
