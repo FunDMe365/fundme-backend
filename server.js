@@ -1,254 +1,111 @@
 require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
-const session = require("express-session");
+const cors = require("cors");
 const bcrypt = require("bcrypt");
+const session = require("express-session");
 const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
-const path = require("path");
 const multer = require("multer");
 const fs = require("fs");
-const cors = require("cors");
+const path = require("path");
 
 const app = express();
-const PORT = process.env.PORT || 5000;
-
-// ===== Ensure uploads folder exists =====
-const uploadsDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-
-// ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// ===== Allowed Origins =====
-const allowedOrigins = [
-  "https://fundasmile.net",
-  "https://www.fundasmile.net",
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-];
-
-// ===== CORS =====
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) callback(null, true);
-    else callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions));
-
-// ===== Middleware =====
+app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-
-// ===== Serve uploads and static files =====
-app.use("/uploads", express.static(uploadsDir));
-app.use(express.static(path.join(__dirname, "public")));
-
-// ===== Session =====
-app.set("trust proxy", 1);
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "supersecretkey",
+    secret: process.env.SESSION_SECRET || "joyfund-secret",
     resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
-    },
+    saveUninitialized: true,
   })
 );
 
-// ===== Google Sheets =====
-const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
+// Serve uploads folder
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// ---------- GOOGLE SHEETS (Waitlist) ----------
 const auth = new google.auth.GoogleAuth({
-  credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON || "{}"),
-  scopes: SCOPES,
+  credentials: {
+    type: "service_account",
+    project_id: process.env.GOOGLE_PROJECT_ID,
+    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+    client_email: process.env.GOOGLE_CLIENT_EMAIL,
+  },
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
+
 const sheets = google.sheets({ version: "v4", auth });
 
-const SPREADSHEET_IDS = {
-  users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
-  waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
-  campaigns: "1XSS-2WJpzEhDe6RHBb8rt_6NNWNqdFpVTUsRa3TNCG8",
-  donations: "1C_xhW-dh3yQ7MpSoDiUWeCC2NNVWaurggia-f1z0YwA",
-  volunteers: "1fCvuVLlPr1UzPaUhIkWMiQyC0pOGkBkYo-KkPshwW7s",
-  idVerifications: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
-};
-
-// ===== SendGrid =====
-if (process.env.SENDGRID_API_KEY) sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-const sendEmail = async ({ to, subject, text, html }) => {
-  try {
-    await sgMail.send({ to, from: process.env.EMAIL_FROM, subject, text, html });
-    console.log(`✅ Email sent to ${to}`);
-  } catch (err) {
-    console.error("SendGrid error:", err);
-  }
-};
-
-// ===== Helper Functions =====
-async function saveToSheet(sheetId, sheetName, values) {
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: sheetId,
-    range: `${sheetName}!A:Z`,
-    valueInputOption: "RAW",
-    requestBody: { values: [values] },
-  });
-}
-async function getSheetValues(sheetId, range) {
-  const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range });
-  return data.values || [];
-}
-
-// ===== Multer (File Upload) =====
+// ---------- FILE UPLOAD (for campaign images, etc.) ----------
 const storage = multer.diskStorage({
-  destination: uploadsDir,
-  filename: (req, file, cb) => cb(null, `${Date.now()}${path.extname(file.originalname)}`),
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, "uploads");
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}-${file.originalname}`;
+    cb(null, uniqueName);
+  },
 });
+
 const upload = multer({ storage });
 
-// ===== USER SIGNUP =====
-async function saveUser({ name, email, password }) {
-  const hash = await bcrypt.hash(password, 10);
-  await saveToSheet(SPREADSHEET_IDS.users, "Users", [
-    new Date().toISOString(),
-    name,
-    email,
-    hash,
-    "false",
-  ]);
-}
+// ---------- ROUTES ----------
 
-// ===== Verify User for Signin =====
-async function verifyUser(email, password) {
-  const { data } = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_IDS.users,
-    range: "Users!A:E",
-  });
-  const users = data.values || [];
-  const userRow = users.find((r) => r[2]?.toLowerCase() === email.toLowerCase());
-  if (!userRow) return false;
+// ✅ Root route
+app.get("/", (req, res) => {
+  res.send("🎉 JoyFund Backend is running successfully!");
+});
 
-  const passwordMatch = await bcrypt.compare(password, userRow[3]);
-  if (!passwordMatch) return false;
-
-  return { name: userRow[1], email: userRow[2] };
-}
-
-// ===== AUTH ROUTES =====
+// ✅ Sign-Up
 app.post("/api/signup", async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password)
-    return res.status(400).json({ success: false, message: "All fields required." });
-
   try {
-    await saveUser({ name, email, password });
-    await sendEmail({
-      to: email,
-      subject: "Welcome to FunDMe!",
-      html: `<p>Hello ${name},</p><p>Thank you for signing up!</p>`,
-    });
-    res.json({ success: true });
-  } catch (err) {
-    console.error("signup error:", err);
-    res.status(500).json({ success: false, message: "Signup failed." });
+    const { email, password } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // You can replace this with a DB insert later
+    console.log("New user registered:", email);
+
+    res.json({ success: true, message: "Signup successful for JoyFund" });
+  } catch (error) {
+    console.error("Signup error:", error);
+    res.status(500).json({ success: false, message: "Signup failed" });
   }
 });
 
-app.options("/api/signin", cors(corsOptions));
-
+// ✅ Sign-In
 app.post("/api/signin", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ success: false, message: "Email and password required." });
-
   try {
-    const user = await verifyUser(email, password);
-    if (!user) return res.status(401).json({ success: false, message: "Invalid credentials" });
+    const { email, password } = req.body;
+    console.log("Attempted login:", email);
 
-    req.session.user = user;
-    res.json({ success: true, profile: user });
-  } catch (err) {
-    console.error("signin error:", err);
-    res.status(500).json({ success: false, message: "Internal server error" });
+    // Placeholder user check — replace with DB later
+    const mockUser = { email: "test@joyfund.org", password: await bcrypt.hash("123456", 10) };
+
+    const valid = await bcrypt.compare(password, mockUser.password);
+    if (!valid || email !== mockUser.email) {
+      return res.status(401).json({ success: false, message: "Invalid email or password" });
+    }
+
+    req.session.user = email;
+    res.json({ success: true, message: "Sign-in successful for JoyFund" });
+  } catch (error) {
+    console.error("Sign-in error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-app.post("/api/signout", (req, res) => {
-  req.session.destroy(() => res.json({ success: true }));
-});
-
-app.get("/api/check-session", (req, res) => {
-  res.json({ loggedIn: !!req.session.user, user: req.session.user || null });
-});
-
-// ===== WAITLIST =====
-app.post("/api/waitlist", async (req, res) => {
-  const { name, email, source, reason } = req.body;
-  if (!name || !email)
-    return res.status(400).json({ success: false, message: "Name and email required." });
-
+// ✅ Stripe Donation
+app.post("/api/create-checkout-session", async (req, res) => {
   try {
-    await saveToSheet(SPREADSHEET_IDS.waitlist, "Waitlist", [
-      new Date().toISOString(),
-      name,
-      email,
-      source || "",
-      reason || "",
-    ]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("waitlist error:", err);
-    res.status(500).json({ success: false, message: "Error saving to waitlist." });
-  }
-});
-
-// ===== CREATE CAMPAIGN =====
-app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
-  if (!req.session.user)
-    return res.status(401).json({ success: false, message: "Not logged in" });
-
-  const { title, goal, category, description } = req.body;
-  if (!title || !goal || !category || !description)
-    return res.status(400).json({ success: false, message: "All fields required." });
-
-  try {
-    const imageUrl = req.file ? `/uploads/${req.file.filename}` : "";
-    await saveToSheet(SPREADSHEET_IDS.campaigns, "Campaigns", [
-      new Date().toISOString(),
-      req.session.user.name,
-      req.session.user.email,
-      title,
-      description,
-      goal,
-      category,
-      imageUrl,
-      "Pending",
-    ]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("create-campaign error:", err);
-    res.status(500).json({ success: false, message: "Failed to create campaign." });
-  }
-});
-
-// ===== STRIPE DONATION =====
-app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
-  const { campaignId } = req.params;
-  const { amount, donorEmail } = req.body;
-  if (!amount || !campaignId)
-    return res.status(400).json({ success: false, message: "Missing fields." });
-
-  try {
+    const { amount } = req.body; // in cents
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [
@@ -256,74 +113,86 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
           price_data: {
             currency: "usd",
             product_data: {
-              name:
-                campaignId === "mission"
-                  ? "General FunDMe Donation"
-                  : `Donation to Campaign ${campaignId}`,
+              name: "JoyFund Donation",
             },
-            unit_amount: Math.round(amount * 100),
+            unit_amount: amount,
           },
           quantity: 1,
         },
       ],
       mode: "payment",
-      success_url: `${process.env.FRONTEND_URL || "https://fundasmile.net"}/thankyou.html`,
-      cancel_url: `${process.env.FRONTEND_URL || "https://fundasmile.net"}/index.html`,
-      customer_email: donorEmail,
-      metadata: { campaignId, amount },
+      success_url: `${process.env.FRONTEND_URL}/success.html`,
+      cancel_url: `${process.env.FRONTEND_URL}/cancel.html`,
     });
 
-    res.json({ success: true, sessionId: session.id });
-  } catch (err) {
-    console.error("checkout-session error:", err);
-    res.status(500).json({ success: false, message: "Failed to create checkout session." });
+    res.json({ id: session.id });
+  } catch (error) {
+    console.error("Stripe error:", error);
+    res.status(500).json({ success: false, message: "Payment error" });
   }
 });
 
-// ===== LOG DONATION =====
-app.post("/api/log-donation", async (req, res) => {
-  const { campaignId, title, amount, timestamp } = req.body;
-  if (!campaignId || !title || !amount || !timestamp)
-    return res.status(400).json({ success: false, message: "Missing fields." });
-
+// ✅ Waitlist form (adds email to Google Sheet)
+app.post("/api/waitlist", async (req, res) => {
   try {
-    await saveToSheet(SPREADSHEET_IDS.donations, "Donations", [
-      timestamp,
-      campaignId,
-      title,
-      amount,
-    ]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("log-donation error:", err);
-    res.status(500).json({ success: false, message: "Failed to log donation." });
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ success: false, message: "Email required" });
+
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: "Sheet1!A:A",
+      valueInputOption: "USER_ENTERED",
+      resource: { values: [[email, new Date().toLocaleString()]] },
+    });
+
+    res.json({ success: true, message: "Added to JoyFund waitlist!" });
+  } catch (error) {
+    console.error("Waitlist error:", error);
+    res.status(500).json({ success: false, message: "Waitlist submission failed" });
   }
 });
 
-// ===== VOLUNTEER FORM =====
-app.post("/api/volunteer", async (req, res) => {
-  const { name, email, interest } = req.body;
-  if (!name || !email)
-    return res.status(400).json({ success: false, message: "All fields required." });
-
+// ✅ File Upload
+app.post("/api/upload", upload.single("file"), (req, res) => {
   try {
-    await saveToSheet(SPREADSHEET_IDS.volunteers, "Volunteers", [
-      new Date().toISOString(),
-      name,
-      email,
-      interest || "",
-    ]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("volunteer error:", err);
-    res.status(500).json({ success: false, message: "Error saving volunteer." });
+    const filePath = `/uploads/${req.file.filename}`;
+    res.json({ success: true, filePath });
+  } catch (error) {
+    console.error("Upload error:", error);
+    res.status(500).json({ success: false, message: "File upload failed" });
   }
 });
 
-// ===== CATCH-ALL =====
-app.all("/api/*", (req, res) =>
-  res.status(404).json({ success: false, message: "API route not found" })
-);
+// ✅ Send Email via SendGrid
+app.post("/api/send-email", async (req, res) => {
+  try {
+    const { to, subject, message } = req.body;
 
-// ===== START SERVER =====
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+    const msg = {
+      to,
+      from: process.env.SENDGRID_SENDER,
+      subject: `JoyFund - ${subject}`,
+      text: message,
+      html: `<p>${message}</p>`,
+    };
+
+    await sgMail.send(msg);
+    res.json({ success: true, message: "Email sent successfully" });
+  } catch (error) {
+    console.error("Email error:", error);
+    res.status(500).json({ success: false, message: "Email failed" });
+  }
+});
+
+// ✅ Logout
+app.post("/api/logout", (req, res) => {
+  req.session.destroy();
+  res.json({ success: true, message: "Logged out successfully" });
+});
+
+// ---------- START SERVER ----------
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`🚀 JoyFund backend running on port ${PORT}`);
+});
