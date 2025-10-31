@@ -21,7 +21,7 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 // ===== Stripe Setup =====
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ===== CORS Setup (fixed) =====
+// ===== CORS Setup =====
 const allowedOrigins = [
   "https://joyfund.org",
   "https://www.joyfund.org",
@@ -183,7 +183,113 @@ app.post("/api/waitlist", async(req,res)=>{
   catch(err){ console.error("waitlist error:",err); res.status(500).json({success:false,message:"Error saving to waitlist"}); }
 });
 
-// ===== Campaigns & Donations =====
-// ... (same as previous version)
+// ===== ID Verification =====
+app.post("/api/verify-id", upload.single("idDocument"), async(req,res)=>{
+  if(!req.session.user) return res.status(401).json({success:false,message:"Not logged in"});
+  const file=req.file;
+  if(!file) return res.status(400).json({success:false,message:"ID document required"});
+  try{
+    const fileUrl=`/uploads/${file.filename}`;
+    const now=new Date().toISOString();
+    await saveToSheet(SPREADSHEET_IDS.users,"ID_Verifications",[now,req.session.user.email,now,"Pending",fileUrl]);
+    res.json({success:true,message:"ID submitted successfully"});
+  }catch(err){ console.error("verify-id error:",err); res.status(500).json({success:false,message:"Failed to submit ID"}); }
+});
 
+// ===== Campaign Routes =====
+app.post("/api/create-campaign", upload.single("image"), async(req,res)=>{
+  if(!req.session.user) return res.status(401).json({success:false,message:"Not logged in"});
+  const { title,creatorEmail,goal,category,description } = req.body;
+  if(!title||!creatorEmail||!goal||!category||!description) return res.status(400).json({success:false,message:"All fields required"});
+  try{
+    const imageUrl=req.file?`/uploads/${req.file.filename}`:"";
+    const campaignId=`CAMP-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+    const createdAt=new Date().toISOString();
+    await saveToSheet(SPREADSHEET_IDS.campaigns,"Campaigns",[createdAt,req.session.user.name,creatorEmail,campaignId,title,description,goal,category,"Pending",imageUrl]);
+    res.json({success:true,campaignId});
+  }catch(err){ console.error("create-campaign error:",err); res.status(500).json({success:false,message:"Failed to create campaign"}); }
+});
+
+app.get("/api/campaigns", async(req,res)=>{
+  try{
+    const { data }=await sheets.spreadsheets.values.get({ spreadsheetId:SPREADSHEET_IDS.campaigns,range:"Campaigns!A:J"});
+    const campaigns=(data.values||[]).slice(1).map(row=>({
+      id: row[3],
+      title: row[4],
+      description: row[5],
+      goal: row[6],
+      category: row[7],
+      status: row[8],
+      imageUrl: row[9]||"",
+      creatorName: row[1],
+      creatorEmail: row[2],
+      createdAt: row[0],
+    }));
+    res.json({success:true,campaigns});
+  }catch(err){ console.error("get-campaigns error:",err); res.status(500).json({success:false,campaigns:[]}); }
+});
+
+app.get("/api/manage-campaigns", async(req,res)=>{
+  if(!req.session.user) return res.status(401).json({success:false,message:"Not logged in"});
+  try{
+    const { data }=await sheets.spreadsheets.values.get({ spreadsheetId:SPREADSHEET_IDS.campaigns,range:"Campaigns!A:J"});
+    const campaigns=(data.values||[]).slice(1)
+      .filter(row=>row[2].toLowerCase()===req.session.user.email.toLowerCase())
+      .map(row=>({
+        id: row[3],
+        title: row[4],
+        description: row[5],
+        goal: row[6],
+        category: row[7],
+        status: row[8],
+        imageUrl: row[9]||"",
+        creatorName: row[1],
+        creatorEmail: row[2],
+        createdAt: row[0],
+      }));
+    res.json({success:true,campaigns});
+  }catch(err){ console.error("manage-campaigns error:",err); res.status(500).json({success:false,campaigns:[]}); }
+});
+
+// ===== Stripe Checkout =====
+app.post("/api/create-checkout-session/:campaignId", async(req,res)=>{
+  const { campaignId }=req.params;
+  const { amount, donorEmail, successUrl, cancelUrl }=req.body;
+  if(!campaignId||!amount||!successUrl||!cancelUrl) return res.status(400).json({success:false,message:"Missing fields"});
+  try{
+    const donationAmount=Math.round(parseFloat(amount)*100);
+    const session=await stripe.checkout.sessions.create({
+      payment_method_types:["card"],
+      line_items:[{
+        price_data:{
+          currency:"usd",
+          product_data:{ name: campaignId==="mission"?"General JoyFund Donation":`Donation to Campaign ${campaignId}` },
+          unit_amount:donationAmount,
+        },
+        quantity:1,
+      }],
+      mode:"payment",
+      success_url:successUrl,
+      cancel_url:cancelUrl,
+      customer_email:donorEmail,
+      metadata:{ campaignId, amount:donationAmount },
+    });
+    res.json({success:true,sessionId:session.id});
+  }catch(err){ console.error("create-checkout-session error:",err); res.status(500).json({success:false,message:"Failed to create checkout session"}); }
+});
+
+// ===== Log Donation =====
+app.post("/api/log-donation", async(req,res)=>{
+  const { campaignId,title,amount,timestamp }=req.body;
+  if(!campaignId||!title||!amount||!timestamp) return res.status(400).json({success:false,message:"Missing donation fields"});
+  try{
+    await saveToSheet(SPREADSHEET_IDS.donations,"Donations",[timestamp,campaignId,title,amount]);
+    res.json({success:true});
+  }catch(err){ console.error("log-donation error:",err); res.status(500).json({success:false,message:"Failed to log donation"}); }
+});
+
+// ===== Catch-All API 404 =====
+app.all("/api/*",(req,res)=>res.status(404).json({success:false,message:"API route not found"}));
+
+// ===== Start Server =====
 app.listen(PORT,()=>console.log(`🚀 JoyFund backend running on port ${PORT}`));
