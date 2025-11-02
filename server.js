@@ -25,11 +25,10 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const allowedOrigins = [
   "https://joyfund.org",
   "https://www.joyfund.org",
-  "https://fundasmile.net", // << your frontend
+  "https://fundasmile.net",
   "http://localhost:3000",
   "http://127.0.0.1:3000"
 ];
-
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) callback(null, true);
@@ -39,14 +38,7 @@ app.use(cors({
   methods: ["GET","POST","PUT","DELETE","OPTIONS"],
   allowedHeaders: ["Content-Type","Authorization"]
 }));
-
-// Preflight for all routes
-app.options("*", cors({
-  origin: allowedOrigins,
-  credentials: true,
-  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization"]
-}));
+app.options("*", cors());
 
 // ===== Middleware =====
 app.use(bodyParser.json());
@@ -70,13 +62,16 @@ app.use(session({
 
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
-let sheets;
+let auth, sheets;
+
 try {
-  const auth = new google.auth.GoogleAuth({
+  if (!process.env.GOOGLE_PRIVATE_KEY) throw new Error("Missing GOOGLE_PRIVATE_KEY");
+  auth = new google.auth.GoogleAuth({
     credentials: {
       type: process.env.GOOGLE_TYPE,
       project_id: process.env.GOOGLE_PROJECT_ID,
-      private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+      private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
+      private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g,"\n"),
       client_email: process.env.GOOGLE_CLIENT_EMAIL,
       client_id: process.env.GOOGLE_CLIENT_ID,
       auth_uri: process.env.GOOGLE_AUTH_URI,
@@ -86,13 +81,13 @@ try {
     },
     scopes: SCOPES
   });
-  sheets = google.sheets({ version: "v4", auth });
+  sheets = google.sheets({version:"v4", auth});
   console.log("✅ Google Sheets initialized");
 } catch(e) {
-  console.warn("❌ Google Sheets initialization failed", e);
+  console.error("❌ Google Sheets initialization failed", e.message);
 }
 
-// ===== Sheet IDs =====
+// ===== Sheet IDs (env vars required) =====
 const SPREADSHEET_IDS = {
   users: process.env.USERS_SHEET_ID,
   waitlist: process.env.WAITLIST_SHEET_ID,
@@ -101,8 +96,15 @@ const SPREADSHEET_IDS = {
   idVerifications: process.env.ID_VERIFICATIONS_SHEET_ID
 };
 
+// Helper to check all sheet IDs exist
+for (const [key, value] of Object.entries(SPREADSHEET_IDS)) {
+  if (!value) {
+    console.error(`❌ Missing environment variable for ${key.toUpperCase()} sheet ID`);
+  }
+}
+
 // ===== SendGrid =====
-if (process.env.SENDGRID_API_KEY) sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+if(process.env.SENDGRID_API_KEY) sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 async function sendEmail({to,subject,text,html}) {
   if(!process.env.SENDGRID_API_KEY||!process.env.EMAIL_FROM) return;
   try { await sgMail.send({to,from:process.env.EMAIL_FROM,subject,text,html}); } 
@@ -111,6 +113,8 @@ async function sendEmail({to,subject,text,html}) {
 
 // ===== Helpers =====
 async function saveToSheet(sheetId,sheetName,values){
+  if (!sheets) throw new Error("Google Sheets not initialized");
+  if (!sheetId) throw new Error(`Missing spreadsheetId for ${sheetName}`);
   return sheets.spreadsheets.values.append({
     spreadsheetId: sheetId,
     range:`${sheetName}!A:Z`,
@@ -118,37 +122,61 @@ async function saveToSheet(sheetId,sheetName,values){
     requestBody:{values:[values]}
   });
 }
+
 async function getSheetValues(sheetId,range){
+  if (!sheets) throw new Error("Google Sheets not initialized");
+  if (!sheetId) throw new Error(`Missing spreadsheetId for ${range}`);
   const {data} = await sheets.spreadsheets.values.get({spreadsheetId:sheetId,range});
   return data.values||[];
 }
 
+function rowsToObjects(values){
+  if(!values||values.length<1) return [];
+  const headers=values[0];
+  return values.slice(1).map(row=>{
+    const obj={};
+    headers.forEach((h,i)=>obj[h]=row[i]||"");
+    return obj;
+  });
+}
+
 // ===== Multer =====
 const storage = multer.diskStorage({
-  destination: uploadsDir,
-  filename: (req,file,cb)=>cb(null,`${Date.now()}${path.extname(file.originalname)}`)
+  destination:uploadsDir,
+  filename:(req,file,cb)=>cb(null,`${Date.now()}${path.extname(file.originalname)}`)
 });
 const upload = multer({storage});
 
 // ===== User Functions =====
 async function saveUser({name,email,password}){
   const hash = await bcrypt.hash(password,10);
+  if (!SPREADSHEET_IDS.users) throw new Error("Missing USERS_SHEET_ID env var");
   await saveToSheet(SPREADSHEET_IDS.users,"Users",[new Date().toISOString(),name,email,hash]);
 }
 
 async function verifyUser(email,password){
-  if (!sheets) throw new Error("Sheets not initialized");
   try {
+    if (!SPREADSHEET_IDS.users) throw new Error("Missing USERS_SHEET_ID env var");
     const values = await getSheetValues(SPREADSHEET_IDS.users,"Users!A:D");
-    console.log("All users from sheet:", values);
-    const userRow = values.find(r=>r[2]?.toLowerCase()===email.toLowerCase());
-    console.log("Found user row:", userRow);
+    const allUsers = rowsToObjects(values);
+    const userRow = allUsers.find(u=>u.Email.toLowerCase()===email.toLowerCase());
     if(!userRow) return false;
-    const passwordMatch = await bcrypt.compare(password,userRow[3]);
+    const passwordMatch = await bcrypt.compare(password,userRow.PasswordHash);
     if(!passwordMatch) return false;
 
-    return { name: userRow[1], email: userRow[2] };
-  } catch(err){ console.error("verifyUser error:",err); return false; }
+    // ID Verification
+    if (!SPREADSHEET_IDS.idVerifications) throw new Error("Missing ID_VERIFICATIONS_SHEET_ID env var");
+    const verValues = await getSheetValues(SPREADSHEET_IDS.idVerifications,"ID_Verifications!A:E");
+    const verRows = rowsToObjects(verValues).filter(r=>r.Email.toLowerCase()===email.toLowerCase());
+    const latestVer = verRows.length ? verRows[verRows.length-1] : null;
+    const verified = latestVer?.Status === "Approved";
+    const verificationStatus = latestVer?.Status || "Not submitted";
+
+    return {name:userRow.Name,email:userRow.Email,verified,verificationStatus};
+  } catch(err){
+    console.error("verifyUser error:",err.message);
+    return false;
+  }
 }
 
 // ===== Routes =====
@@ -157,8 +185,13 @@ async function verifyUser(email,password){
 app.post("/api/signup", async(req,res)=>{
   const {name,email,password}=req.body;
   if(!name||!email||!password) return res.status(400).json({success:false,message:"All fields required"});
-  try{ await saveUser({name,email,password}); res.json({success:true}); }
-  catch(err){ console.error(err); res.status(500).json({success:false}); }
+  try{
+    await saveUser({name,email,password});
+    res.json({success:true});
+  } catch(err){
+    console.error("signup error:",err.message);
+    res.status(500).json({success:false,message:"Internal server error"});
+  }
 });
 
 // --- Signin ---
@@ -170,7 +203,10 @@ app.post("/api/signin", async(req,res)=>{
     if(!user) return res.status(401).json({success:false,message:"Invalid credentials"});
     req.session.user = user;
     req.session.save(()=>res.json({success:true,profile:user}));
-  } catch(err){ console.error("signin error:",err); res.status(500).json({success:false,message:"Internal server error"}); }
+  } catch(err){
+    console.error("signin error:",err.message);
+    res.status(500).json({success:false,message:"Internal server error"});
+  }
 });
 
 // --- Signout ---
