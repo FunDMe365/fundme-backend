@@ -25,9 +25,11 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const allowedOrigins = [
   "https://joyfund.org",
   "https://www.joyfund.org",
+  "https://fundasmile.net", // << your frontend
   "http://localhost:3000",
   "http://127.0.0.1:3000"
 ];
+
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) callback(null, true);
@@ -37,7 +39,14 @@ app.use(cors({
   methods: ["GET","POST","PUT","DELETE","OPTIONS"],
   allowedHeaders: ["Content-Type","Authorization"]
 }));
-app.options("*", cors());
+
+// Preflight for all routes
+app.options("*", cors({
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"]
+}));
 
 // ===== Middleware =====
 app.use(bodyParser.json());
