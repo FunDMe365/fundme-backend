@@ -11,29 +11,27 @@ const cors = require("cors");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable CORS for your frontend
+// ==================== Middleware ====================
 app.use(cors({
-  origin: "https://fundasmile.net",
+  origin: "https://fundasmile.net", // frontend URL
   credentials: true,
 }));
-
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Session
 app.use(session({
   secret: process.env.SESSION_SECRET || "secret",
   resave: false,
   saveUninitialized: true,
 }));
 
-// Stripe
+// ==================== Stripe ====================
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// SendGrid
+// ==================== SendGrid ====================
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// Google Sheets setup
+// ==================== Google Sheets ====================
 let sheets;
 try {
   const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
@@ -48,18 +46,12 @@ try {
 }
 
 // ==================== Helpers ====================
-
-// Get values from a sheet
 async function getSheetValues(spreadsheetId, range) {
   if (!sheets) return [];
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range,
-  });
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   return res.data.values || [];
 }
 
-// Append values to a sheet
 async function appendSheetValues(spreadsheetId, range, values) {
   if (!sheets) return;
   await sheets.spreadsheets.values.append({
@@ -71,7 +63,6 @@ async function appendSheetValues(spreadsheetId, range, values) {
 }
 
 // ==================== Users ====================
-
 async function getUsers() {
   return getSheetValues(process.env.USERS_SHEET_ID, "A:D"); // JoinDate | Name | Email | PasswordHash
 }
@@ -86,8 +77,7 @@ app.post("/api/signin", async (req, res) => {
     const userRow = users.find(u => u[2] === email);
     if (!userRow) return res.status(401).json({ error: "Invalid credentials" });
 
-    const passwordHash = userRow[3];
-    const match = await bcrypt.compare(password, passwordHash);
+    const match = await bcrypt.compare(password, userRow[3]);
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
     req.session.user = { name: userRow[1], email: userRow[2] };
@@ -98,15 +88,29 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-// ==================== Waitlist ====================
+// Check session (frontend login state)
+app.get("/api/check-session", (req, res) => {
+  res.json({ loggedIn: !!req.session.user });
+});
 
+// Logout
+app.post("/api/logout", (req, res) => {
+  req.session.destroy(err => {
+    if (err) return res.status(500).json({ error: "Failed to logout" });
+    res.json({ ok: true });
+  });
+});
+
+// ==================== Waitlist ====================
 app.post("/api/waitlist", async (req, res) => {
-  const { name, email } = req.body;
-  if (!name || !email) return res.status(400).json({ error: "Missing name or email" });
+  const { name, email, source, reason } = req.body;
+  if (!name || !email || !source || !reason) return res.status(400).json({ error: "Missing fields" });
 
   try {
-    await appendSheetValues(process.env.WAITLIST_SHEET_ID, process.env.SHEET_RANGE, [[new Date().toISOString(), name, email]]);
-    res.json({ ok: true });
+    await appendSheetValues(process.env.WAITLIST_SHEET_ID, process.env.SHEET_RANGE || "A:D", [
+      [new Date().toISOString(), name, email, source, reason]
+    ]);
+    res.json({ success: true });
   } catch (err) {
     console.error("waitlist error:", err);
     res.status(500).json({ error: "Server error" });
@@ -114,24 +118,27 @@ app.post("/api/waitlist", async (req, res) => {
 });
 
 // ==================== Donations ====================
-
 app.post("/api/donations", async (req, res) => {
   const { email, amount, campaign } = req.body;
   if (!email || !amount || !campaign) return res.status(400).json({ error: "Missing parameters" });
 
   try {
-    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [[new Date().toISOString(), email, amount, campaign]]);
-    res.json({ ok: true });
+    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [
+      [new Date().toISOString(), email, amount, campaign]
+    ]);
+    res.json({ success: true });
   } catch (err) {
     console.error("donations error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// Stripe checkout session route for JoyFunds Mission
-app.post("/api/create-checkout-session/mission", async (req, res) => {
-  const { amount } = req.body;
-  if (!amount) return res.status(400).json({ error: "Missing amount" });
+// ==================== Stripe Checkout ====================
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+  const { campaignId } = req.params;
+  const { amount, successUrl, cancelUrl } = req.body;
+
+  if (!amount || !campaignId) return res.status(400).json({ error: "Missing parameters" });
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -139,27 +146,27 @@ app.post("/api/create-checkout-session/mission", async (req, res) => {
       line_items: [{
         price_data: {
           currency: "usd",
-          product_data: { name: "JoyFunds Mission Donation" },
-          unit_amount: amount * 100, // Stripe expects cents
+          product_data: { name: `${campaignId} Donation` },
+          unit_amount: Math.round(amount * 100),
         },
         quantity: 1,
       }],
       mode: "payment",
-      success_url: "https://fundasmile.net/donation-success",
-      cancel_url: "https://fundasmile.net/donation-cancel",
+      success_url: successUrl || `${req.headers.origin}/thank-you.html`,
+      cancel_url: cancelUrl || `${req.headers.origin}/`,
     });
-    res.json({ id: session.id });
+
+    res.json({ success: true, sessionId: session.id });
   } catch (err) {
-    console.error("Stripe error:", err);
+    console.error("Stripe checkout error:", err);
     res.status(500).json({ error: "Stripe checkout failed" });
   }
 });
 
 // ==================== Campaigns ====================
-
 app.get("/api/campaigns", async (req, res) => {
   try {
-    const campaigns = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:E"); // Adjust range as needed
+    const campaigns = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:E");
     res.json({ ok: true, campaigns });
   } catch (err) {
     console.error("campaigns error:", err);
@@ -168,7 +175,6 @@ app.get("/api/campaigns", async (req, res) => {
 });
 
 // ==================== Start Server ====================
-
 app.listen(PORT, () => {
   console.log(`🚀 JoyFund backend running on port ${PORT}`);
 });
