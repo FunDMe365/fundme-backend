@@ -20,7 +20,7 @@ credentials.json
 
 node_modules/
 .env
-
+google-credentials.json
 service-account.json
 service-account.json
 .env.txt
