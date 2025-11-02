@@ -23,21 +23,24 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ===== CORS =====
 const allowedOrigins = [
-  "https://joyfund.org",           // replace with your actual frontend
+  "https://joyfund.org",
   "https://www.joyfund.org",
+  "https://fundasmile.net",  // <--- added your frontend
   "http://localhost:3000",
   "http://127.0.0.1:3000"
 ];
+
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) callback(null, true);
     else callback(new Error("Not allowed by CORS"));
   },
   credentials: true,
-  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization"]
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
-app.options("*", cors());
+
+app.options("*", cors()); // handle preflight
 
 // ===== Middleware =====
 app.use(bodyParser.json());
@@ -46,7 +49,7 @@ app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(path.join(__dirname, "public")));
 
 // ===== Session =====
-app.set("trust proxy", 1);
+app.set("trust proxy", 1); // if behind proxy like Render
 app.use(session({
   secret: process.env.SESSION_SECRET || "supersecretkey",
   resave: false,
@@ -55,7 +58,7 @@ app.use(session({
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-    maxAge: 1000*60*60*24*30
+    maxAge: 1000 * 60 * 60 * 24 * 30
   }
 }));
 
@@ -81,7 +84,7 @@ try {
   sheets = google.sheets({version:"v4", auth});
 } catch(e) { console.warn("⚠️ Google Sheets not configured.", e); }
 
-// ===== Sheet IDs (hardcoded) =====
+// ===== Sheet IDs =====
 const SPREADSHEET_IDS = {
   users: "1i9pAQ0xOpv1GiDqqvE5pSTWKtA8VqPDpf8nWDZPC4B0",
   waitlist: "16EOGbmfGGsN2jOj4FVDBLgAVwcR2fKa-uK0PNVtFPPQ",
