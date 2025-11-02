@@ -65,6 +65,7 @@ app.use(session({
 // ===== Google Sheets =====
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 let auth, sheets;
+
 try {
   auth = new google.auth.GoogleAuth({
     credentials: {
@@ -82,7 +83,10 @@ try {
     scopes: SCOPES
   });
   sheets = google.sheets({version:"v4", auth});
-} catch(e) { console.warn("⚠️ Google Sheets not configured.", e); }
+} catch(e) { 
+  console.error("❌ Google Sheets initialization failed", e); 
+  process.exit(1); 
+}
 
 // ===== Sheet IDs =====
 const SPREADSHEET_IDS = {
@@ -111,10 +115,13 @@ async function saveToSheet(sheetId,sheetName,values){
     requestBody:{values:[values]}
   });
 }
+
 async function getSheetValues(sheetId,range){
+  if(!sheets) throw new Error("Google Sheets not initialized");
   const {data} = await sheets.spreadsheets.values.get({spreadsheetId:sheetId,range});
   return data.values||[];
 }
+
 function rowsToObjects(values){
   if(!values||values.length<1) return [];
   const headers=values[0];
@@ -139,6 +146,7 @@ async function saveUser({name,email,password}){
 }
 
 async function verifyUser(email,password){
+  if(!sheets) throw new Error("Google Sheets not initialized");
   try {
     const data = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_IDS.users, range: "Users!A:D" });
     const allUsers = data.data.values || [];
@@ -146,7 +154,6 @@ async function verifyUser(email,password){
     if(!userRow) return false;
     const passwordMatch = await bcrypt.compare(password,userRow[3]);
     if(!passwordMatch) return false;
-
     return {name:userRow[1], email:userRow[2]};
   } catch(err){ console.error("verifyUser error:",err); return false; }
 }
@@ -175,7 +182,10 @@ app.post("/api/signin", async(req,res)=>{
     if(!user) return res.status(401).json({success:false,message:"Invalid credentials"});
     req.session.user = user;
     req.session.save(()=>res.json({success:true,profile:user}));
-  } catch(err){ console.error("signin error:",err); res.status(500).json({success:false,message:"Internal server error"}); }
+  } catch(err){ 
+    console.error("signin error:",err); 
+    res.status(500).json({success:false,message:"Internal server error"}); 
+  }
 });
 
 // --- Signout ---
@@ -184,8 +194,98 @@ app.post("/api/signout",(req,res)=>req.session.destroy(()=>res.json({success:tru
 // --- Check Session ---
 app.get("/api/check-session",(req,res)=>res.json({loggedIn:!!req.session.user,user:req.session.user||null}));
 
-// ===== The rest of your routes (waitlist, campaigns, Stripe, etc.) remain unchanged =====
-// You can copy them from your previous server.js without modification
+// ===== Waitlist =====
+app.post("/api/waitlist", async(req,res)=>{
+  const {name,email,source,reason}=req.body;
+  if(!name||!email) return res.status(400).json({success:false,message:"Name and email required"});
+  try{
+    await saveToSheet(SPREADSHEET_IDS.waitlist,"Waitlist",[new Date().toISOString(),name,email,source||"",reason||""]);
+    res.json({success:true});
+  } catch(err){ console.error("waitlist error:",err); res.status(500).json({success:false,message:"Error saving waitlist"}); }
+});
+
+// ===== ID Verification =====
+app.post("/api/verify-id", upload.single("idDocument"), async(req,res)=>{
+  if(!req.session.user) return res.status(401).json({success:false,message:"Not logged in"});
+  const file=req.file;
+  if(!file) return res.status(400).json({success:false,message:"ID document is required"});
+  try{
+    const fileUrl=`/uploads/${file.filename}`;
+    const now = new Date().toISOString();
+    await saveToSheet(SPREADSHEET_IDS.idVerifications,"ID_Verifications",[now,req.session.user.email,now,"Pending",fileUrl]);
+    res.json({success:true,message:"ID submitted successfully"});
+  }catch(err){ console.error("verify-id error:",err); res.status(500).json({success:false,message:"Failed to submit ID"}); }
+});
+
+// ===== Campaigns =====
+app.post("/api/create-campaign", upload.single("image"), async(req,res)=>{
+  if(!req.session.user) return res.status(401).json({success:false,message:"Not logged in"});
+  const { title, goal, category, description } = req.body;
+  if(!title||!goal||!category||!description) return res.status(400).json({success:false,message:"All fields required"});
+  try{
+    const imageUrl = req.file?`/uploads/${req.file.filename}`:"";
+    const campaignId = `CAMP-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+    const date = new Date().toLocaleString();
+    await saveToSheet(SPREADSHEET_IDS.campaigns,"Campaigns",[date,req.session.user.name,req.session.user.email,campaignId,title,description,req.session.user.email,goal,imageUrl,description,category,"Pending",date,imageUrl]);
+    res.json({success:true,message:"Campaign submitted successfully",campaignId});
+  }catch(err){ console.error("create-campaign error:",err); res.status(500).json({success:false,message:"Failed to create campaign"}); }
+});
+
+// ===== Get all campaigns =====
+app.get("/api/campaigns", async(req,res)=>{
+  try{
+    const {data} = await sheets.spreadsheets.values.get({spreadsheetId:SPREADSHEET_IDS.campaigns,range:"Campaigns!A:N"});
+    const allCampaigns = (data.values||[]).map(row=>({
+      id:row[3],
+      title:row[4],
+      creator:row[1],
+      email:row[2],
+      goal:row[7],
+      description:row[5],
+      category:row[10],
+      status:row[11],
+      createdAt:row[12],
+      imageUrl:row[13]||""
+    }));
+    res.json({success:true,campaigns:allCampaigns});
+  }catch(err){ console.error("get-campaigns error:",err); res.status(500).json({success:false,campaigns:[]}); }
+});
+
+// ===== Stripe Checkout =====
+app.post("/api/create-checkout-session/:campaignId", async(req,res)=>{
+  const {campaignId}=req.params;
+  const {amount,donorEmail,successUrl,cancelUrl}=req.body;
+  if(!campaignId||!amount||!successUrl||!cancelUrl) return res.status(400).json({success:false,message:"Missing fields"});
+  try{
+    const donationAmount=Math.round(parseFloat(amount)*100);
+    const session=await stripe.checkout.sessions.create({
+      payment_method_types:["card"],
+      line_items:[{
+        price_data:{currency:"usd",product_data:{name:campaignId==="mission"?"General JoyFund Donation":`Donation to Campaign ${campaignId}`},unit_amount:donationAmount},
+        quantity:1
+      }],
+      mode:"payment",
+      success_url:successUrl,
+      cancel_url:cancelUrl,
+      customer_email:donorEmail,
+      metadata:{campaignId,amount:donationAmount}
+    });
+    res.json({success:true,sessionId:session.id});
+  }catch(err){ console.error("create-checkout-session error:",err); res.status(500).json({success:false,message:"Failed to create checkout session"}); }
+});
+
+// ===== Log Donations =====
+app.post("/api/log-donation", async(req,res)=>{
+  const {campaignId,title,amount,timestamp}=req.body;
+  if(!campaignId||!title||!amount||!timestamp) return res.status(400).json({success:false,message:"Missing donation fields"});
+  try{
+    await saveToSheet(SPREADSHEET_IDS.donations,"Donations",[timestamp,campaignId,title,amount]);
+    res.json({success:true});
+  }catch(err){ console.error("log-donation error:",err); res.status(500).json({success:false,message:"Failed to log donation"}); }
+});
+
+// ===== Catch-all API 404 =====
+app.all("/api/*",(req,res)=>res.status(404).json({success:false,message:"API route not found"}));
 
 // ===== Start Server =====
 app.listen(PORT,()=>console.log(`🚀 JoyFund backend running on port ${PORT}`));
