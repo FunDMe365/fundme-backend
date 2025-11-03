@@ -83,23 +83,37 @@ app.post("/api/signin", async (req, res) => {
 
   try {
     const users = await getUsers();
+    const normalizedUsers = users.map(u => u.map(cell => (cell || "").trim()));
     const inputEmail = email.trim().toLowerCase();
 
-    const userRow = users.find(u => u[2] && u[2].trim().toLowerCase() === inputEmail);
-    if (!userRow) return res.status(401).json({ error: "Invalid credentials" });
+    const userRow = normalizedUsers.find(u => u[2].toLowerCase() === inputEmail);
+    if (!userRow) {
+      console.log("User not found:", inputEmail);
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
-    const storedHash = (userRow[3] || "").trim();
+    const storedHash = userRow[3];
+    console.log("Comparing password:", password, "with hash:", storedHash);
+
+    // For bcrypt:
     const match = await bcrypt.compare(password, storedHash);
-    if (!match) return res.status(401).json({ error: "Invalid credentials" });
+
+    // If sheet stores plain text, use:
+    // const match = password === storedHash;
+
+    if (!match) {
+      console.log("Password mismatch for", inputEmail);
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
     req.session.user = { name: userRow[1], email: userRow[2] };
-    // ✅ Only change: send `success: true` to match frontend expectation
     res.json({ success: true, user: req.session.user });
   } catch (err) {
     console.error("signin error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // ==================== Check session ====================
 app.get("/api/check-session", (req, res) => {
