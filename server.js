@@ -1,4 +1,3 @@
-// server.js (updated - only waitlist handling changed to respond immediately + background append)
 require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -55,14 +54,6 @@ try {
   googleCredentialsAvailable = false;
 }
 
-// Ensure backup folder exists
-const backupDir = path.join(__dirname, "backups");
-if (!fs.existsSync(backupDir)) {
-  try { fs.mkdirSync(backupDir, { recursive: true }); }
-  catch (e) { console.error("Could not create backups dir:", e); }
-}
-const waitlistBackupFile = path.join(backupDir, "waitlist_backup.jsonl");
-
 // ==================== Helpers ====================
 async function getSheetValues(spreadsheetId, range) {
   if (!sheets) return [];
@@ -80,35 +71,26 @@ async function appendSheetValues(spreadsheetId, range, values) {
   });
 }
 
-// Safe fallback: append JSONL to local backup file
-function appendToLocalBackup(entry) {
-  try {
-    const line = JSON.stringify(entry) + "\n";
-    fs.appendFile(waitlistBackupFile, line, (err) => {
-      if (err) console.error("Failed writing waitlist backup:", err);
-      else console.log("✅ Waitlist entry written to local backup");
-    });
-  } catch (e) {
-    console.error("appendToLocalBackup exception:", e);
-  }
-}
-
 // ==================== Users ====================
 async function getUsers() {
   return getSheetValues(process.env.USERS_SHEET_ID, "A:D"); // JoinDate | Name | Email | PasswordHash
 }
 
-// Sign-in
+// Sign-in fix: trim emails and ensure comparison ignores extra spaces
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: "Missing email or password" });
 
   try {
     const users = await getUsers();
-    const userRow = users.find(u => u[2] === email);
+    // Normalize email for comparison
+    const inputEmail = email.trim().toLowerCase();
+
+    const userRow = users.find(u => u[2] && u[2].trim().toLowerCase() === inputEmail);
     if (!userRow) return res.status(401).json({ error: "Invalid credentials" });
 
-    const match = await bcrypt.compare(password, userRow[3]);
+    const storedHash = (userRow[3] || "").trim();
+    const match = await bcrypt.compare(password, storedHash);
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
     req.session.user = { name: userRow[1], email: userRow[2] };
@@ -119,12 +101,12 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-// Check session (frontend login state)
+// ==================== Check session ====================
 app.get("/api/check-session", (req, res) => {
   res.json({ loggedIn: !!req.session.user });
 });
 
-// Logout
+// ==================== Logout ====================
 app.post("/api/logout", (req, res) => {
   req.session.destroy(err => {
     if (err) return res.status(500).json({ error: "Failed to logout" });
@@ -133,27 +115,13 @@ app.post("/api/logout", (req, res) => {
 });
 
 // ==================== Waitlist ====================
-// Behavior change: respond immediately to client, then append to Sheets in background.
-// This gives fast UX and avoids long waits while Sheets responds.
-// ==================== Waitlist ====================
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
-
-  // Validate fields
-  if (!name || !email || !source || !reason) {
-    console.warn("⚠️ Missing waitlist fields:", { name, email, source, reason });
-    return res.status(400).json({ error: "Missing fields" });
-  }
+  if (!name || !email || !source || !reason) return res.status(400).json({ error: "Missing fields" });
 
   try {
-    // Confirm Google Sheets connection
     if (!sheets) throw new Error("Google Sheets not initialized");
 
-    console.log("📥 New waitlist entry:", { name, email, source, reason });
-    console.log("📄 Sheet ID:", process.env.WAITLIST_SHEET_ID);
-    console.log("📄 Range:", process.env.SHEET_RANGE || "A:E");
-
-    // Append data in the correct column order
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.WAITLIST_SHEET_ID,
       range: process.env.SHEET_RANGE || "A:E",
@@ -165,20 +133,12 @@ app.post("/api/waitlist", async (req, res) => {
       },
     });
 
-    console.log("✅ Waitlist entry successfully added to Google Sheet");
-
-    // Respond success to frontend
     res.json({ success: true, message: "Successfully joined the waitlist!" });
-
   } catch (err) {
-    console.error("❌ Waitlist error:", err.message);
-    res.status(500).json({
-      error: "Failed to save to waitlist",
-      details: err.message,
-    });
+    console.error("waitlist error:", err.message);
+    res.status(500).json({ error: "Failed to save to waitlist", details: err.message });
   }
 });
-
 
 // ==================== Donations ====================
 app.post("/api/donations", async (req, res) => {
@@ -186,22 +146,13 @@ app.post("/api/donations", async (req, res) => {
   if (!email || !amount || !campaign) return res.status(400).json({ error: "Missing parameters" });
 
   try {
-    // Keep original synchronous behavior for donations (unchanged)
     await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [
       [new Date().toISOString(), email, amount, campaign]
     ]);
     res.json({ success: true });
   } catch (err) {
     console.error("donations error:", err);
-    // If sheets not available, fallback to local backup for donations
-    try {
-      appendToLocalBackup({ type: "donation", timestamp: new Date().toISOString(), email, amount, campaign, error: err && err.message ? err.message : String(err) });
-      console.warn("Donation saved to local backup due to Sheets error.");
-      // Still inform client about success to avoid bad UX — but include note in logs.
-      res.json({ success: true, message: "Recorded (backup)" });
-    } catch (e) {
-      res.status(500).json({ error: "Server error" });
-    }
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -209,7 +160,6 @@ app.post("/api/donations", async (req, res) => {
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   const { campaignId } = req.params;
   const { amount, successUrl, cancelUrl } = req.body;
-
   if (!amount || !campaignId) return res.status(400).json({ error: "Missing parameters" });
 
   try {
