@@ -76,48 +76,53 @@ async function getUsers() {
   return getSheetValues(process.env.USERS_SHEET_ID, "A:D"); // JoinDate | Name | Email | PasswordHash
 }
 
-// ==================== Sign-in ====================
+// ==================== Sign-in Route ====================
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: "Missing email or password" });
 
   try {
     const users = await getUsers();
-    const normalizedUsers = users.map(u => u.map(cell => (cell || "").trim()));
+
+    // Debug: log the raw users fetched
+    console.log("Fetched users from sheet:", users);
+
     const inputEmail = email.trim().toLowerCase();
 
-    const userRow = normalizedUsers.find(u => u[2].toLowerCase() === inputEmail);
+    const userRow = users.find(u => u[2] && u[2].trim().toLowerCase() === inputEmail);
+
     if (!userRow) {
-      console.log("User not found:", inputEmail);
+      console.warn(`Sign-in failed: email not found - "${email}"`);
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const storedHash = userRow[3];
-    console.log("Comparing password:", password, "with hash:", storedHash);
+    const storedHash = (userRow[3] || "").trim();
 
-    // For bcrypt:
+    // Debug: log comparison attempt
+    console.log(`Comparing password for user: ${userRow[2]}`);
+    console.log(`Input password: "${password}"`);
+    console.log(`Stored hash: "${storedHash}"`);
+
     const match = await bcrypt.compare(password, storedHash);
 
-    // If sheet stores plain text, use:
-    // const match = password === storedHash;
-
     if (!match) {
-      console.log("Password mismatch for", inputEmail);
+      console.warn(`Sign-in failed: password mismatch for "${email}"`);
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    req.session.user = { name: userRow[1], email: userRow[2] };
-    res.json({ success: true, user: req.session.user });
+    req.session.user = { name: userRow[1], email: userRow[2], joinDate: userRow[0] };
+    console.log(`Sign-in successful for "${email}"`);
+    res.json({ ok: true, user: req.session.user });
+
   } catch (err) {
     console.error("signin error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-
 // ==================== Check session ====================
 app.get("/api/check-session", (req, res) => {
-  res.json({ loggedIn: !!req.session.user });
+  res.json({ loggedIn: !!req.session.user, user: req.session.user });
 });
 
 // ==================== Logout ====================
@@ -140,11 +145,7 @@ app.post("/api/waitlist", async (req, res) => {
       spreadsheetId: process.env.WAITLIST_SHEET_ID,
       range: process.env.SHEET_RANGE || "A:E",
       valueInputOption: "USER_ENTERED",
-      resource: {
-        values: [
-          [new Date().toLocaleString(), name, email, source, reason],
-        ],
-      },
+      resource: { values: [[new Date().toLocaleString(), name, email, source, reason]] },
     });
 
     res.json({ success: true, message: "Successfully joined the waitlist!" });
@@ -160,9 +161,7 @@ app.post("/api/donations", async (req, res) => {
   if (!email || !amount || !campaign) return res.status(400).json({ error: "Missing parameters" });
 
   try {
-    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [
-      [new Date().toISOString(), email, amount, campaign]
-    ]);
+    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [[new Date().toISOString(), email, amount, campaign]]);
     res.json({ success: true });
   } catch (err) {
     console.error("donations error:", err);
@@ -180,11 +179,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [{
-        price_data: {
-          currency: "usd",
-          product_data: { name: `${campaignId} Donation` },
-          unit_amount: Math.round(amount * 100),
-        },
+        price_data: { currency: "usd", product_data: { name: `${campaignId} Donation` }, unit_amount: Math.round(amount * 100) },
         quantity: 1,
       }],
       mode: "payment",
