@@ -135,37 +135,50 @@ app.post("/api/logout", (req, res) => {
 // ==================== Waitlist ====================
 // Behavior change: respond immediately to client, then append to Sheets in background.
 // This gives fast UX and avoids long waits while Sheets responds.
-app.post("/api/waitlist", (req, res) => {
-  const { name, email, source, reason } = req.body || {};
+// ==================== Waitlist ====================
+app.post("/api/waitlist", async (req, res) => {
+  const { name, email, source, reason } = req.body;
+
+  // Validate fields
   if (!name || !email || !source || !reason) {
-    return res.status(400).json({ success: false, message: "Missing fields" });
+    console.warn("⚠️ Missing waitlist fields:", { name, email, source, reason });
+    return res.status(400).json({ error: "Missing fields" });
   }
 
-  // Immediate response so frontend can show success and refresh quickly
-  res.json({ success: true, message: "Successfully joined waitlist" });
+  try {
+    // Confirm Google Sheets connection
+    if (!sheets) throw new Error("Google Sheets not initialized");
 
-  // Background append (non-blocking)
-  (async () => {
-    const sheetId = process.env.WAITLIST_SHEET_ID;
-    // Default range: use env SHEET_RANGE if provided, otherwise reasonable default
-    const range = process.env.SHEET_RANGE || "Waitlist!A:E";
-    const row = [ new Date().toISOString(), name, email, source, reason ];
-    try {
-      if (googleCredentialsAvailable && sheetId) {
-        await appendSheetValues(sheetId, range, [row]);
-        console.log("✅ Waitlist: appended to Google Sheets:", { email, name });
-      } else {
-        // Sheets not available or sheetId missing: write to local backup
-        console.warn("⚠️ Waitlist: Google Sheets not available or WAITLIST_SHEET_ID missing. Backing up locally.");
-        appendToLocalBackup({ timestamp: new Date().toISOString(), name, email, source, reason });
-      }
-    } catch (err) {
-      // Log and backup locally — do not crash or change client response
-      console.error("❌ Waitlist background append error:", err && err.message ? err.message : err);
-      appendToLocalBackup({ timestamp: new Date().toISOString(), name, email, source, reason, error: err && err.message ? err.message : String(err) });
-    }
-  })();
+    console.log("📥 New waitlist entry:", { name, email, source, reason });
+    console.log("📄 Sheet ID:", process.env.WAITLIST_SHEET_ID);
+    console.log("📄 Range:", process.env.SHEET_RANGE || "A:E");
+
+    // Append data in the correct column order
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.WAITLIST_SHEET_ID,
+      range: process.env.SHEET_RANGE || "A:E",
+      valueInputOption: "USER_ENTERED",
+      resource: {
+        values: [
+          [new Date().toLocaleString(), name, email, source, reason],
+        ],
+      },
+    });
+
+    console.log("✅ Waitlist entry successfully added to Google Sheet");
+
+    // Respond success to frontend
+    res.json({ success: true, message: "Successfully joined the waitlist!" });
+
+  } catch (err) {
+    console.error("❌ Waitlist error:", err.message);
+    res.status(500).json({
+      error: "Failed to save to waitlist",
+      details: err.message,
+    });
+  }
 });
+
 
 // ==================== Donations ====================
 app.post("/api/donations", async (req, res) => {
