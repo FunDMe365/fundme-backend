@@ -76,7 +76,7 @@ async function getUsers() {
   return getSheetValues(process.env.USERS_SHEET_ID, "A:D"); // JoinDate | Name | Email | PasswordHash
 }
 
-// ==================== Sign In ====================
+// ==================== Sign-in ====================
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: "Missing email or password" });
@@ -93,17 +93,12 @@ app.post("/api/signin", async (req, res) => {
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
     req.session.user = { name: userRow[1], email: userRow[2] };
+    // ✅ Only change: send `success: true` to match frontend expectation
     res.json({ success: true, user: req.session.user });
   } catch (err) {
     console.error("signin error:", err);
     res.status(500).json({ error: "Server error" });
   }
-});
-
-// ==================== Get Session User ====================
-app.get("/api/get-session-user", (req, res) => {
-  if (req.session.user) return res.json({ user: req.session.user });
-  res.json({ user: null });
 });
 
 // ==================== Check session ====================
@@ -112,10 +107,10 @@ app.get("/api/check-session", (req, res) => {
 });
 
 // ==================== Logout ====================
-app.post("/api/signout", (req, res) => {
+app.post("/api/logout", (req, res) => {
   req.session.destroy(err => {
     if (err) return res.status(500).json({ error: "Failed to logout" });
-    res.json({ success: true });
+    res.json({ ok: true });
   });
 });
 
@@ -194,7 +189,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
 app.get("/api/campaigns", async (req, res) => {
   try {
     const campaigns = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:E");
-    res.json({ success: true, campaigns });
+    res.json({ ok: true, campaigns });
   } catch (err) {
     console.error("campaigns error:", err);
     res.status(500).json({ error: "Server error" });
