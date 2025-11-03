@@ -32,6 +32,7 @@ const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 // ==================== SendGrid ====================
 const sgMail = require("@sendgrid/mail");
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
 // ==================== Google Sheets ====================
 let sheets;
 try {
@@ -186,6 +187,35 @@ app.get("/api/campaigns", async (req, res) => {
   } catch (err) {
     console.error("campaigns error:", err);
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ==================== Send Confirmation Email ====================
+app.post("/api/send-confirmation-email", async (req, res) => {
+  const { toEmail, userName } = req.body;
+  if (!toEmail || !userName) return res.status(400).json({ error: "Missing parameters" });
+
+  const msg = {
+    to: toEmail,
+    from: "admin@fundasmile.net",
+    subject: "🎉 Welcome to Fund a Smile! Your Account is Confirmed! 🎄",
+    html: `
+      <div style="font-family:sans-serif; text-align:center; padding:20px; background:#ffe4e1; border-radius:15px;">
+        <h1 style="color:#FF4B9B;">🎉 Hello ${userName}! 🎉</h1>
+        <p style="font-size:16px;">Your account has been successfully confirmed.</p>
+        <p style="font-size:16px;">Thank you for joining Fund a Smile! 💖</p>
+        <img src="https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif" style="width:200px; margin-top:10px;" />
+        <p style="font-size:14px; margin-top:15px;">We’re thrilled to have you! 🎄✨</p>
+      </div>
+    `,
+  };
+
+  try {
+    await sgMail.send(msg);
+    res.json({ success: true, message: "Confirmation email sent!" });
+  } catch (err) {
+    console.error("SendGrid error:", err);
+    res.status(500).json({ error: "Failed to send email", details: err.message || err });
   }
 });
 
