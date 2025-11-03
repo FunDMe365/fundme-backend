@@ -4,7 +4,6 @@ const bodyParser = require("body-parser");
 const session = require("express-session");
 const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
-const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
 const cors = require("cors");
 const fs = require("fs");
