@@ -31,8 +31,8 @@ app.use(session({
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ==================== SendGrid ====================
+const sgMail = require("@sendgrid/mail");
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
 // ==================== Google Sheets ====================
 let sheets;
 try {
