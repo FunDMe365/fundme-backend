@@ -76,14 +76,13 @@ async function getUsers() {
   return getSheetValues(process.env.USERS_SHEET_ID, "A:D"); // JoinDate | Name | Email | PasswordHash
 }
 
-// Sign-in fix: trim emails and ensure comparison ignores extra spaces
+// ==================== Sign In ====================
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: "Missing email or password" });
 
   try {
     const users = await getUsers();
-    // Normalize email for comparison
     const inputEmail = email.trim().toLowerCase();
 
     const userRow = users.find(u => u[2] && u[2].trim().toLowerCase() === inputEmail);
@@ -94,11 +93,17 @@ app.post("/api/signin", async (req, res) => {
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
     req.session.user = { name: userRow[1], email: userRow[2] };
-    res.json({ ok: true, user: req.session.user });
+    res.json({ success: true, user: req.session.user });
   } catch (err) {
     console.error("signin error:", err);
     res.status(500).json({ error: "Server error" });
   }
+});
+
+// ==================== Get Session User ====================
+app.get("/api/get-session-user", (req, res) => {
+  if (req.session.user) return res.json({ user: req.session.user });
+  res.json({ user: null });
 });
 
 // ==================== Check session ====================
@@ -107,10 +112,10 @@ app.get("/api/check-session", (req, res) => {
 });
 
 // ==================== Logout ====================
-app.post("/api/logout", (req, res) => {
+app.post("/api/signout", (req, res) => {
   req.session.destroy(err => {
     if (err) return res.status(500).json({ error: "Failed to logout" });
-    res.json({ ok: true });
+    res.json({ success: true });
   });
 });
 
@@ -189,7 +194,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
 app.get("/api/campaigns", async (req, res) => {
   try {
     const campaigns = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:E");
-    res.json({ ok: true, campaigns });
+    res.json({ success: true, campaigns });
   } catch (err) {
     console.error("campaigns error:", err);
     res.status(500).json({ error: "Server error" });
