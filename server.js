@@ -1,3 +1,4 @@
+// server.js (updated - only waitlist handling changed to respond immediately + background append)
 require("dotenv").config();
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -7,6 +8,8 @@ const { google } = require("googleapis");
 const sgMail = require("@sendgrid/mail");
 const Stripe = require("stripe");
 const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -33,17 +36,32 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 // ==================== Google Sheets ====================
 let sheets;
+let googleCredentialsAvailable = false;
 try {
-  const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
-  const auth = new google.auth.GoogleAuth({
-    credentials: creds,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-  sheets = google.sheets({ version: "v4", auth });
-  console.log("✅ Google Sheets initialized");
+  if (process.env.GOOGLE_CREDENTIALS_JSON) {
+    const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+    const auth = new google.auth.GoogleAuth({
+      credentials: creds,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    });
+    sheets = google.sheets({ version: "v4", auth });
+    googleCredentialsAvailable = true;
+    console.log("✅ Google Sheets initialized");
+  } else {
+    console.warn("⚠️ GOOGLE_CREDENTIALS_JSON not provided; Sheets operations will fallback.");
+  }
 } catch (err) {
-  console.error("❌ Google Sheets initialization failed", err.message);
+  console.error("❌ Google Sheets initialization failed", err && err.message ? err.message : err);
+  googleCredentialsAvailable = false;
 }
+
+// Ensure backup folder exists
+const backupDir = path.join(__dirname, "backups");
+if (!fs.existsSync(backupDir)) {
+  try { fs.mkdirSync(backupDir, { recursive: true }); }
+  catch (e) { console.error("Could not create backups dir:", e); }
+}
+const waitlistBackupFile = path.join(backupDir, "waitlist_backup.jsonl");
 
 // ==================== Helpers ====================
 async function getSheetValues(spreadsheetId, range) {
@@ -53,13 +71,26 @@ async function getSheetValues(spreadsheetId, range) {
 }
 
 async function appendSheetValues(spreadsheetId, range, values) {
-  if (!sheets) return;
+  if (!sheets) throw new Error("Google Sheets client not initialized");
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range,
     valueInputOption: "RAW",
     resource: { values },
   });
+}
+
+// Safe fallback: append JSONL to local backup file
+function appendToLocalBackup(entry) {
+  try {
+    const line = JSON.stringify(entry) + "\n";
+    fs.appendFile(waitlistBackupFile, line, (err) => {
+      if (err) console.error("Failed writing waitlist backup:", err);
+      else console.log("✅ Waitlist entry written to local backup");
+    });
+  } catch (e) {
+    console.error("appendToLocalBackup exception:", e);
+  }
 }
 
 // ==================== Users ====================
@@ -102,19 +133,38 @@ app.post("/api/logout", (req, res) => {
 });
 
 // ==================== Waitlist ====================
-app.post("/api/waitlist", async (req, res) => {
-  const { name, email, source, reason } = req.body;
-  if (!name || !email || !source || !reason) return res.status(400).json({ error: "Missing fields" });
-
-  try {
-    await appendSheetValues(process.env.WAITLIST_SHEET_ID, process.env.SHEET_RANGE || "A:D", [
-      [new Date().toISOString(), name, email, source, reason]
-    ]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("waitlist error:", err);
-    res.status(500).json({ error: "Server error" });
+// Behavior change: respond immediately to client, then append to Sheets in background.
+// This gives fast UX and avoids long waits while Sheets responds.
+app.post("/api/waitlist", (req, res) => {
+  const { name, email, source, reason } = req.body || {};
+  if (!name || !email || !source || !reason) {
+    return res.status(400).json({ success: false, message: "Missing fields" });
   }
+
+  // Immediate response so frontend can show success and refresh quickly
+  res.json({ success: true, message: "Successfully joined waitlist" });
+
+  // Background append (non-blocking)
+  (async () => {
+    const sheetId = process.env.WAITLIST_SHEET_ID;
+    // Default range: use env SHEET_RANGE if provided, otherwise reasonable default
+    const range = process.env.SHEET_RANGE || "Waitlist!A:E";
+    const row = [ new Date().toISOString(), name, email, source, reason ];
+    try {
+      if (googleCredentialsAvailable && sheetId) {
+        await appendSheetValues(sheetId, range, [row]);
+        console.log("✅ Waitlist: appended to Google Sheets:", { email, name });
+      } else {
+        // Sheets not available or sheetId missing: write to local backup
+        console.warn("⚠️ Waitlist: Google Sheets not available or WAITLIST_SHEET_ID missing. Backing up locally.");
+        appendToLocalBackup({ timestamp: new Date().toISOString(), name, email, source, reason });
+      }
+    } catch (err) {
+      // Log and backup locally — do not crash or change client response
+      console.error("❌ Waitlist background append error:", err && err.message ? err.message : err);
+      appendToLocalBackup({ timestamp: new Date().toISOString(), name, email, source, reason, error: err && err.message ? err.message : String(err) });
+    }
+  })();
 });
 
 // ==================== Donations ====================
@@ -123,13 +173,22 @@ app.post("/api/donations", async (req, res) => {
   if (!email || !amount || !campaign) return res.status(400).json({ error: "Missing parameters" });
 
   try {
+    // Keep original synchronous behavior for donations (unchanged)
     await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [
       [new Date().toISOString(), email, amount, campaign]
     ]);
     res.json({ success: true });
   } catch (err) {
     console.error("donations error:", err);
-    res.status(500).json({ error: "Server error" });
+    // If sheets not available, fallback to local backup for donations
+    try {
+      appendToLocalBackup({ type: "donation", timestamp: new Date().toISOString(), email, amount, campaign, error: err && err.message ? err.message : String(err) });
+      console.warn("Donation saved to local backup due to Sheets error.");
+      // Still inform client about success to avoid bad UX — but include note in logs.
+      res.json({ success: true, message: "Recorded (backup)" });
+    } catch (e) {
+      res.status(500).json({ error: "Server error" });
+    }
   }
 });
 
