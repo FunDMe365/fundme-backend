@@ -15,22 +15,16 @@ const PORT = process.env.PORT || 5000;
 
 // ==================== Middleware ====================
 app.use(cors({
-  origin: "https://fundasmile.net", // frontend URL
+  origin: "https://fundasmile.net",
   credentials: true,
 }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ==================== Session ====================
 app.use(session({
   secret: process.env.SESSION_SECRET || "secret",
   resave: false,
-  saveUninitialized: false, // safer
-  cookie: {
-    secure: true,       // must be HTTPS
-    sameSite: "none",   // allow cross-site cookies
-    maxAge: 1000 * 60 * 60 * 24 // 1 day
-  }
+  saveUninitialized: true,
 }));
 
 // ==================== Stripe ====================
@@ -41,7 +35,6 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 // ==================== Google Sheets ====================
 let sheets;
-let googleCredentialsAvailable = false;
 try {
   if (process.env.GOOGLE_CREDENTIALS_JSON) {
     const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
@@ -50,23 +43,13 @@ try {
       scopes: ["https://www.googleapis.com/auth/spreadsheets"],
     });
     sheets = google.sheets({ version: "v4", auth });
-    googleCredentialsAvailable = true;
     console.log("✅ Google Sheets initialized");
   } else {
     console.warn("⚠️ GOOGLE_CREDENTIALS_JSON not provided; Sheets operations will fallback.");
   }
 } catch (err) {
-  console.error("❌ Google Sheets initialization failed", err && err.message ? err.message : err);
-  googleCredentialsAvailable = false;
+  console.error("❌ Google Sheets initialization failed", err.message);
 }
-
-// Ensure backup folder exists
-const backupDir = path.join(__dirname, "backups");
-if (!fs.existsSync(backupDir)) {
-  try { fs.mkdirSync(backupDir, { recursive: true }); }
-  catch (e) { console.error("Could not create backups dir:", e); }
-}
-const waitlistBackupFile = path.join(backupDir, "waitlist_backup.jsonl");
 
 // ==================== Helpers ====================
 async function getSheetValues(spreadsheetId, range) {
@@ -90,7 +73,7 @@ async function getUsers() {
   return getSheetValues(process.env.USERS_SHEET_ID, "A:D"); // JoinDate | Name | Email | PasswordHash
 }
 
-// ==================== Sign-in ====================
+// ==================== Sign In ====================
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: "Missing email or password" });
@@ -98,6 +81,7 @@ app.post("/api/signin", async (req, res) => {
   try {
     const users = await getUsers();
     const inputEmail = email.trim().toLowerCase();
+
     const userRow = users.find(u => u[2] && u[2].trim().toLowerCase() === inputEmail);
     if (!userRow) return res.status(401).json({ error: "Invalid credentials" });
 
@@ -113,9 +97,13 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-// ==================== Check session ====================
+// ==================== Check Session ====================
 app.get("/api/check-session", (req, res) => {
-  res.json({ loggedIn: !!req.session.user, user: req.session.user || null });
+  if (req.session.user) {
+    res.json({ loggedIn: true, user: req.session.user });
+  } else {
+    res.json({ loggedIn: false });
+  }
 });
 
 // ==================== Logout ====================
@@ -138,11 +126,7 @@ app.post("/api/waitlist", async (req, res) => {
       spreadsheetId: process.env.WAITLIST_SHEET_ID,
       range: process.env.SHEET_RANGE || "A:E",
       valueInputOption: "USER_ENTERED",
-      resource: {
-        values: [
-          [new Date().toLocaleString(), name, email, source, reason],
-        ],
-      },
+      resource: { values: [[new Date().toLocaleString(), name, email, source, reason]] },
     });
 
     res.json({ success: true, message: "Successfully joined the waitlist!" });
@@ -158,9 +142,7 @@ app.post("/api/donations", async (req, res) => {
   if (!email || !amount || !campaign) return res.status(400).json({ error: "Missing parameters" });
 
   try {
-    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [
-      [new Date().toISOString(), email, amount, campaign]
-    ]);
+    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [[new Date().toISOString(), email, amount, campaign]]);
     res.json({ success: true });
   } catch (err) {
     console.error("donations error:", err);
