@@ -14,38 +14,23 @@ const PORT = process.env.PORT || 5000;
 
 // ==================== Middleware ====================
 app.use(cors({
-  origin: "https://fundasmile.net",
+  origin: "https://fundasmile.net", // make sure this matches your frontend
   credentials: true,
 }));
-app.use(
-  cors({
-    origin: "https://fundasmile.net",
-    credentials: true,
-  })
-);
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// ✅ Fixed session configuration to prevent refresh redirect
 app.use(session({
   secret: process.env.SESSION_SECRET || "secret",
-  resave: false,
-  saveUninitialized: true,
+  resave: false, // don't save session if unmodified
+  saveUninitialized: false, // only save session if something stored
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax"
+  }
 }));
-// 🩵 FIXED SESSION SETTINGS (to stop redirect issue)
-app.set("trust proxy", 1);
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "secret",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: true, // Required for HTTPS (Render uses HTTPS)
-      httpOnly: true,
-      sameSite: "none", // allow frontend <-> backend cookies
-      maxAge: 1000 * 60 * 60 * 24, // 1 day
-    },
-  })
-);
 
 // ==================== Stripe ====================
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
@@ -113,12 +98,9 @@ app.post("/api/signin", async (req, res) => {
     const match = await bcrypt.compare(password, storedHash);
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
+    // ✅ Store user in session
     req.session.user = { name: userRow[1], email: userRow[2], joinDate: userRow[0] };
     res.json({ ok: true, user: req.session.user });
-    req.session.save(err => {
-      if (err) console.error("Session save error:", err);
-      res.json({ ok: true, user: req.session.user });
-    });
   } catch (err) {
     console.error("signin error:", err);
     res.status(500).json({ error: "Server error" });
@@ -128,7 +110,6 @@ app.post("/api/signin", async (req, res) => {
 // ==================== Check Session ====================
 app.get("/api/check-session", (req, res) => {
   if (req.session.user) {
-  if (req.session && req.session.user) {
     res.json({ loggedIn: true, user: req.session.user });
   } else {
     res.json({ loggedIn: false });
@@ -139,7 +120,6 @@ app.get("/api/check-session", (req, res) => {
 app.post("/api/logout", (req, res) => {
   req.session.destroy(err => {
     if (err) return res.status(500).json({ error: "Failed to logout" });
-    res.clearCookie("connect.sid");
     res.json({ ok: true });
   });
 });
@@ -154,7 +134,6 @@ async function sendSubmissionEmail({ toAdmin, toUser, subjectAdmin, subjectUser,
         To: [{ Email: toAdmin, Name: "JoyFund Admin" }],
         Subject: subjectAdmin,
         TextPart: `New submission received:\n\n${textUser}`
-        TextPart: `New submission received:\n\n${textUser}`,
       });
     }
     if (toUser) {
@@ -163,7 +142,6 @@ async function sendSubmissionEmail({ toAdmin, toUser, subjectAdmin, subjectUser,
         To: [{ Email: toUser.email, Name: toUser.name }],
         Subject: subjectUser,
         TextPart: textUser
-        TextPart: textUser,
       });
     }
 
@@ -198,7 +176,6 @@ app.post("/api/waitlist", async (req, res) => {
       subjectAdmin: "New Waitlist Submission",
       subjectUser: "Your JoyFund Waitlist Submission",
       textUser: text
-      textUser: text,
     });
 
     res.json({ success: true, message: "Successfully joined the waitlist!" });
@@ -217,10 +194,7 @@ app.post("/api/submit-volunteer", async (req, res) => {
     if (!sheets) throw new Error("Google Sheets not initialized");
     if (!process.env.VOLUNTEERS_SHEET_ID) throw new Error("VOLUNTEERS_SHEET_ID not set");
 
-    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:D", [[new Date().toLocaleString(), name, email, city, message]]);
-    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:D", [
-      [new Date().toLocaleString(), name, email, city, message],
-    ]);
+    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:E", [[new Date().toLocaleString(), name, email, city, message]]);
 
     const text = `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`;
     await sendSubmissionEmail({
@@ -229,7 +203,6 @@ app.post("/api/submit-volunteer", async (req, res) => {
       subjectAdmin: "New Volunteer Submission",
       subjectUser: "Your JoyFund Volunteer Submission",
       textUser: text
-      textUser: text,
     });
 
     res.json({ success: true, message: "Volunteer application submitted!" });
@@ -248,10 +221,7 @@ app.post("/api/submit-streetteam", async (req, res) => {
     if (!sheets) throw new Error("Google Sheets not initialized");
     if (!process.env.STREETTEAM_SHEET_ID) throw new Error("STREETTEAM_SHEET_ID not set");
 
-    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "A:D", [[new Date().toLocaleString(), name, email, city, message]]);
-    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "A:D", [
-      [new Date().toLocaleString(), name, email, city, message],
-    ]);
+    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "A:E", [[new Date().toLocaleString(), name, email, city, message]]);
 
     const text = `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`;
     await sendSubmissionEmail({
@@ -260,7 +230,6 @@ app.post("/api/submit-streetteam", async (req, res) => {
       subjectAdmin: "New Street Team Submission",
       subjectUser: "Your JoyFund Street Team Submission",
       textUser: text
-      textUser: text,
     });
 
     res.json({ success: true, message: "Street Team application submitted!" });
@@ -280,9 +249,6 @@ app.post("/api/donations", async (req, res) => {
     if (!process.env.DONATIONS_SHEET_ID) throw new Error("DONATIONS_SHEET_ID not set");
 
     await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [[new Date().toISOString(), email, amount, campaign]]);
-    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [
-      [new Date().toISOString(), email, amount, campaign],
-    ]);
 
     const text = `Thank you for your donation!\n\nEmail: ${email}\nAmount: $${amount}\nCampaign: ${campaign}`;
     await sendSubmissionEmail({
@@ -291,112 +257,12 @@ app.post("/api/donations", async (req, res) => {
       subjectAdmin: "New Donation Received",
       subjectUser: "Thank you for your donation!",
       textUser: text
-      textUser: text,
     });
 
     res.json({ success: true, message: "Donation recorded!" });
   } catch (err) {
     console.error("donations error:", err);
     res.status(500).json({ error: "Server error", details: err.message });
-  }
-});
-
-// ==================== Stripe Checkout ====================
-app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
-  const { campaignId } = req.params;
-  const { amount, successUrl, cancelUrl } = req.body;
-  if (!amount || !campaignId) return res.status(400).json({ error: "Missing parameters" });
-
-  try {
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: "usd",
-          product_data: { name: `${campaignId} Donation` },
-          unit_amount: Math.round(amount * 100),
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: { name: `${campaignId} Donation` },
-            unit_amount: Math.round(amount * 100),
-          },
-          quantity: 1,
-        },
-        quantity: 1,
-      }],
-      ],
-      mode: "payment",
-      success_url: successUrl || `${req.headers.origin}/thank-you.html`,
-      cancel_url: cancelUrl || `${req.headers.origin}/`,
-    });
-
-    res.json({ success: true, sessionId: session.id });
-  } catch (err) {
-    console.error("Stripe checkout error:", err);
-    res.status(500).json({ error: "Stripe checkout failed" });
-  }
-});
-
-// ==================== Campaigns ====================
-app.get("/api/campaigns", async (req, res) => {
-  try {
-    const campaigns = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:E");
-    res.json({ ok: true, campaigns });
-  } catch (err) {
-    console.error("campaigns error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// ==================== Send Confirmation Email ====================
-app.post("/api/send-confirmation-email", async (req, res) => {
-  const { toEmail, userName } = req.body;
-  if (!toEmail || !userName) return res.status(400).json({ error: "Missing parameters" });
-
-  const request = mailjetClient.post("send", { version: "v3.1" }).request({
-    Messages: [
-      {
-        From: {
-          Email: process.env.EMAIL_FROM,
-          Name: "JoyFund INC"
-          Name: "JoyFund INC",
-        },
-        To: [
-          {
-            Email: toEmail,
-            Name: userName
-          }
-            Name: userName,
-          },
-        ],
-        Subject: "🎉 Welcome to JoyFund INC! Your Account is Confirmed! 🎄",
-        HTMLPart: `
-          <div style="font-family:sans-serif; text-align:center; padding:20px; background:#ffe4e1; border-radius:15px;">
-            <h1 style="color:#FF4B9B;">🎉 Hello ${userName}! 🎉</h1>
-            <p style="font-size:16px;">Your account has been successfully confirmed.</p>
-            <p style="font-size:16px;">Thank you for joining JoyFund INC! 💖</p>
-            <img src="https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif" style="width:200px; margin-top:10px;" />
-            <p style="font-size:14px; margin-top:15px;">We’re thrilled to have you! 🎄✨</p>
-          </div>
-        `
-      }
-    ]
-        `,
-      },
-    ],
-  });
-
-  try {
-    await request;
-    res.json({ success: true, message: "Confirmation email sent!" });
-  } catch (err) {
-    console.error("Mailjet error:", err.statusCode || err);
-    res.status(500).json({ error: "Failed to send email", details: err.message || err });
-    res
-      .status(500)
-      .json({ error: "Failed to send email", details: err.message || err });
   }
 });
 
