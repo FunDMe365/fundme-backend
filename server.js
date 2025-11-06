@@ -8,28 +8,30 @@ const Stripe = require("stripe");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-const multer = require("multer"); // ✅ Added for file uploads
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // ==================== Middleware ====================
 app.use(cors({
-  origin: "https://fundasmile.net",
-  credentials: true,
+  origin: "https://fundasmile.net", // frontend domain
+  credentials: true,                // ✅ allow cookies
 }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// ==================== Session Fix ====================
 app.use(session({
   secret: process.env.SESSION_SECRET || "secret",
   resave: false,
   saveUninitialized: true,
+  cookie: {
+    httpOnly: true,
+    secure: true,       // ✅ must be true for HTTPS, false if local testing HTTP
+    sameSite: "none",   // ✅ allows cross-site cookie for your frontend domain
+    maxAge: 24 * 60 * 60 * 1000 // 1 day
+  }
 }));
-
-// ==================== File Upload ====================
-const upload = multer({ dest: "uploads/" }); // uploads folder for ID files
-if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 
 // ==================== Stripe ====================
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
@@ -192,7 +194,7 @@ app.post("/api/submit-volunteer", async (req, res) => {
     if (!sheets) throw new Error("Google Sheets not initialized");
     if (!process.env.VOLUNTEERS_SHEET_ID) throw new Error("VOLUNTEERS_SHEET_ID not set");
 
-    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:D", [[new Date().toLocaleString(), name, email, city, message]]);
+    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:E", [[new Date().toLocaleString(), name, email, city, message]]);
 
     const text = `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`;
     await sendSubmissionEmail({
@@ -219,7 +221,7 @@ app.post("/api/submit-streetteam", async (req, res) => {
     if (!sheets) throw new Error("Google Sheets not initialized");
     if (!process.env.STREETTEAM_SHEET_ID) throw new Error("STREETTEAM_SHEET_ID not set");
 
-    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "A:D", [[new Date().toLocaleString(), name, email, city, message]]);
+    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "A:E", [[new Date().toLocaleString(), name, email, city, message]]);
 
     const text = `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`;
     await sendSubmissionEmail({
@@ -312,16 +314,8 @@ app.post("/api/send-confirmation-email", async (req, res) => {
   const request = mailjetClient.post("send", { version: "v3.1" }).request({
     Messages: [
       {
-        From: {
-          Email: process.env.EMAIL_FROM,
-          Name: "JoyFund INC"
-        },
-        To: [
-          {
-            Email: toEmail,
-            Name: userName
-          }
-        ],
+        From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
+        To: [{ Email: toEmail, Name: userName }],
         Subject: "🎉 Welcome to JoyFund INC! Your Account is Confirmed! 🎄",
         HTMLPart: `
           <div style="font-family:sans-serif; text-align:center; padding:20px; background:#ffe4e1; border-radius:15px;">
@@ -343,16 +337,6 @@ app.post("/api/send-confirmation-email", async (req, res) => {
     console.error("Mailjet error:", err.statusCode || err);
     res.status(500).json({ error: "Failed to send email", details: err.message || err });
   }
-});
-
-// ==================== ✅ Verify ID Route ====================
-app.post("/api/verify-id", upload.single("idDocument"), (req, res) => {
-  if (!req.session.user) return res.status(401).json({ success: false, message: "Not signed in" });
-  if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
-
-  console.log("ID uploaded by:", req.session.user.email, req.file);
-
-  res.json({ success: true, message: "ID uploaded successfully" });
 });
 
 // ==================== Start Server ====================
