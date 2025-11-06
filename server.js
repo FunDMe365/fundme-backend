@@ -8,7 +8,7 @@ const Stripe = require("stripe");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-const sgMail = require("@sendgrid/mail");
+const mailjet = require("node-mailjet");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -30,32 +30,9 @@ app.use(session({
 // ==================== Stripe ====================
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ==================== SendGrid ====================
-const apiKey = process.env.SENDGRID_API_KEY;
-
-// Log key prefix for debugging
-if (!apiKey) {
-  console.warn("⚠️ No SENDGRID_API_KEY found in environment variables!");
-} else if (!apiKey.startsWith("SG.")) {
-  console.warn("⚠️ SENDGRID_API_KEY does not start with 'SG.' — check Render settings!");
-} else {
-  console.log("✅ SendGrid key detected. Prefix:", apiKey.slice(0, 5));
-}
-
-try {
-  sgMail.setApiKey(apiKey);
-  // Quick connectivity test
-  sgMail.send({
-    to: "admin@fundasmile.net",
-    from: "admin@fundasmile.net",
-    subject: "✅ SendGrid connection test",
-    text: "This is an automated test confirming SendGrid API connection is active."
-  })
-  .then(() => console.log("✅ SendGrid test email sent successfully."))
-  .catch(err => console.error("⚠️ SendGrid connection test failed:", err.response?.body || err.message));
-} catch (err) {
-  console.error("❌ SendGrid setup error:", err.message);
-}
+// ==================== Mailjet ====================
+const mailjetClient = mailjet
+  .connect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
 
 // ==================== Google Sheets ====================
 let sheets;
@@ -219,26 +196,37 @@ app.post("/api/send-confirmation-email", async (req, res) => {
   const { toEmail, userName } = req.body;
   if (!toEmail || !userName) return res.status(400).json({ error: "Missing parameters" });
 
-  const msg = {
-    to: toEmail,
-    from: "admin@fundasmile.net",
-    subject: "🎉 Welcome to Fund a Smile! Your Account is Confirmed! 🎄",
-    html: `
-      <div style="font-family:sans-serif; text-align:center; padding:20px; background:#ffe4e1; border-radius:15px;">
-        <h1 style="color:#FF4B9B;">🎉 Hello ${userName}! 🎉</h1>
-        <p style="font-size:16px;">Your account has been successfully confirmed.</p>
-        <p style="font-size:16px;">Thank you for joining Fund a Smile! 💖</p>
-        <img src="https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif" style="width:200px; margin-top:10px;" />
-        <p style="font-size:14px; margin-top:15px;">We’re thrilled to have you! 🎄✨</p>
-      </div>
-    `,
-  };
-
   try {
-    await sgMail.send(msg);
+    const request = mailjetClient
+      .post("send", { version: "v3.1" })
+      .request({
+        Messages: [
+          {
+            From: {
+              Email: "admin@fundasmile.net",
+              Name: "Fund a Smile"
+            },
+            To: [
+              { Email: toEmail, Name: userName }
+            ],
+            Subject: "🎉 Welcome to Fund a Smile! Your Account is Confirmed! 🎄",
+            HTMLPart: `
+              <div style="font-family:sans-serif; text-align:center; padding:20px; background:#ffe4e1; border-radius:15px;">
+                <h1 style="color:#FF4B9B;">🎉 Hello ${userName}! 🎉</h1>
+                <p style="font-size:16px;">Your account has been successfully confirmed.</p>
+                <p style="font-size:16px;">Thank you for joining Fund a Smile! 💖</p>
+                <img src="https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif" style="width:200px; margin-top:10px;" />
+                <p style="font-size:14px; margin-top:15px;">We’re thrilled to have you! 🎄✨</p>
+              </div>
+            `
+          }
+        ]
+      });
+
+    await request;
     res.json({ success: true, message: "Confirmation email sent!" });
   } catch (err) {
-    console.error("SendGrid error:", err);
+    console.error("Mailjet error:", err);
     res.status(500).json({ error: "Failed to send email", details: err.message || err });
   }
 });
