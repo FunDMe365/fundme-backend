@@ -8,30 +8,49 @@ const Stripe = require("stripe");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const sgMail = require("@sendgrid/mail");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // ==================== Middleware ====================
-app.use(cors({
-  origin: "https://fundasmile.net",
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: "https://fundasmile.net",
+    credentials: true,
+  })
+);
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-app.use(session({
-  secret: process.env.SESSION_SECRET || "secret",
-  resave: false,
-  saveUninitialized: true,
-}));
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "secret",
+    resave: false,
+    saveUninitialized: true,
+  })
+);
 
 // ==================== Stripe ====================
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ==================== SendGrid ====================
-const sgMail = require("@sendgrid/mail");
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+// Verify sender identity (to catch silent API rejections)
+(async () => {
+  try {
+    await sgMail.send({
+      to: "admin@fundasmile.net",
+      from: "admin@fundasmile.net",
+      subject: "✅ SendGrid Test Connection",
+      text: "SendGrid connected successfully!",
+    });
+    console.log("✅ SendGrid verified and ready to send emails");
+  } catch (err) {
+    console.error("⚠️ SendGrid connection test failed:", err.message);
+  }
+})();
 
 // ==================== Google Sheets ====================
 let sheets;
@@ -45,7 +64,9 @@ try {
     sheets = google.sheets({ version: "v4", auth });
     console.log("✅ Google Sheets initialized");
   } else {
-    console.warn("⚠️ GOOGLE_CREDENTIALS_JSON not provided; Sheets operations will fallback.");
+    console.warn(
+      "⚠️ GOOGLE_CREDENTIALS_JSON not provided; Sheets operations will fallback."
+    );
   }
 } catch (err) {
   console.error("❌ Google Sheets initialization failed", err.message);
@@ -70,19 +91,22 @@ async function appendSheetValues(spreadsheetId, range, values) {
 
 // ==================== Users ====================
 async function getUsers() {
-  return getSheetValues(process.env.USERS_SHEET_ID, "A:D"); // JoinDate | Name | Email | PasswordHash
+  return getSheetValues(process.env.USERS_SHEET_ID, "A:D");
 }
 
 // ==================== Sign In ====================
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: "Missing email or password" });
+  if (!email || !password)
+    return res.status(400).json({ error: "Missing email or password" });
 
   try {
     const users = await getUsers();
     const inputEmail = email.trim().toLowerCase();
 
-    const userRow = users.find(u => u[2] && u[2].trim().toLowerCase() === inputEmail);
+    const userRow = users.find(
+      (u) => u[2] && u[2].trim().toLowerCase() === inputEmail
+    );
     if (!userRow) return res.status(401).json({ error: "Invalid credentials" });
 
     const storedHash = (userRow[3] || "").trim();
@@ -108,7 +132,7 @@ app.get("/api/check-session", (req, res) => {
 
 // ==================== Logout ====================
 app.post("/api/logout", (req, res) => {
-  req.session.destroy(err => {
+  req.session.destroy((err) => {
     if (err) return res.status(500).json({ error: "Failed to logout" });
     res.json({ ok: true });
   });
@@ -117,7 +141,8 @@ app.post("/api/logout", (req, res) => {
 // ==================== Waitlist ====================
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
-  if (!name || !email || !source || !reason) return res.status(400).json({ error: "Missing fields" });
+  if (!name || !email || !source || !reason)
+    return res.status(400).json({ error: "Missing fields" });
 
   try {
     if (!sheets) throw new Error("Google Sheets not initialized");
@@ -139,10 +164,13 @@ app.post("/api/waitlist", async (req, res) => {
 // ==================== Donations ====================
 app.post("/api/donations", async (req, res) => {
   const { email, amount, campaign } = req.body;
-  if (!email || !amount || !campaign) return res.status(400).json({ error: "Missing parameters" });
+  if (!email || !amount || !campaign)
+    return res.status(400).json({ error: "Missing parameters" });
 
   try {
-    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [[new Date().toISOString(), email, amount, campaign]]);
+    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [
+      [new Date().toISOString(), email, amount, campaign],
+    ]);
     res.json({ success: true });
   } catch (err) {
     console.error("donations error:", err);
@@ -154,19 +182,22 @@ app.post("/api/donations", async (req, res) => {
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   const { campaignId } = req.params;
   const { amount, successUrl, cancelUrl } = req.body;
-  if (!amount || !campaignId) return res.status(400).json({ error: "Missing parameters" });
+  if (!amount || !campaignId)
+    return res.status(400).json({ error: "Missing parameters" });
 
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: "usd",
-          product_data: { name: `${campaignId} Donation` },
-          unit_amount: Math.round(amount * 100),
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: { name: `${campaignId} Donation` },
+            unit_amount: Math.round(amount * 100),
+          },
+          quantity: 1,
         },
-        quantity: 1,
-      }],
+      ],
       mode: "payment",
       success_url: successUrl || `${req.headers.origin}/thank-you.html`,
       cancel_url: cancelUrl || `${req.headers.origin}/`,
@@ -193,17 +224,21 @@ app.get("/api/campaigns", async (req, res) => {
 // ==================== Send Confirmation Email ====================
 app.post("/api/send-confirmation-email", async (req, res) => {
   const { toEmail, userName } = req.body;
-  if (!toEmail || !userName) return res.status(400).json({ error: "Missing parameters" });
+  if (!toEmail || !userName)
+    return res.status(400).json({ error: "Missing parameters" });
 
   const msg = {
     to: toEmail,
-    from: "admin@fundasmile.net",
-    subject: "🎉 Welcome to Fund a Smile! Your Account is Confirmed! 🎄",
+    from: {
+      email: "admin@fundasmile.net",
+      name: "Fund a Smile 🎄",
+    },
+    subject: "🎉 Welcome to Fund a Smile! Your Account is Confirmed!",
     html: `
-      <div style="font-family:sans-serif; text-align:center; padding:20px; background:#ffe4e1; border-radius:15px;">
+      <div style="font-family:sans-serif; text-align:center; padding:20px; background:#fff8f0; border-radius:15px;">
         <h1 style="color:#FF4B9B;">🎉 Hello ${userName}! 🎉</h1>
         <p style="font-size:16px;">Your account has been successfully confirmed.</p>
-        <p style="font-size:16px;">Thank you for joining Fund a Smile! 💖</p>
+        <p style="font-size:16px;">Thank you for joining <b>Fund a Smile</b>! 💖</p>
         <img src="https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif" style="width:200px; margin-top:10px;" />
         <p style="font-size:14px; margin-top:15px;">We’re thrilled to have you! 🎄✨</p>
       </div>
@@ -212,10 +247,13 @@ app.post("/api/send-confirmation-email", async (req, res) => {
 
   try {
     await sgMail.send(msg);
+    console.log(`✅ Confirmation email sent to ${toEmail}`);
     res.json({ success: true, message: "Confirmation email sent!" });
   } catch (err) {
-    console.error("SendGrid error:", err);
-    res.status(500).json({ error: "Failed to send email", details: err.message || err });
+    console.error("❌ SendGrid email error:", err.response?.body || err.message);
+    res
+      .status(500)
+      .json({ error: "Failed to send email", details: err.response?.body || err.message });
   }
 });
 
