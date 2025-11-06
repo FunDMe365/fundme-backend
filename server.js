@@ -8,7 +8,6 @@ const Stripe = require("stripe");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-const mailjet = require("node-mailjet");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -31,8 +30,11 @@ app.use(session({
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // ==================== Mailjet ====================
-const mailjetClient = mailjet
-  .connect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
+const mailjet = require("node-mailjet");
+const mailjetClient = mailjet.apiConnect(
+  process.env.MAILJET_API_KEY,
+  process.env.MAILJET_API_SECRET
+);
 
 // ==================== Google Sheets ====================
 let sheets;
@@ -196,37 +198,38 @@ app.post("/api/send-confirmation-email", async (req, res) => {
   const { toEmail, userName } = req.body;
   if (!toEmail || !userName) return res.status(400).json({ error: "Missing parameters" });
 
-  try {
-    const request = mailjetClient
-      .post("send", { version: "v3.1" })
-      .request({
-        Messages: [
+  const request = mailjetClient.post("send", { version: "v3.1" }).request({
+    Messages: [
+      {
+        From: {
+          Email: "admin@fundasmile.net",
+          Name: "Fund a Smile"
+        },
+        To: [
           {
-            From: {
-              Email: "admin@fundasmile.net",
-              Name: "Fund a Smile"
-            },
-            To: [
-              { Email: toEmail, Name: userName }
-            ],
-            Subject: "🎉 Welcome to Fund a Smile! Your Account is Confirmed! 🎄",
-            HTMLPart: `
-              <div style="font-family:sans-serif; text-align:center; padding:20px; background:#ffe4e1; border-radius:15px;">
-                <h1 style="color:#FF4B9B;">🎉 Hello ${userName}! 🎉</h1>
-                <p style="font-size:16px;">Your account has been successfully confirmed.</p>
-                <p style="font-size:16px;">Thank you for joining Fund a Smile! 💖</p>
-                <img src="https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif" style="width:200px; margin-top:10px;" />
-                <p style="font-size:14px; margin-top:15px;">We’re thrilled to have you! 🎄✨</p>
-              </div>
-            `
+            Email: toEmail,
+            Name: userName
           }
-        ]
-      });
+        ],
+        Subject: "🎉 Welcome to Fund a Smile! Your Account is Confirmed! 🎄",
+        HTMLPart: `
+          <div style="font-family:sans-serif; text-align:center; padding:20px; background:#ffe4e1; border-radius:15px;">
+            <h1 style="color:#FF4B9B;">🎉 Hello ${userName}! 🎉</h1>
+            <p style="font-size:16px;">Your account has been successfully confirmed.</p>
+            <p style="font-size:16px;">Thank you for joining Fund a Smile! 💖</p>
+            <img src="https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif" style="width:200px; margin-top:10px;" />
+            <p style="font-size:14px; margin-top:15px;">We’re thrilled to have you! 🎄✨</p>
+          </div>
+        `
+      }
+    ]
+  });
 
+  try {
     await request;
     res.json({ success: true, message: "Confirmation email sent!" });
   } catch (err) {
-    console.error("Mailjet error:", err);
+    console.error("Mailjet error:", err.statusCode || err);
     res.status(500).json({ error: "Failed to send email", details: err.message || err });
   }
 });
