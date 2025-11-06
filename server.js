@@ -8,35 +8,28 @@ const Stripe = require("stripe");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const multer = require("multer"); // ✅ Added for file uploads
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // ==================== Middleware ====================
-app.use(
-  cors({
-    origin: "https://fundasmile.net",
-    credentials: true,
-  })
-);
+app.use(cors({
+  origin: "https://fundasmile.net",
+  credentials: true,
+}));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// 🩵 FIXED SESSION SETTINGS (to stop redirect issue)
-app.set("trust proxy", 1);
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "secret",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: true, // Required for HTTPS (Render uses HTTPS)
-      httpOnly: true,
-      sameSite: "none", // allow frontend <-> backend cookies
-      maxAge: 1000 * 60 * 60 * 24, // 1 day
-    },
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET || "secret",
+  resave: false,
+  saveUninitialized: true,
+}));
+
+// ==================== File Upload ====================
+const upload = multer({ dest: "uploads/" }); // uploads folder for ID files
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 
 // ==================== Stripe ====================
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
@@ -105,10 +98,7 @@ app.post("/api/signin", async (req, res) => {
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
     req.session.user = { name: userRow[1], email: userRow[2], joinDate: userRow[0] };
-    req.session.save(err => {
-      if (err) console.error("Session save error:", err);
-      res.json({ ok: true, user: req.session.user });
-    });
+    res.json({ ok: true, user: req.session.user });
   } catch (err) {
     console.error("signin error:", err);
     res.status(500).json({ error: "Server error" });
@@ -117,7 +107,7 @@ app.post("/api/signin", async (req, res) => {
 
 // ==================== Check Session ====================
 app.get("/api/check-session", (req, res) => {
-  if (req.session && req.session.user) {
+  if (req.session.user) {
     res.json({ loggedIn: true, user: req.session.user });
   } else {
     res.json({ loggedIn: false });
@@ -128,7 +118,6 @@ app.get("/api/check-session", (req, res) => {
 app.post("/api/logout", (req, res) => {
   req.session.destroy(err => {
     if (err) return res.status(500).json({ error: "Failed to logout" });
-    res.clearCookie("connect.sid");
     res.json({ ok: true });
   });
 });
@@ -142,7 +131,7 @@ async function sendSubmissionEmail({ toAdmin, toUser, subjectAdmin, subjectUser,
         From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
         To: [{ Email: toAdmin, Name: "JoyFund Admin" }],
         Subject: subjectAdmin,
-        TextPart: `New submission received:\n\n${textUser}`,
+        TextPart: `New submission received:\n\n${textUser}`
       });
     }
     if (toUser) {
@@ -150,7 +139,7 @@ async function sendSubmissionEmail({ toAdmin, toUser, subjectAdmin, subjectUser,
         From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
         To: [{ Email: toUser.email, Name: toUser.name }],
         Subject: subjectUser,
-        TextPart: textUser,
+        TextPart: textUser
       });
     }
 
@@ -184,7 +173,7 @@ app.post("/api/waitlist", async (req, res) => {
       toUser: { email, name },
       subjectAdmin: "New Waitlist Submission",
       subjectUser: "Your JoyFund Waitlist Submission",
-      textUser: text,
+      textUser: text
     });
 
     res.json({ success: true, message: "Successfully joined the waitlist!" });
@@ -203,9 +192,7 @@ app.post("/api/submit-volunteer", async (req, res) => {
     if (!sheets) throw new Error("Google Sheets not initialized");
     if (!process.env.VOLUNTEERS_SHEET_ID) throw new Error("VOLUNTEERS_SHEET_ID not set");
 
-    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:D", [
-      [new Date().toLocaleString(), name, email, city, message],
-    ]);
+    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:D", [[new Date().toLocaleString(), name, email, city, message]]);
 
     const text = `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`;
     await sendSubmissionEmail({
@@ -213,7 +200,7 @@ app.post("/api/submit-volunteer", async (req, res) => {
       toUser: { email, name },
       subjectAdmin: "New Volunteer Submission",
       subjectUser: "Your JoyFund Volunteer Submission",
-      textUser: text,
+      textUser: text
     });
 
     res.json({ success: true, message: "Volunteer application submitted!" });
@@ -232,9 +219,7 @@ app.post("/api/submit-streetteam", async (req, res) => {
     if (!sheets) throw new Error("Google Sheets not initialized");
     if (!process.env.STREETTEAM_SHEET_ID) throw new Error("STREETTEAM_SHEET_ID not set");
 
-    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "A:D", [
-      [new Date().toLocaleString(), name, email, city, message],
-    ]);
+    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "A:D", [[new Date().toLocaleString(), name, email, city, message]]);
 
     const text = `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`;
     await sendSubmissionEmail({
@@ -242,7 +227,7 @@ app.post("/api/submit-streetteam", async (req, res) => {
       toUser: { email, name },
       subjectAdmin: "New Street Team Submission",
       subjectUser: "Your JoyFund Street Team Submission",
-      textUser: text,
+      textUser: text
     });
 
     res.json({ success: true, message: "Street Team application submitted!" });
@@ -261,9 +246,7 @@ app.post("/api/donations", async (req, res) => {
     if (!sheets) throw new Error("Google Sheets not initialized");
     if (!process.env.DONATIONS_SHEET_ID) throw new Error("DONATIONS_SHEET_ID not set");
 
-    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [
-      [new Date().toISOString(), email, amount, campaign],
-    ]);
+    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [[new Date().toISOString(), email, amount, campaign]]);
 
     const text = `Thank you for your donation!\n\nEmail: ${email}\nAmount: $${amount}\nCampaign: ${campaign}`;
     await sendSubmissionEmail({
@@ -271,7 +254,7 @@ app.post("/api/donations", async (req, res) => {
       toUser: { email, name: email.split("@")[0] },
       subjectAdmin: "New Donation Received",
       subjectUser: "Thank you for your donation!",
-      textUser: text,
+      textUser: text
     });
 
     res.json({ success: true, message: "Donation recorded!" });
@@ -290,16 +273,14 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: { name: `${campaignId} Donation` },
-            unit_amount: Math.round(amount * 100),
-          },
-          quantity: 1,
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: `${campaignId} Donation` },
+          unit_amount: Math.round(amount * 100),
         },
-      ],
+        quantity: 1,
+      }],
       mode: "payment",
       success_url: successUrl || `${req.headers.origin}/thank-you.html`,
       cancel_url: cancelUrl || `${req.headers.origin}/`,
@@ -333,13 +314,13 @@ app.post("/api/send-confirmation-email", async (req, res) => {
       {
         From: {
           Email: process.env.EMAIL_FROM,
-          Name: "JoyFund INC",
+          Name: "JoyFund INC"
         },
         To: [
           {
             Email: toEmail,
-            Name: userName,
-          },
+            Name: userName
+          }
         ],
         Subject: "🎉 Welcome to JoyFund INC! Your Account is Confirmed! 🎄",
         HTMLPart: `
@@ -350,9 +331,9 @@ app.post("/api/send-confirmation-email", async (req, res) => {
             <img src="https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif" style="width:200px; margin-top:10px;" />
             <p style="font-size:14px; margin-top:15px;">We’re thrilled to have you! 🎄✨</p>
           </div>
-        `,
-      },
-    ],
+        `
+      }
+    ]
   });
 
   try {
@@ -360,10 +341,18 @@ app.post("/api/send-confirmation-email", async (req, res) => {
     res.json({ success: true, message: "Confirmation email sent!" });
   } catch (err) {
     console.error("Mailjet error:", err.statusCode || err);
-    res
-      .status(500)
-      .json({ error: "Failed to send email", details: err.message || err });
+    res.status(500).json({ error: "Failed to send email", details: err.message || err });
   }
+});
+
+// ==================== ✅ Verify ID Route ====================
+app.post("/api/verify-id", upload.single("idDocument"), (req, res) => {
+  if (!req.session.user) return res.status(401).json({ success: false, message: "Not signed in" });
+  if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
+
+  console.log("ID uploaded by:", req.session.user.email, req.file);
+
+  res.json({ success: true, message: "ID uploaded successfully" });
 });
 
 // ==================== Start Server ====================
