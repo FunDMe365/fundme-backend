@@ -8,11 +8,6 @@ const Stripe = require("stripe");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
-const Mailjet = require("node-mailjet");
-const mailjet = Mailjet.apiConnect(
-  process.env.MAILJET_API_KEY,
-  process.env.MAILJET_API_SECRET
-);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
