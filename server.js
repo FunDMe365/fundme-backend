@@ -117,6 +117,35 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
+// ==================== Submission Email Helper ====================
+async function sendSubmissionEmail({ toAdmin, toUser, subjectAdmin, subjectUser, textUser }) {
+  try {
+    const messages = [];
+    if (toAdmin) {
+      messages.push({
+        From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
+        To: [{ Email: toAdmin, Name: "JoyFund Admin" }],
+        Subject: subjectAdmin,
+        TextPart: `New submission received:\n\n${textUser}`
+      });
+    }
+    if (toUser) {
+      messages.push({
+        From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
+        To: [{ Email: toUser.email, Name: toUser.name }],
+        Subject: subjectUser,
+        TextPart: textUser
+      });
+    }
+
+    if (messages.length > 0) {
+      await mailjetClient.post("send", { version: "v3.1" }).request({ Messages: messages });
+    }
+  } catch (err) {
+    console.error("Mailjet email error:", err);
+  }
+}
+
 // ==================== Waitlist ====================
 app.post("/api/waitlist", async (req, res) => {
   const { name, email, source, reason } = req.body;
@@ -124,6 +153,7 @@ app.post("/api/waitlist", async (req, res) => {
 
   try {
     if (!sheets) throw new Error("Google Sheets not initialized");
+    if (!process.env.WAITLIST_SHEET_ID) throw new Error("WAITLIST_SHEET_ID not set");
 
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.WAITLIST_SHEET_ID,
@@ -132,25 +162,14 @@ app.post("/api/waitlist", async (req, res) => {
       resource: { values: [[new Date().toLocaleString(), name, email, source, reason]] },
     });
 
-    // Send email to admin and user
-    await mailjetClient
-      .post("send", { version: "v3.1" })
-      .request({
-        Messages: [
-          {
-            From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
-            To: [{ Email: process.env.EMAIL_TO, Name: "JoyFund Admin" }],
-            Subject: "New Waitlist Submission",
-            TextPart: `Name: ${name}\nEmail: ${email}\nSource: ${source}\nReason: ${reason}`,
-          },
-          {
-            From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
-            To: [{ Email: email, Name: name }],
-            Subject: "Thanks for joining JoyFund Waitlist!",
-            TextPart: `Hi ${name},\n\nThanks for joining our waitlist! We'll contact you soon with updates.\n\n- JoyFund INC`,
-          },
-        ],
-      });
+    const text = `Name: ${name}\nEmail: ${email}\nSource: ${source}\nReason: ${reason}`;
+    await sendSubmissionEmail({
+      toAdmin: process.env.EMAIL_TO,
+      toUser: { email, name },
+      subjectAdmin: "New Waitlist Submission",
+      subjectUser: "Your JoyFund Waitlist Submission",
+      textUser: text
+    });
 
     res.json({ success: true, message: "Successfully joined the waitlist!" });
   } catch (err) {
@@ -159,77 +178,57 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ==================== Volunteer Submission ====================
-app.post("/submit-volunteer", async (req, res) => {
+// ==================== Volunteer ====================
+app.post("/api/submit-volunteer", async (req, res) => {
   const { name, email, city, message } = req.body;
-  if (!name || !email || !city || !message)
-    return res.status(400).json({ error: "Missing fields" });
+  if (!name || !email || !city || !message) return res.status(400).json({ error: "Missing fields" });
 
   try {
-    await appendSheetValues(process.env.VOLUNTEER_SHEET_ID, "A:E", [
-      [new Date().toLocaleString(), name, email, city, message],
-    ]);
+    if (!sheets) throw new Error("Google Sheets not initialized");
+    if (!process.env.VOLUNTEERS_SHEET_ID) throw new Error("VOLUNTEERS_SHEET_ID not set");
 
-    await mailjetClient
-      .post("send", { version: "v3.1" })
-      .request({
-        Messages: [
-          {
-            From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
-            To: [{ Email: process.env.EMAIL_TO, Name: "JoyFund Admin" }],
-            Subject: "New Volunteer Submission",
-            TextPart: `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`,
-          },
-          {
-            From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
-            To: [{ Email: email, Name: name }],
-            Subject: "Thanks for joining JoyFund Volunteer Program!",
-            TextPart: `Hi ${name},\n\nThanks for submitting your volunteer application! We'll review it and reach out soon.\n\n- JoyFund INC`,
-          },
-        ],
-      });
+    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:D", [[new Date().toLocaleString(), name, email, city, message]]);
 
-    res.json({ message: "Volunteer application submitted successfully!" });
+    const text = `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`;
+    await sendSubmissionEmail({
+      toAdmin: process.env.EMAIL_TO,
+      toUser: { email, name },
+      subjectAdmin: "New Volunteer Submission",
+      subjectUser: "Your JoyFund Volunteer Submission",
+      textUser: text
+    });
+
+    res.json({ success: true, message: "Volunteer application submitted!" });
   } catch (err) {
-    console.error("Volunteer submission error:", err);
-    res.status(500).json({ error: "Failed to submit application" });
+    console.error("volunteer submission error:", err.message);
+    res.status(500).json({ error: "Failed to submit volunteer application", details: err.message });
   }
 });
 
-// ==================== Street Team Submission ====================
-app.post("/submit-streetteam", async (req, res) => {
+// ==================== Street Team ====================
+app.post("/api/submit-streetteam", async (req, res) => {
   const { name, email, city, message } = req.body;
-  if (!name || !email || !city || !message)
-    return res.status(400).json({ error: "Missing fields" });
+  if (!name || !email || !city || !message) return res.status(400).json({ error: "Missing fields" });
 
   try {
-    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "A:E", [
-      [new Date().toLocaleString(), name, email, city, message],
-    ]);
+    if (!sheets) throw new Error("Google Sheets not initialized");
+    if (!process.env.STREETTEAM_SHEET_ID) throw new Error("STREETTEAM_SHEET_ID not set");
 
-    await mailjetClient
-      .post("send", { version: "v3.1" })
-      .request({
-        Messages: [
-          {
-            From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
-            To: [{ Email: process.env.EMAIL_TO, Name: "JoyFund Admin" }],
-            Subject: "New Street Team Submission",
-            TextPart: `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`,
-          },
-          {
-            From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
-            To: [{ Email: email, Name: name }],
-            Subject: "Thanks for joining JoyFund Street Team!",
-            TextPart: `Hi ${name},\n\nThanks for submitting your Street Team application! We'll review it and reach out soon.\n\n- JoyFund INC`,
-          },
-        ],
-      });
+    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "A:D", [[new Date().toLocaleString(), name, email, city, message]]);
 
-    res.json({ message: "Street Team application submitted successfully!" });
+    const text = `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`;
+    await sendSubmissionEmail({
+      toAdmin: process.env.EMAIL_TO,
+      toUser: { email, name },
+      subjectAdmin: "New Street Team Submission",
+      subjectUser: "Your JoyFund Street Team Submission",
+      textUser: text
+    });
+
+    res.json({ success: true, message: "Street Team application submitted!" });
   } catch (err) {
-    console.error("Street Team submission error:", err);
-    res.status(500).json({ error: "Failed to submit application" });
+    console.error("street team submission error:", err.message);
+    res.status(500).json({ error: "Failed to submit street team application", details: err.message });
   }
 });
 
@@ -239,11 +238,24 @@ app.post("/api/donations", async (req, res) => {
   if (!email || !amount || !campaign) return res.status(400).json({ error: "Missing parameters" });
 
   try {
+    if (!sheets) throw new Error("Google Sheets not initialized");
+    if (!process.env.DONATIONS_SHEET_ID) throw new Error("DONATIONS_SHEET_ID not set");
+
     await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [[new Date().toISOString(), email, amount, campaign]]);
-    res.json({ success: true });
+
+    const text = `Thank you for your donation!\n\nEmail: ${email}\nAmount: $${amount}\nCampaign: ${campaign}`;
+    await sendSubmissionEmail({
+      toAdmin: process.env.EMAIL_TO,
+      toUser: { email, name: email.split("@")[0] },
+      subjectAdmin: "New Donation Received",
+      subjectUser: "Thank you for your donation!",
+      textUser: text
+    });
+
+    res.json({ success: true, message: "Donation recorded!" });
   } catch (err) {
     console.error("donations error:", err);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 });
 
@@ -295,14 +307,22 @@ app.post("/api/send-confirmation-email", async (req, res) => {
   const request = mailjetClient.post("send", { version: "v3.1" }).request({
     Messages: [
       {
-        From: { Email: "admin@fundasmile.net", Name: "Fund a Smile" },
-        To: [{ Email: toEmail, Name: userName }],
-        Subject: "🎉 Welcome to Fund a Smile! Your Account is Confirmed! 🎄",
+        From: {
+          Email: process.env.EMAIL_FROM,
+          Name: "JoyFund INC"
+        },
+        To: [
+          {
+            Email: toEmail,
+            Name: userName
+          }
+        ],
+        Subject: "🎉 Welcome to JoyFund INC! Your Account is Confirmed! 🎄",
         HTMLPart: `
           <div style="font-family:sans-serif; text-align:center; padding:20px; background:#ffe4e1; border-radius:15px;">
             <h1 style="color:#FF4B9B;">🎉 Hello ${userName}! 🎉</h1>
             <p style="font-size:16px;">Your account has been successfully confirmed.</p>
-            <p style="font-size:16px;">Thank you for joining Fund a Smile! 💖</p>
+            <p style="font-size:16px;">Thank you for joining JoyFund INC! 💖</p>
             <img src="https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif" style="width:200px; margin-top:10px;" />
             <p style="font-size:14px; margin-top:15px;">We’re thrilled to have you! 🎄✨</p>
           </div>
