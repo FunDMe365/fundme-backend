@@ -12,11 +12,43 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Ensure data folders exist for fallback storage
+const DATA_DIR = path.join(__dirname, "data");
+const UPLOADS_DIR = path.join(__dirname, "uploads");
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
 // ==================== Middleware ====================
+// Dynamic CORS: allow configured frontend origin(s) and common dev hosts
+const allowedOrigins = [
+  process.env.FRONTEND_URL,            // e.g. https://fundasmile.net or your deployed frontend
+  process.env.FRONTEND_URL_2,         // optional second frontend domain
+  "http://localhost:3000",
+  "http://localhost:5500",
+  "http://127.0.0.1:5500",
+  "http://127.0.0.1:3000",
+  "file://"
+].filter(Boolean);
+
 app.use(cors({
-  origin: "https://fundasmile.net", // make sure this matches your frontend
+  origin: function (origin, callback) {
+    // allow requests with no origin (like mobile apps or curl) and file://
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      return callback(null, true);
+    } else {
+      // In production, it's better to explicitly list allowed origins.
+      // For now, fail closed with a helpful message in logs.
+      console.warn("Blocked CORS request from origin:", origin);
+      return callback(new Error("CORS policy: This origin is not allowed"), false);
+    }
+  },
   credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  optionsSuccessStatus: 200
 }));
+
+// parse JSON and URL-encoded bodies
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
@@ -27,20 +59,29 @@ app.use(session({
   saveUninitialized: false, // only save session if something stored
   cookie: {
     httpOnly: true,
+    // secure must be true in production when using HTTPS
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax"
   }
 }));
 
+// Expose uploads (if you want to serve uploaded verification files)
+app.use("/uploads", express.static(UPLOADS_DIR));
+
 // ==================== Stripe ====================
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY || "");
 
 // ==================== Mailjet ====================
-const mailjet = require("node-mailjet");
-const mailjetClient = mailjet.apiConnect(
-  process.env.MAILJET_API_KEY,
-  process.env.MAILJET_API_SECRET
-);
+let mailjetClient = null;
+try {
+  const mailjet = require("node-mailjet");
+  mailjetClient = mailjet.apiConnect(
+    process.env.MAILJET_API_KEY || "",
+    process.env.MAILJET_API_SECRET || ""
+  );
+} catch (e) {
+  console.warn("Mailjet not configured or missing package; email sending will be disabled.");
+}
 
 // ==================== Google Sheets ====================
 let sheets;
@@ -77,9 +118,33 @@ async function appendSheetValues(spreadsheetId, range, values) {
   });
 }
 
+// Local fallback helpers for campaigns and id verifications
+const CAMPAIGNS_FILE = path.join(DATA_DIR, "campaigns.json");
+const ID_VERIFICATIONS_FILE = path.join(DATA_DIR, "id_verifications.json");
+
+function readJsonFileOrEmpty(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return [];
+    const raw = fs.readFileSync(filePath, "utf8");
+    return JSON.parse(raw || "[]");
+  } catch (err) {
+    console.error("Failed to read JSON file:", filePath, err);
+    return [];
+  }
+}
+
+function safeWriteJsonFile(filePath, data) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
+  } catch (err) {
+    console.error("Failed to write JSON file:", filePath, err);
+  }
+}
+
 // ==================== Users ====================
 async function getUsers() {
-  return getSheetValues(process.env.USERS_SHEET_ID, "A:D"); // JoinDate | Name | Email | PasswordHash
+  // Expect spreadsheet columns: JoinDate | Name | Email | PasswordHash
+  return getSheetValues(process.env.USERS_SHEET_ID, "A:D");
 }
 
 // ==================== Sign In ====================
@@ -100,7 +165,15 @@ app.post("/api/signin", async (req, res) => {
 
     // ✅ Store user in session
     req.session.user = { name: userRow[1], email: userRow[2], joinDate: userRow[0] };
-    res.json({ ok: true, user: req.session.user });
+
+    // Ensure session is saved before responding so cookies are set properly
+    req.session.save(err => {
+      if (err) {
+        console.error("Session save error:", err);
+        return res.status(500).json({ error: "Failed to create session" });
+      }
+      res.json({ ok: true, user: req.session.user });
+    });
   } catch (err) {
     console.error("signin error:", err);
     res.status(500).json({ error: "Server error" });
@@ -109,7 +182,7 @@ app.post("/api/signin", async (req, res) => {
 
 // ==================== Check Session ====================
 app.get("/api/check-session", (req, res) => {
-  if (req.session.user) {
+  if (req.session && req.session.user) {
     res.json({ loggedIn: true, user: req.session.user });
   } else {
     res.json({ loggedIn: false });
@@ -119,7 +192,12 @@ app.get("/api/check-session", (req, res) => {
 // ==================== Logout ====================
 app.post("/api/logout", (req, res) => {
   req.session.destroy(err => {
-    if (err) return res.status(500).json({ error: "Failed to logout" });
+    if (err) {
+      console.error("Session destroy error:", err);
+      return res.status(500).json({ error: "Failed to logout" });
+    }
+    // Clear cookie on client
+    res.clearCookie("connect.sid");
     res.json({ ok: true });
   });
 });
@@ -127,6 +205,10 @@ app.post("/api/logout", (req, res) => {
 // ==================== Submission Email Helper ====================
 async function sendSubmissionEmail({ toAdmin, toUser, subjectAdmin, subjectUser, textUser }) {
   try {
+    if (!mailjetClient) {
+      console.warn("sendSubmissionEmail: mailjet client not configured.");
+      return;
+    }
     const messages = [];
     if (toAdmin) {
       messages.push({
@@ -264,6 +346,120 @@ app.post("/api/donations", async (req, res) => {
     console.error("donations error:", err);
     res.status(500).json({ error: "Server error", details: err.message });
   }
+});
+
+// ==================== Campaigns (new minimal routes) ====================
+// GET all campaigns
+app.get("/api/campaigns", async (req, res) => {
+  try {
+    // Prefer Google Sheets if configured
+    if (sheets && process.env.CAMPAIGNS_SHEET_ID) {
+      const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:E"); // adapt to your columns
+      // Map rows into JSON objects lightly
+      const campaigns = (rows || []).map((r, idx) => ({
+        id: idx + 1,
+        createdAt: r[0] || null,
+        title: r[1] || "",
+        owner: r[2] || "",
+        goal: r[3] || "",
+        description: r[4] || ""
+      }));
+      return res.json({ campaigns });
+    }
+
+    // Fallback to local file
+    const campaigns = readJsonFileOrEmpty(CAMPAIGNS_FILE);
+    res.json({ campaigns });
+  } catch (err) {
+    console.error("Error fetching campaigns:", err);
+    res.status(500).json({ error: "Failed to load campaigns", details: err.message });
+  }
+});
+
+// POST create a campaign
+app.post("/api/create-campaign", async (req, res) => {
+  const { title, goal, description, owner } = req.body;
+  if (!title || !goal || !description || !owner) return res.status(400).json({ error: "Missing fields" });
+
+  try {
+    const newCampaign = {
+      id: Date.now(),
+      createdAt: new Date().toISOString(),
+      title,
+      owner,
+      goal,
+      description
+    };
+
+    if (sheets && process.env.CAMPAIGNS_SHEET_ID) {
+      // Append to Google Sheet
+      await appendSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:E", [[newCampaign.createdAt, newCampaign.title, newCampaign.owner, newCampaign.goal, newCampaign.description]]);
+      return res.json({ ok: true, campaign: newCampaign });
+    }
+
+    // Fallback: write to local file
+    const campaigns = readJsonFileOrEmpty(CAMPAIGNS_FILE);
+    campaigns.push(newCampaign);
+    safeWriteJsonFile(CAMPAIGNS_FILE, campaigns);
+
+    res.json({ ok: true, campaign: newCampaign });
+  } catch (err) {
+    console.error("create-campaign error:", err);
+    res.status(500).json({ error: "Failed to create campaign", details: err.message });
+  }
+});
+
+// ==================== ID Verification (new minimal route) ====================
+// Accept simple id verification submissions (no file upload parsing here).
+// Expect fields: email, idType, idData (could be a URL or notes). If you'd like file uploads, we can add multer later.
+app.post("/api/id-verification", async (req, res) => {
+  const { email, idType, idData } = req.body;
+  if (!email || !idType || !idData) return res.status(400).json({ error: "Missing fields" });
+
+  try {
+    const entry = {
+      id: Date.now(),
+      submittedAt: new Date().toISOString(),
+      email,
+      idType,
+      idData
+    };
+
+    // Append to Google Sheet if configured
+    if (sheets && process.env.ID_VERIFICATIONS_SHEET_ID) {
+      await appendSheetValues(process.env.ID_VERIFICATIONS_SHEET_ID, "A:D", [[entry.submittedAt, email, idType, idData]]);
+    } else {
+      // Fallback: save to local file
+      const current = readJsonFileOrEmpty(ID_VERIFICATIONS_FILE);
+      current.push(entry);
+      safeWriteJsonFile(ID_VERIFICATIONS_FILE, current);
+    }
+
+    // Optionally send an email
+    const text = `ID verification submission:\nEmail: ${email}\nType: ${idType}\nData: ${idData}`;
+    await sendSubmissionEmail({
+      toAdmin: process.env.EMAIL_TO,
+      toUser: { email, name: email.split("@")[0] },
+      subjectAdmin: "New ID Verification Submission",
+      subjectUser: "We received your ID verification",
+      textUser: `Thanks! We received your ID verification submission. We'll review and get back to you.\n\n${text}`
+    });
+
+    res.json({ ok: true, message: "ID verification submitted", entry });
+  } catch (err) {
+    console.error("id-verification error:", err);
+    res.status(500).json({ error: "Failed to submit ID verification", details: err.message });
+  }
+});
+
+// ==================== Health / Root ====================
+app.get("/", (req, res) => {
+  res.json({ status: "ok", name: "JoyFund backend", time: new Date().toISOString() });
+});
+
+// ==================== Fallback 404 for API ====================
+app.use("/api/*", (req, res) => {
+  res.status(404).json({ error: "API route not found" });
 });
 
 // ==================== Start Server ====================
