@@ -6,8 +6,6 @@ const bcrypt = require("bcrypt");
 const { google } = require("googleapis");
 const Stripe = require("stripe");
 const cors = require("cors");
-const fs = require("fs");
-const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -36,6 +34,19 @@ app.options("*", cors({
   origin: allowedOrigins,
   credentials: true,
 }));
+
+// ✅ Ensure all responses include CORS headers
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
 
 // ==================== Middleware ====================
 app.use(bodyParser.json());
@@ -142,46 +153,57 @@ app.post("/api/logout", (req, res) => {
 
 // ==================== Festive Email Helper ====================
 async function sendSubmissionEmail({ type, toAdmin, toUser, details }) {
+  const firstName = toUser?.name?.split(" ")[0] || "Friend";
+  const emoji = "💖🌈🎉✨🎁";
+  const randomEmoji = emoji.split("")[Math.floor(Math.random() * emoji.length)];
+  const festiveLine = `${randomEmoji} ${["Spreading smiles!", "Celebrating kindness!", "Making the world brighter!"][Math.floor(Math.random()*3)]}`;
+
   let subjectAdmin = "";
   let subjectUser = "";
-  let textUser = "";
-  let festiveMessage = "";
+  let htmlUser = "";
 
   switch (type) {
     case "waitlist":
       subjectAdmin = "🎉 New Waitlist Submission!";
-      subjectUser = "🎈 You’re officially on the JoyFund Waitlist!";
-      festiveMessage = `🎉 Welcome aboard, ${toUser.name || "friend"}! 
-We’re thrilled you’ve joined our mission to spread joy and smiles. 
-Keep an eye on your inbox for exciting updates from JoyFund! 💖`;
+      subjectUser = `🎈 Welcome to JoyFund, ${firstName}!`;
+      htmlUser = `
+        <h2 style="color:#ff69b4;">Hi ${firstName}!</h2>
+        <p>You're now officially on our <strong>JoyFund Waitlist</strong>! 🎊</p>
+        <p>Thank you for believing in the power of joy and community. 💕</p>
+        <p>${festiveLine}</p>
+      `;
       break;
-
     case "volunteer":
       subjectAdmin = "🙌 New Volunteer Application!";
-      subjectUser = "🌟 Thank You for Volunteering with JoyFund!";
-      festiveMessage = `🌈 Hi ${toUser.name}, 
-Thank you for stepping up to make a difference! 
-Our team will reach out soon with ways you can help bring joy to others! ✨`;
+      subjectUser = `🌟 Thank You for Volunteering, ${firstName}!`;
+      htmlUser = `
+        <h2 style="color:#87cefa;">Hi ${firstName}!</h2>
+        <p>We’re over the moon that you’re joining our volunteer family! 🌈</p>
+        <p>Your passion will help bring smiles to countless faces. 💫</p>
+        <p>${festiveLine}</p>
+      `;
       break;
-
     case "streetteam":
       subjectAdmin = "🚀 New Street Team Submission!";
-      subjectUser = "🎤 Welcome to the JoyFund Street Team!";
-      festiveMessage = `🎶 Hey ${toUser.name}! 
-Thanks for bringing your energy and passion to our Street Team. 
-Get ready to spread the word and inspire smiles! 💕`;
+      subjectUser = `🎤 Welcome to the Street Team, ${firstName}!`;
+      htmlUser = `
+        <h2 style="color:#ffa500;">Hey ${firstName}!</h2>
+        <p>Thanks for joining the <strong>JoyFund Street Team</strong>! 🎶</p>
+        <p>Your energy and creativity will help us reach new hearts and smiles! 💕</p>
+        <p>${festiveLine}</p>
+      `;
       break;
-
     case "donation":
       subjectAdmin = "💖 New Donation Received!";
-      subjectUser = "💝 Thank You for Your Donation!";
-      festiveMessage = `🌟 Dear ${toUser.name}, 
-Your generosity lights up the world! 
-Thank you for supporting JoyFund’s mission to uplift others. 🌈`;
+      subjectUser = `🌟 Thank You, ${firstName}!`;
+      htmlUser = `
+        <h2 style="color:#32cd32;">Dear ${firstName},</h2>
+        <p>Your generosity lights up the world! 🌍</p>
+        <p>Every contribution helps JoyFund spread kindness and hope. 🌈</p>
+        <p>${festiveLine}</p>
+      `;
       break;
   }
-
-  textUser = `${festiveMessage}\n\nDetails:\n${details}`;
 
   try {
     const messages = [];
@@ -196,15 +218,16 @@ Thank you for supporting JoyFund’s mission to uplift others. 🌈`;
     if (toUser?.email) {
       messages.push({
         From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
-        To: [{ Email: toUser.email, Name: toUser.name }],
+        To: [{ Email: toUser.email, Name: firstName }],
         Subject: subjectUser,
-        TextPart: textUser
+        HTMLPart: htmlUser,
+        TextPart: `Thank you ${firstName}! ${festiveLine}\n\nDetails:\n${details}`
       });
     }
 
-    if (messages.length > 0) {
+    if (messages.length > 0)
       await mailjetClient.post("send", { version: "v3.1" }).request({ Messages: messages });
-    }
+
   } catch (err) {
     console.error("Mailjet email error:", err);
   }
@@ -279,7 +302,7 @@ app.post("/api/submit-streetteam", async (req, res) => {
     res.json({ success: true, message: "Street Team application submitted!" });
   } catch (err) {
     console.error("streetteam error:", err.message);
-    res.status(500).json({ error: "Failed to submit street team application" });
+    res.status(500).json({ error: "Failed to submit street team" });
   }
 });
 
