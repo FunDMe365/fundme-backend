@@ -11,40 +11,37 @@ const mailjet = require("node-mailjet");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ==================== ✅ CORS CONFIG ====================
+// ==================== ✅ CORS CONFIG ==================== 
 const allowedOrigins = [
-  "https://fundasmile.net",
-  "https://fundme-backend.onrender.com",
-  "http://localhost:5000",
-  "http://127.0.0.1:5000"
-];
+"https://fundasmile.net", 
+"https://fundme-backend.onrender.com", 
+"http://localhost:5000", 
+"http://127.0.0.1:5000" ]; 
 
-app.use(cors({
-  origin: function(origin, callback){
-    if (!origin) return callback(null, true); // allow Postman, mobile apps
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error('CORS policy: Not allowed by origin ' + origin));
-  },
-  credentials: true
-}));
+app.use(cors({ 
+origin: function(origin, callback)
+{ if (!origin) return callback(null, true); // allow Postman, mobile apps 
+if (allowedOrigins.includes(origin)) return callback(null, true); 
+return callback(new Error('CORS policy: Not allowed by origin ' + 
+origin)); }, 
+credentials: true })); 
 
-app.options("*", cors({ origin: allowedOrigins, credentials: true }));
+app.options("*", cors({ origin: allowedOrigins, credentials: true })); 
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  if (req.method === "OPTIONS") return res.sendStatus(200);
-  next();
-});
-
-// ==================== ✅ BODY PARSERS ====================
-// Using express built-in parsers instead of bodyParser package
-app.use(express.json({ limit: "10mb" })); // for JSON
-app.use(express.urlencoded({ extended: true, limit: "10mb" })); // for form submissions
-
+app.use((req, res, next) => { 
+const origin = req.headers.origin; 
+if (allowedOrigins.includes(origin)) res.setHeader("Access-Control-
+Allow-Origin", origin); 
+res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, 
+DELETE, OPTIONS"); 
+res.setHeader("Access-Control-Allow-Headers", "Content-Type, 
+Authorization"); 
+res.setHeader("Access-Control-Allow-Credentials", "true"); 
+if (req.method === "OPTIONS") return res.sendStatus(200); 
+next(); }); 
+// ==================== Middleware ==================== 
+app.use(bodyParser.json()); 
+app.use(bodyParser.urlencoded({ extended: true }));
 // ==================== ✅ SESSION FIX ====================
 app.set("trust proxy", 1);
 app.use(session({
