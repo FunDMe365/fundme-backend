@@ -12,6 +12,8 @@ const path = require("path");
 const fs = require("fs");
 
 const app = express();
+const path = require("path");
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 const PORT = process.env.PORT || 5000;
 
 // ==================== ✅ CORS CONFIG ==================== 
@@ -276,8 +278,5 @@ app.get("/api/campaigns", async (req, res) => {
     res.status(500).json({ success:false, message:"Failed to get campaigns" });
   }
 });
-
-const path = require("path");
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // ==================== START SERVER ====================
 app.listen(PORT, () => console.log(`🚀 JoyFund backend running on port ${PORT}`));
