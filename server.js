@@ -20,10 +20,12 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
+    // allow requests with no origin (like server-to-server or some tools)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
     } else {
-      callback(new Error("Not allowed by CORS"));
+      return callback(new Error("Not allowed by CORS"));
     }
   },
   credentials: true
@@ -31,36 +33,60 @@ app.use(cors({
 
 // Handle preflight requests globally
 app.options("*", cors({
-  origin: allowedOrigins,
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
   credentials: true
 }));
+
+// Ensure all responses include CORS headers (extra safety)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
 
 // ==================== Middleware ====================
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ==================== SESSION FIX ====================
-// Key fix: sameSite: "none" + secure for cross-origin sessions
+// For cross-origin cookies (frontend and backend on different domains), set sameSite:'none' and secure:true in production.
+// In development (local) we use lax to avoid issues when not using HTTPS.
 app.use(session({
   secret: process.env.SESSION_SECRET || "secret",
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "none" // ⚠️ important for cross-origin cookies
+    secure: process.env.NODE_ENV === "production",              // true on Render (HTTPS)
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
 
 // ==================== Stripe ====================
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY || "");
 
 // ==================== Mailjet ====================
-const mailjet = require("node-mailjet");
-const mailjetClient = mailjet.apiConnect(
-  process.env.MAILJET_API_KEY,
-  process.env.MAILJET_API_SECRET
-);
+let mailjetClient = null;
+try {
+  const mailjet = require("node-mailjet");
+  mailjetClient = mailjet.apiConnect(
+    process.env.MAILJET_API_KEY || "",
+    process.env.MAILJET_API_SECRET || ""
+  );
+} catch (e) {
+  console.warn("Mailjet not configured or missing package; email sending will be disabled.");
+}
 
 // ==================== Google Sheets ====================
 let sheets;
@@ -118,9 +144,16 @@ app.post("/api/signin", async (req, res) => {
     const match = await bcrypt.compare(password, storedHash);
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
-    // ✅ Store user in session
+    // Store user in session and ensure cookie is set
     req.session.user = { name: userRow[1], email: userRow[2], joinDate: userRow[0] };
-    res.json({ ok: true, user: req.session.user });
+    // Save session explicitly before responding
+    req.session.save(err => {
+      if (err) {
+        console.error("Session save error:", err);
+        return res.status(500).json({ error: "Failed to create session" });
+      }
+      res.json({ ok: true, user: req.session.user });
+    });
   } catch (err) {
     console.error("signin error:", err);
     res.status(500).json({ error: "Server error" });
@@ -129,60 +162,100 @@ app.post("/api/signin", async (req, res) => {
 
 // ==================== Check Session ====================
 app.get("/api/check-session", (req, res) => {
-  if (req.session.user) res.json({ loggedIn: true, user: req.session.user });
+  if (req.session && req.session.user) res.json({ loggedIn: true, user: req.session.user });
   else res.json({ loggedIn: false });
 });
 
 // ==================== Logout ====================
 app.post("/api/logout", (req, res) => {
   req.session.destroy(err => {
-    if (err) return res.status(500).json({ error: "Failed to logout" });
+    if (err) {
+      console.error("Session destroy error:", err);
+      return res.status(500).json({ error: "Failed to logout" });
+    }
+    // Clear cookie on client
+    res.clearCookie("connect.sid", { path: "/" });
     res.json({ ok: true });
   });
 });
 
 // ==================== Festive Email Helper ====================
 async function sendSubmissionEmail({ type, toAdmin, toUser, details }) {
+  const firstName = toUser?.name?.split(" ")[0] || (toUser?.email ? toUser.email.split("@")[0] : "Friend");
+  const emojis = ["💖","🌈","🎉","✨","🎁"];
+  const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+  const festivePhrases = ["Spreading smiles!", "Celebrating kindness!", "Making the world brighter!"];
+  const festiveLine = `${randomEmoji} ${festivePhrases[Math.floor(Math.random()*festivePhrases.length)]}`;
+
   let subjectAdmin = "";
   let subjectUser = "";
+  let htmlUser = "";
   let textUser = "";
-  let festiveMessage = "";
 
   switch (type) {
     case "waitlist":
       subjectAdmin = "🎉 New Waitlist Submission!";
-      subjectUser = "🎈 You’re officially on the JoyFund Waitlist!";
-      festiveMessage = `🎉 Welcome aboard, ${toUser.name || "friend"}! 
-We’re thrilled you’ve joined our mission to spread joy and smiles. 
-Keep an eye on your inbox for exciting updates from JoyFund! 💖`;
+      subjectUser = `🎈 Welcome to JoyFund, ${firstName}!`;
+      htmlUser = `
+        <h2 style="color:#ff69b4;">Hi ${firstName}!</h2>
+        <p>You're now officially on our <strong>JoyFund Waitlist</strong>! 🎊</p>
+        <p>Thank you for believing in the power of joy and community. 💕</p>
+        <p>${festiveLine}</p>
+      `;
+      textUser = `Welcome aboard, ${firstName}! We're thrilled you joined our waitlist.\n\nDetails:\n${details}\n\n${festiveLine}`;
       break;
+
     case "volunteer":
       subjectAdmin = "🙌 New Volunteer Application!";
-      subjectUser = "🌟 Thank You for Volunteering with JoyFund!";
-      festiveMessage = `🌈 Hi ${toUser.name}, 
-Thank you for stepping up to make a difference! 
-Our team will reach out soon with ways you can help bring joy to others! ✨`;
+      subjectUser = `🌟 Thank You for Volunteering, ${firstName}!`;
+      htmlUser = `
+        <h2 style="color:#87cefa;">Hi ${firstName}!</h2>
+        <p>We’re over the moon that you’re joining our volunteer family! 🌈</p>
+        <p>Your passion will help bring smiles to countless faces. 💫</p>
+        <p>${festiveLine}</p>
+      `;
+      textUser = `Hi ${firstName}, thank you for volunteering! \n\nDetails:\n${details}\n\n${festiveLine}`;
       break;
+
     case "streetteam":
       subjectAdmin = "🚀 New Street Team Submission!";
-      subjectUser = "🎤 Welcome to the JoyFund Street Team!";
-      festiveMessage = `🎶 Hey ${toUser.name}! 
-Thanks for bringing your energy and passion to our Street Team. 
-Get ready to spread the word and inspire smiles! 💕`;
+      subjectUser = `🎤 Welcome to the Street Team, ${firstName}!`;
+      htmlUser = `
+        <h2 style="color:#ffa500;">Hey ${firstName}!</h2>
+        <p>Thanks for joining the <strong>JoyFund Street Team</strong>! 🎶</p>
+        <p>Your energy and creativity will help us reach new hearts and smiles! 💕</p>
+        <p>${festiveLine}</p>
+      `;
+      textUser = `Hey ${firstName}! Thanks for joining the Street Team.\n\nDetails:\n${details}\n\n${festiveLine}`;
       break;
+
     case "donation":
       subjectAdmin = "💖 New Donation Received!";
-      subjectUser = "💝 Thank You for Your Donation!";
-      festiveMessage = `🌟 Dear ${toUser.name}, 
-Your generosity lights up the world! 
-Thank you for supporting JoyFund’s mission to uplift others. 🌈`;
+      subjectUser = `🌟 Thank You, ${firstName}!`;
+      htmlUser = `
+        <h2 style="color:#32cd32;">Dear ${firstName},</h2>
+        <p>Your generosity lights up the world! 🌍</p>
+        <p>Every contribution helps JoyFund spread kindness and hope. 🌈</p>
+        <p>${festiveLine}</p>
+      `;
+      textUser = `Dear ${firstName}, thank you for your donation!\n\nDetails:\n${details}\n\n${festiveLine}`;
       break;
+
+    default:
+      subjectAdmin = "New Submission";
+      subjectUser = `Thanks, ${firstName}!`;
+      htmlUser = `<p>Thanks for your submission.</p><p>${festiveLine}</p>`;
+      textUser = `Thanks for your submission.\n\nDetails:\n${details}`;
   }
 
-  textUser = `${festiveMessage}\n\nDetails:\n${details}`;
-
   try {
+    if (!mailjetClient) {
+      console.warn("sendSubmissionEmail: mailjet client not configured.");
+      return;
+    }
+
     const messages = [];
+
     if (toAdmin) {
       messages.push({
         From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
@@ -191,14 +264,17 @@ Thank you for supporting JoyFund’s mission to uplift others. 🌈`;
         TextPart: details
       });
     }
+
     if (toUser?.email) {
       messages.push({
         From: { Email: process.env.EMAIL_FROM, Name: "JoyFund INC" },
-        To: [{ Email: toUser.email, Name: toUser.name }],
+        To: [{ Email: toUser.email, Name: firstName }],
         Subject: subjectUser,
+        HTMLPart: htmlUser,
         TextPart: textUser
       });
     }
+
     if (messages.length > 0) {
       await mailjetClient.post("send", { version: "v3.1" }).request({ Messages: messages });
     }
@@ -236,9 +312,71 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
-// ==================== Other endpoints preserved ====================
-// Volunteer, Street Team, Donations, Profile Update, etc.
-// Use same structure as above with festive emails and appendSheetValues
+// ==================== Volunteer ====================
+app.post("/api/submit-volunteer", async (req, res) => {
+  const { name, email, city, message } = req.body;
+  if (!name || !email || !city || !message) return res.status(400).json({ error: "Missing fields" });
+
+  try {
+    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:E", [[new Date().toLocaleString(), name, email, city, message]]);
+    const details = `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`;
+    await sendSubmissionEmail({
+      type: "volunteer",
+      toAdmin: process.env.EMAIL_TO,
+      toUser: { email, name },
+      details
+    });
+
+    res.json({ success: true, message: "Volunteer application submitted!" });
+  } catch (err) {
+    console.error("volunteer error:", err.message);
+    res.status(500).json({ error: "Failed to submit volunteer" });
+  }
+});
+
+// ==================== Street Team ====================
+app.post("/api/submit-streetteam", async (req, res) => {
+  const { name, email, city, message } = req.body;
+  if (!name || !email || !city || !message) return res.status(400).json({ error: "Missing fields" });
+
+  try {
+    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "A:E", [[new Date().toLocaleString(), name, email, city, message]]);
+    const details = `Name: ${name}\nEmail: ${email}\nCity: ${city}\nMessage: ${message}`;
+    await sendSubmissionEmail({
+      type: "streetteam",
+      toAdmin: process.env.EMAIL_TO,
+      toUser: { email, name },
+      details
+    });
+
+    res.json({ success: true, message: "Street Team application submitted!" });
+  } catch (err) {
+    console.error("streetteam error:", err.message);
+    res.status(500).json({ error: "Failed to submit street team" });
+  }
+});
+
+// ==================== Donations ====================
+app.post("/api/donations", async (req, res) => {
+  const { email, amount, campaign } = req.body;
+  if (!email || !amount || !campaign) return res.status(400).json({ error: "Missing parameters" });
+
+  try {
+    await appendSheetValues(process.env.DONATIONS_SHEET_ID, "A:D", [[new Date().toISOString(), email, amount, campaign]]);
+    const details = `Email: ${email}\nAmount: $${amount}\nCampaign: ${campaign}`;
+    await sendSubmissionEmail({
+      type: "donation",
+      toAdmin: process.env.EMAIL_TO,
+      toUser: { email, name: email.split("@")[0] },
+      details
+    });
+
+    res.json({ success: true, message: "Donation recorded!" });
+  } catch (err) {
+    console.error("donations error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
 // ==================== Start Server ====================
 app.listen(PORT, () => console.log(`🚀 JoyFund backend running on port ${PORT}`));
