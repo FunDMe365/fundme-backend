@@ -195,18 +195,41 @@ const upload = multer({ storage });
 app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user || !user.email) return res.status(401).json({ success: false, message: "You must be signed in to submit." });
-    if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded." });
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+    if (!user || !user.email) {
+      return res.status(401).json({ success: false, message: "You must be signed in to submit." });
+    }
 
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded." });
+    }
+
+    if (!sheets) {
+      return res.status(500).json({ success: false, message: "Sheets not initialized" });
+    }
+
+    // Ensure correct spreadsheet ID
     const spreadsheetId = process.env.ID_VERIFICATIONS_SHEET_ID;
-    if (!spreadsheetId) return res.status(500).json({ success: false, message: "ID_VERIFICATIONS_SHEET_ID not configured" });
+    if (!spreadsheetId) {
+      return res.status(500).json({ success: false, message: "ID_VERIFICATIONS_SHEET_ID not configured" });
+    }
+    console.log("Using spreadsheet ID for ID verification:", spreadsheetId);
 
+    // Save file path relative to backend
     const filePath = path.join("uploads", "id-verifications", req.file.filename);
+    console.log("ID file path:", filePath);
+
     const timestamp = new Date().toLocaleString();
     const updatedRow = [timestamp, user.email.toLowerCase(), user.name, "pending", filePath];
 
-    const result = await findRowAndUpdateOrAppend(spreadsheetId, "A:E", 1, user.email, updatedRow);
+    // ALWAYS use ID_VERIFICATIONS_SHEET_ID here
+    const result = await findRowAndUpdateOrAppend(
+      spreadsheetId,
+      "A:E",
+      1,                 // match email in column B (index 1)
+      user.email,
+      updatedRow
+    );
+
     console.log("verify-id result:", result);
 
     res.json({ success: true, action: result.action, row: result.row });
@@ -215,6 +238,7 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to submit ID verification" });
   }
 });
+
 
 // ==================== VERIFICATION STATUS FOR DASHBOARD ====================
 app.get("/api/verify-status", async (req, res) => {
