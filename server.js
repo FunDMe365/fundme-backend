@@ -173,8 +173,9 @@ app.post("/api/logout", (req, res) => {
 // ==================== ID VERIFICATION ====================
 app.post("/api/verify-id", async (req, res) => {
   try {
-    console.log("Session user:", req.session.user);       // DEBUG
-    console.log("Request body:", req.body);               // DEBUG
+    // DEBUG: log session & body
+    console.log("Session user:", req.session.user);
+    console.log("Request body:", req.body);
 
     const user = req.session.user;
     if (!user || !user.email) {
@@ -186,9 +187,14 @@ app.post("/api/verify-id", async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing ID photo URL" });
     }
 
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+    if (!sheets) {
+      return res.status(500).json({ success: false, message: "Sheets not initialized" });
+    }
+
     const spreadsheetId = process.env.ID_VERIFICATIONS_SHEET_ID;
-    if (!spreadsheetId) return res.status(500).json({ success: false, message: "ID_VERIFICATIONS_SHEET_ID not configured" });
+    if (!spreadsheetId) {
+      return res.status(500).json({ success: false, message: "ID_VERIFICATIONS_SHEET_ID not configured" });
+    }
 
     const timestamp = new Date().toLocaleString();
     const updatedRow = [timestamp, user.email.toLowerCase(), user.name, "pending", idPhotoURL];
