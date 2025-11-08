@@ -195,6 +195,16 @@ app.post("/api/verify-id", async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to submit ID verification" });
   }
 });
+    app.post("/api/upload-id", upload.single("idDocument"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const idPhotoURL = `https://yourbackend.com/uploads/${req.file.filename}`;
+    res.json({ idPhotoURL });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // GET verification status for dashboard
 app.get("/api/verify-status", async (req, res) => {
