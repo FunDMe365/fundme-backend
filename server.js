@@ -8,7 +8,6 @@ const Stripe = require("stripe");
 const cors = require("cors");
 const mailjet = require("node-mailjet");
 const multer = require("multer");
-const path = require("path");
 const fs = require("fs");
 
 const app = express();
