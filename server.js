@@ -301,7 +301,7 @@ app.post("/api/verify-id", async (req, res) => {
       return res.status(400).json({ error: "Missing email or verified flag" });
     }
 
-    const spreadsheetId = process.env.VERIFY_SHEET_ID;
+    const spreadsheetId = process.env.ID_VERIFICATIONS_SHEET_ID;
     if (!spreadsheetId) return res.status(500).json({ error: "VERIFY_SHEET_ID not configured" });
 
     const verifiedText = verified ? "TRUE" : "FALSE";
