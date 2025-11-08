@@ -174,58 +174,25 @@ app.post("/api/logout", (req, res) => {
 
 // ==================== ✅ ID VERIFICATION ====================
 
-// Setup multer storage
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, "uploads", "id-verifications");
-    fs.mkdirSync(uploadDir, { recursive: true }); // ensure folder exists
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const timestamp = Date.now();
-    const sanitizedEmail = req.session.user?.email.replace(/[@.]/g, "_") || "unknown";
-    const ext = path.extname(file.originalname);
-    cb(null, `${sanitizedEmail}_${timestamp}${ext}`);
-  }
-});
-
-const upload = multer({ storage });
-
-// POST route
 app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user || !user.email) {
-      return res.status(401).json({ success: false, message: "You must be signed in to submit." });
-    }
+    if (!user || !user.email) return res.status(401).json({ success: false, message: "You must be signed in to submit." });
+    if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded." });
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: "No file uploaded." });
-    }
-
-    if (!sheets) {
-      return res.status(500).json({ success: false, message: "Sheets not initialized" });
-    }
-
-    // Ensure correct spreadsheet ID
     const spreadsheetId = process.env.ID_VERIFICATIONS_SHEET_ID;
-    if (!spreadsheetId) {
-      return res.status(500).json({ success: false, message: "ID_VERIFICATIONS_SHEET_ID not configured" });
-    }
-    console.log("Using spreadsheet ID for ID verification:", spreadsheetId);
+    if (!spreadsheetId) return res.status(500).json({ success: false, message: "ID_VERIFICATIONS_SHEET_ID not configured" });
 
-    // Save file path relative to backend
     const filePath = path.join("uploads", "id-verifications", req.file.filename);
-    console.log("ID file path:", filePath);
-
     const timestamp = new Date().toLocaleString();
     const updatedRow = [timestamp, user.email.toLowerCase(), user.name, "pending", filePath];
 
-    // ALWAYS use ID_VERIFICATIONS_SHEET_ID here
+    // Include sheet/tab name explicitly
     const result = await findRowAndUpdateOrAppend(
       spreadsheetId,
-      "A:E",
-      1,                 // match email in column B (index 1)
+      "ID_Verifications!A:E", // <-- tab name added
+      1,
       user.email,
       updatedRow
     );
