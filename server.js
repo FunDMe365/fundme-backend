@@ -20,31 +20,31 @@ const allowedOrigins = [
   "https://fundme-backend.onrender.com", 
   "http://localhost:5000", 
   "http://127.0.0.1:5000"
-];
+]; 
 
-app.use(cors({
+app.use(cors({ 
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true); // allow Postman, mobile apps
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error('CORS policy: Not allowed by origin ' + origin));
-  },
-  credentials: true
-}));
+    if (!origin) return callback(null, true); // allow Postman, mobile apps 
+    if (allowedOrigins.includes(origin)) return callback(null, true); 
+    return callback(new Error('CORS policy: Not allowed by origin ' + origin)); 
+  }, 
+  credentials: true 
+})); 
 
-app.options("*", cors({ origin: allowedOrigins, credentials: true }));
+app.options("*", cors({ origin: allowedOrigins, credentials: true })); 
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin && allowedOrigins.includes(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
-  if (req.method === "OPTIONS") return res.sendStatus(200);
-  next();
+app.use((req, res, next) => { 
+  const origin = req.headers.origin; 
+  if (allowedOrigins.includes(origin)) res.setHeader("Access-Control-Allow-Origin", origin); 
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"); 
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization"); 
+  res.setHeader("Access-Control-Allow-Credentials", "true"); 
+  if (req.method === "OPTIONS") return res.sendStatus(200); 
+  next(); 
 });
 
 // ==================== Middleware ==================== 
-app.use(bodyParser.json());
+app.use(bodyParser.json()); 
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ==================== ✅ SESSION FIX ====================
@@ -103,8 +103,20 @@ async function appendSheetValues(spreadsheetId, range, values) {
   });
 }
 
+// Update existing row by email or append if not found
 async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex, matchValue, updatedValues) {
   if (!sheets) throw new Error("Sheets not initialized");
+
+  // Extract sheet/tab name and range
+  let sheetName = "";
+  let range = "";
+  if (rangeCols.includes("!")) {
+    [sheetName, range] = rangeCols.split("!");
+  } else {
+    range = rangeCols;
+  }
+
+  // Fetch rows from full range (with sheet name if provided)
   const rows = await getSheetValues(spreadsheetId, rangeCols);
   const rowIndex = rows.findIndex(r => (r[matchColIndex] || "").toString().trim().toLowerCase() === (matchValue || "").toString().trim().toLowerCase());
 
@@ -112,9 +124,9 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
     await appendSheetValues(spreadsheetId, rangeCols, [updatedValues]);
     return { action: "appended", row: rows.length + 1 };
   } else {
-    const [startCol, endCol] = rangeCols.split(":");
+    const [startCol, endCol] = range.split(":");
     const rowNumber = rowIndex + 1;
-    const updateRange = `${startCol}${rowNumber}:${endCol}${rowNumber}`;
+    const updateRange = sheetName ? `${sheetName}!${startCol}${rowNumber}:${endCol}${rowNumber}` : `${startCol}${rowNumber}:${endCol}${rowNumber}`;
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: updateRange,
@@ -174,6 +186,24 @@ app.post("/api/logout", (req, res) => {
 
 // ==================== ✅ ID VERIFICATION ====================
 
+// Setup multer storage
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, "uploads", "id-verifications");
+    fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const timestamp = Date.now();
+    const sanitizedEmail = req.session.user?.email.replace(/[@.]/g, "_") || "unknown";
+    const ext = path.extname(file.originalname);
+    cb(null, `${sanitizedEmail}_${timestamp}${ext}`);
+  }
+});
+
+const upload = multer({ storage });
+
+// POST route
 app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   try {
     const user = req.session.user;
@@ -188,24 +218,22 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
     const timestamp = new Date().toLocaleString();
     const updatedRow = [timestamp, user.email.toLowerCase(), user.name, "pending", filePath];
 
-    // Include sheet/tab name explicitly
+    // Correctly target ID_Verifications tab
     const result = await findRowAndUpdateOrAppend(
       spreadsheetId,
-      "ID_Verifications!A:E", // <-- tab name added
+      "ID_Verifications!A:E",
       1,
       user.email,
       updatedRow
     );
 
     console.log("verify-id result:", result);
-
     res.json({ success: true, action: result.action, row: result.row });
   } catch (err) {
     console.error("verify-id error:", err);
     res.status(500).json({ success: false, message: "Failed to submit ID verification" });
   }
 });
-
 
 // ==================== VERIFICATION STATUS FOR DASHBOARD ====================
 app.get("/api/verify-status", async (req, res) => {
@@ -217,7 +245,7 @@ app.get("/api/verify-status", async (req, res) => {
     const spreadsheetId = process.env.ID_VERIFICATIONS_SHEET_ID;
     if (!spreadsheetId) return res.status(500).json({ error: "ID_VERIFICATIONS_SHEET_ID not configured" });
 
-    const rows = await getSheetValues(spreadsheetId, "A:E");
+    const rows = await getSheetValues(spreadsheetId, "ID_Verifications!A:E");
     const row = rows.find(r => (r[1] || "").toString().trim().toLowerCase() === user.email.toLowerCase());
 
     if (!row) return res.json({ found: false, status: "not submitted" });
@@ -231,6 +259,52 @@ app.get("/api/verify-status", async (req, res) => {
 });
 
 // ==================== CAMPAIGN ROUTES ====================
-// (rest unchanged...)
+app.post("/api/create-campaign", async (req, res) => {
+  try {
+    if (!sheets) return res.status(500).json({ error: "Sheets not initialized" });
+    const { creatorEmail, title, description, goal } = req.body;
+    if (!creatorEmail || !title || !description || !goal) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
 
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    if (!spreadsheetId) return res.status(500).json({ error: "CAMPAIGNS_SHEET_ID not configured" });
+
+    const campaignId = `camp_${Date.now().toString(36)}_${Math.floor(Math.random() * 9000 + 1000)}`;
+    const timestamp = new Date().toLocaleString();
+    const status = "draft";
+
+    const row = [timestamp, creatorEmail.trim().toLowerCase(), title, description, goal.toString(), status, campaignId];
+    await appendSheetValues(spreadsheetId, "A:G", [row]);
+
+    console.log("create-campaign appended:", campaignId);
+    res.json({ ok: true, campaignId, row });
+  } catch (err) {
+    console.error("create-campaign error:", err && err.message);
+    res.status(500).json({ error: "Failed to create campaign" });
+  }
+});
+
+app.get("/api/campaign/:campaignId", async (req, res) => {
+  try {
+    if (!sheets) return res.status(500).json({ error: "Sheets not initialized" });
+    const campaignId = (req.params.campaignId || "").toString().trim();
+    if (!campaignId) return res.status(400).json({ error: "Missing campaignId param" });
+
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    if (!spreadsheetId) return res.status(500).json({ error: "CAMPAIGNS_SHEET_ID not configured" });
+
+    const rows = await getSheetValues(spreadsheetId, "A:G");
+    const row = rows.find(r => (r[6] || "").toString().trim() === campaignId);
+    if (!row) return res.status(404).json({ error: "Campaign not found" });
+
+    const [timestamp, creatorEmail, title, description, goal, status, id] = row;
+    res.json({ timestamp, creatorEmail, title, description, goal, status, id });
+  } catch (err) {
+    console.error("get campaign error:", err && err.message);
+    res.status(500).json({ error: "Failed to read campaign" });
+  }
+});
+
+// ==================== START SERVER ====================
 app.listen(PORT, () => console.log(`🚀 JoyFund backend running on port ${PORT}`));
