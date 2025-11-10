@@ -247,6 +247,53 @@ app.get("/api/get-verifications", async (req, res) => {
   }
 });
 
+// ==================== ✅ CREATE CAMPAIGN ROUTE ====================
+app.post("/api/create-campaign", async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user || !user.email) {
+      return res.status(401).json({ success: false, message: "You must be signed in to create a campaign." });
+    }
+
+    if (!sheets) {
+      return res.status(500).json({ success: false, message: "Sheets not initialized." });
+    }
+
+    const { title, description, goal, category, imageUrl } = req.body;
+    if (!title || !description || !goal) {
+      return res.status(400).json({ success: false, message: "Missing required fields." });
+    }
+
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    if (!spreadsheetId) {
+      return res.status(500).json({ success: false, message: "CAMPAIGNS_SHEET_ID not configured." });
+    }
+
+    const campaignId = "CMP-" + Date.now();
+    const timestamp = new Date().toLocaleString();
+    const status = "Draft";
+
+    const newRow = [
+      campaignId,           
+      title,                
+      user.email.toLowerCase(),
+      goal,                 
+      description,          
+      category || "General",
+      status,               
+      timestamp,            
+      imageUrl || ""        
+    ];
+
+    await appendSheetValues(spreadsheetId, "A:I", [newRow]);
+
+    res.json({ success: true, message: "Campaign created successfully!", campaignId });
+  } catch (err) {
+    console.error("create-campaign error:", err);
+    res.status(500).json({ success: false, message: "Failed to create campaign." });
+  }
+});
+
 // ==================== GET ALL CAMPAIGNS FOR DASHBOARD ====================
 app.get("/api/campaigns", async (req, res) => {
   try {
@@ -259,17 +306,18 @@ app.get("/api/campaigns", async (req, res) => {
 
     const rows = await getSheetValues(spreadsheetId, "A:G");
     const userCampaigns = rows
-      .filter(r => (r[1]||"").toLowerCase() === user.email.toLowerCase())
-      .map(r => ({
-        timestamp: r[0],
-        creatorEmail: r[1],
-        title: r[2],
-        description: r[3],
-        goal: r[4],
-        status: r[5] ? r[5].charAt(0).toUpperCase() + r[5].slice(1).toLowerCase() : "Draft",
-        campaignId: r[6],
-        imageUrl: r[7] || ""
-      }));
+  .filter(r => (r[2]||"").toLowerCase() === user.email.toLowerCase()) // Email is now column index 2
+  .map(r => ({
+    campaignId: r[0],          // Id
+    title: r[1],               // title
+    creatorEmail: r[2],        // Email
+    goal: r[3],                // Goal
+    description: r[4],         // Description
+    category: r[5],            // Category
+    status: r[6] ? r[6].charAt(0).toUpperCase() + r[6].slice(1).toLowerCase() : "Draft", // Status
+    createdAt: r[7],           // CreatedAt
+    imageUrl: r[8] || ""       // ImageURL
+  }));
 
     res.json({ success:true, campaigns: userCampaigns });
   } catch(err){
@@ -277,5 +325,6 @@ app.get("/api/campaigns", async (req, res) => {
     res.status(500).json({ success:false, message:"Failed to get campaigns" });
   }
 });
+
 // ==================== START SERVER ====================
 app.listen(PORT, () => console.log(`🚀 JoyFund backend running on port ${PORT}`));
