@@ -15,22 +15,6 @@ const app = express();
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 const PORT = process.env.PORT || 5000;
 
-// ==================== ✅ CAMPAIGN STORAGE ==================== 
-const campaignStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, "uploads", "campaigns");
-    fs.mkdirSync(uploadDir, { recursive: true });
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const timestamp = Date.now();
-    const sanitizedEmail = req.session.user?.email.replace(/[@.]/g, "_") || "unknown";
-    const ext = path.extname(file.originalname);
-    cb(null, `${sanitizedEmail}_${timestamp}${ext}`);
-  }
-});
-const campaignUpload = multer({ storage: campaignStorage });
-
 // ==================== ✅ CORS CONFIG ==================== 
 const allowedOrigins = [
   "https://fundasmile.net", 
@@ -41,7 +25,7 @@ const allowedOrigins = [
 
 app.use(cors({ 
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true); // allow Postman, mobile apps 
     if (allowedOrigins.includes(origin)) return callback(null, true); 
     return callback(new Error('CORS policy: Not allowed by origin ' + origin)); 
   }, 
@@ -193,7 +177,8 @@ app.post("/api/logout", (req, res) => {
 });
 
 // ==================== ✅ ID VERIFICATION ====================
-const idStorage = multer.diskStorage({
+// keep original storage variable name 'storage' and multer instance 'upload' (as originally)
+const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, "uploads", "id-verifications");
     fs.mkdirSync(uploadDir, { recursive: true });
@@ -206,7 +191,7 @@ const idStorage = multer.diskStorage({
     cb(null, `${sanitizedEmail}_${timestamp}${ext}`);
   }
 });
-const upload = multer({ storage: idStorage });
+const upload = multer({ storage });
 
 app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   try {
@@ -260,6 +245,23 @@ app.get("/api/get-verifications", async (req, res) => {
     res.status(500).json({ success:false, message:"Failed to read verifications" });
   }
 });
+
+// ==================== CAMPAIGN STORAGE ====================
+// single declaration placed after session middleware so req.session is available in filename()
+const campaignStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, "uploads", "campaigns");
+    fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const timestamp = Date.now();
+    const sanitizedEmail = req.session.user?.email.replace(/[@.]/g, "_") || "unknown";
+    const ext = path.extname(file.originalname);
+    cb(null, `${sanitizedEmail}_${timestamp}${ext}`);
+  }
+});
+const campaignUpload = multer({ storage: campaignStorage });
 
 // ==================== CREATE CAMPAIGN ====================
 app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res) => {
