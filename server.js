@@ -9,9 +9,9 @@ const cors = require("cors");
 const mailjet = require("node-mailjet");
 const multer = require("multer");
 const fs = require("fs");
+const path = require("path");
 
 const app = express();
-const path = require("path");
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 const PORT = process.env.PORT || 5000;
 
@@ -247,42 +247,52 @@ app.get("/api/get-verifications", async (req, res) => {
   }
 });
 
-// ==================== ✅ CREATE CAMPAIGN ROUTE ====================
-app.post("/api/create-campaign", async (req, res) => {
+// ==================== ✅ CAMPAIGN CREATION (NEW) ====================
+const campaignStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, "uploads", "campaign-images");
+    fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const timestamp = Date.now();
+    const sanitizedTitle = (req.body.title || "campaign").replace(/\s+/g, "_");
+    const ext = path.extname(file.originalname);
+    cb(null, `${sanitizedTitle}_${timestamp}${ext}`);
+  }
+});
+
+const campaignUpload = multer({ storage: campaignStorage });
+
+app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user || !user.email) {
-      return res.status(401).json({ success: false, message: "You must be signed in to create a campaign." });
-    }
+    if (!user || !user.email) return res.status(401).json({ success: false, message: "You must be signed in to create a campaign." });
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized." });
 
-    if (!sheets) {
-      return res.status(500).json({ success: false, message: "Sheets not initialized." });
-    }
-
-    const { title, description, goal, category, imageUrl } = req.body;
-    if (!title || !description || !goal) {
+    const { title, description, goal, category } = req.body;
+    if (!title?.trim() || !description?.trim() || !goal?.trim()) {
       return res.status(400).json({ success: false, message: "Missing required fields." });
     }
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    if (!spreadsheetId) {
-      return res.status(500).json({ success: false, message: "CAMPAIGNS_SHEET_ID not configured." });
-    }
+    if (!spreadsheetId) return res.status(500).json({ success: false, message: "CAMPAIGNS_SHEET_ID not configured." });
 
     const campaignId = "CMP-" + Date.now();
     const timestamp = new Date().toLocaleString();
     const status = "Draft";
+    const imageUrl = req.file ? `/uploads/campaign-images/${req.file.filename}` : "";
 
     const newRow = [
-      campaignId,           
-      title,                
+      campaignId,
+      title,
       user.email.toLowerCase(),
-      goal,                 
-      description,          
-      category || "General",
-      status,               
-      timestamp,            
-      imageUrl || ""        
+      goal,
+      description,
+      category || "Other",
+      status,
+      timestamp,
+      imageUrl
     ];
 
     await appendSheetValues(spreadsheetId, "A:I", [newRow]);
@@ -304,20 +314,20 @@ app.get("/api/campaigns", async (req, res) => {
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     if (!spreadsheetId) return res.status(500).json({ success:false, message:"CAMPAIGNS_SHEET_ID not configured" });
 
-    const rows = await getSheetValues(spreadsheetId, "A:G");
+    const rows = await getSheetValues(spreadsheetId, "A:I");
     const userCampaigns = rows
-  .filter(r => (r[2]||"").toLowerCase() === user.email.toLowerCase()) // Email is now column index 2
-  .map(r => ({
-    campaignId: r[0],          // Id
-    title: r[1],               // title
-    creatorEmail: r[2],        // Email
-    goal: r[3],                // Goal
-    description: r[4],         // Description
-    category: r[5],            // Category
-    status: r[6] ? r[6].charAt(0).toUpperCase() + r[6].slice(1).toLowerCase() : "Draft", // Status
-    createdAt: r[7],           // CreatedAt
-    imageUrl: r[8] || ""       // ImageURL
-  }));
+      .filter(r => (r[2]||"").toLowerCase() === user.email.toLowerCase())
+      .map(r => ({
+        campaignId: r[0],          // Id
+        title: r[1],               // title
+        creatorEmail: r[2],        // Email
+        goal: r[3],                // Goal
+        description: r[4],         // Description
+        category: r[5],            // Category
+        status: r[6] ? r[6].charAt(0).toUpperCase() + r[6].slice(1).toLowerCase() : "Draft",
+        createdAt: r[7],           // CreatedAt
+        imageUrl: r[8] || ""       // ImageURL
+      }));
 
     res.json({ success:true, campaigns: userCampaigns });
   } catch(err){
