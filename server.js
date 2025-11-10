@@ -15,6 +15,22 @@ const app = express();
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 const PORT = process.env.PORT || 5000;
 
+const campaignStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, "uploads", "campaigns");
+    fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const timestamp = Date.now();
+    const sanitizedEmail = req.session.user?.email.replace(/[@.]/g, "_") || "unknown";
+    const ext = path.extname(file.originalname);
+    cb(null, `${sanitizedEmail}_${timestamp}${ext}`);
+  }
+});
+
+const campaignUpload = multer({ storage: campaignStorage });
+
 // ==================== ✅ CORS CONFIG ==================== 
 const allowedOrigins = [
   "https://fundasmile.net", 
@@ -263,39 +279,51 @@ const campaignUpload = multer({ storage: campaignStorage });
 app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user || !user.email) return res.status(401).json({ success:false, message:"Not logged in" });
+    if (!user || !user.email) return res.status(401).json({ success:false, message:"You must be signed in" });
 
     const { title, goal, description, category } = req.body;
-    if (!title || !goal || !description || !category) return res.status(400).json({ success:false, message:"Missing required fields" });
+    if (!title || !goal || !description || !category) 
+      return res.status(400).json({ success:false, message:"Missing required fields" });
 
-    const imageUrl = req.file ? path.join("uploads", "campaigns", req.file.filename) : "";
-
+    if (!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     if (!spreadsheetId) return res.status(500).json({ success:false, message:"CAMPAIGNS_SHEET_ID not configured" });
 
-    const timestamp = new Date().toISOString();
-    const campaignId = `camp_${Date.now()}`;
+    // Generate unique ID
+    const campaignId = Date.now().toString();
+
+    // Handle uploaded image
+    let imageUrl = "";
+    if (req.file) {
+      imageUrl = `/uploads/campaigns/${req.file.filename}`;
+    }
+
+    const createdAt = new Date().toISOString();
+    const status = "pending"; // initially pending
 
     const newCampaignRow = [
-      campaignId,
-      title,
-      user.email.toLowerCase(),
-      goal,
-      description,
-      category,
-      "Pending",  // ✅ Automatically pending
-      timestamp,
-      imageUrl
+      campaignId,          // Id
+      title,               // title
+      user.email.toLowerCase(), // Email
+      goal,                // Goal
+      description,         // Description
+      category,            // Category
+      status,              // Status
+      createdAt,           // CreatedAt
+      imageUrl             // ImageURL
     ];
 
-    await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
+    await appendSheetValues(spreadsheetId, "A:I", newCampaignRow);
 
-    res.json({ success:true, campaignId });
+    console.log("New campaign added:", newCampaignRow);
+    res.json({ success:true, message:"Campaign submitted and pending approval", campaignId });
+
   } catch(err) {
     console.error("create-campaign error:", err);
     res.status(500).json({ success:false, message:"Failed to create campaign" });
   }
 });
+
 
 // ==================== GET CAMPAIGNS ====================
 app.get("/api/campaigns", async (req, res) => {
