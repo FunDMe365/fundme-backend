@@ -69,6 +69,8 @@ const mailjetClient = mailjet.apiConnect(
   process.env.MAILJET_API_SECRET || ""
 );
 
+const TEAM_EMAIL = process.env.TEAM_EMAIL || "team@example.com";
+
 // ==================== Google Sheets ====================
 let sheets;
 try {
@@ -132,6 +134,22 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
   }
 }
 
+// ==================== MAILJET HELPER ====================
+async function sendMailjetEmail(subject, htmlContent) {
+  try {
+    await mailjetClient.post("send", { version: "v3.1" }).request({
+      Messages: [{
+        From: { Email: TEAM_EMAIL, Name: "JoyFund Notifications" },
+        To: [{ Email: TEAM_EMAIL, Name: "JoyFund Team" }],
+        Subject: subject,
+        HTMLPart: htmlContent
+      }]
+    });
+  } catch(err) {
+    console.error("❌ Mailjet send failed:", err.message || err);
+  }
+}
+
 // ==================== USERS ====================
 async function getUsers() {
   if (!process.env.USERS_SHEET_ID) return [];
@@ -176,7 +194,7 @@ app.post("/api/logout", (req, res) => {
   });
 });
 
-// ==================== ✅ ID VERIFICATION ====================
+// ==================== ID VERIFICATION ====================
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, "uploads", "id-verifications");
@@ -195,7 +213,7 @@ const upload = multer({ storage });
 app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user || !user.email) return res.status(401).json({ success: false, message: "You must be signed in to submit." });
+    if (!user || !user.email) return res.status(401).json({ success: false, message: "You must be signed in." });
     if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded." });
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
@@ -214,6 +232,12 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
       updatedRow
     );
 
+    // ✅ Mailjet notification
+    await sendMailjetEmail(
+      "New ID Verification Submission",
+      `<p>User ${user.name} (${user.email}) submitted an ID verification at ${timestamp}.</p>`
+    );
+
     console.log("verify-id result:", result);
     res.json({ success: true, action: result.action, row: result.row });
   } catch (err) {
@@ -222,30 +246,7 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   }
 });
 
-app.get("/api/get-verifications", async (req, res) => {
-  try {
-    if (!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
-    const user = req.session.user;
-    if (!user || !user.email) return res.status(401).json({ success:false, message:"Not logged in" });
-
-    const spreadsheetId = process.env.ID_VERIFICATIONS_SHEET_ID;
-    if (!spreadsheetId) return res.status(500).json({ success:false, message:"ID_VERIFICATIONS_SHEET_ID not configured" });
-
-    const rows = await getSheetValues(spreadsheetId, "ID_Verifications!A:E");
-    const userRows = rows.filter(r => (r[1]||"").toLowerCase() === user.email.toLowerCase());
-    const latest = userRows.length > 0 ? userRows[userRows.length-1] : null;
-
-    if (!latest) return res.json({ success:true, verifications: [] });
-
-    const [timestamp, email, name, status, idPhotoURL] = latest;
-    res.json({ success:true, verifications:[{ timestamp, email, name, status: status || "pending", idImageUrl: idPhotoURL || "" }] });
-  } catch(err){
-    console.error("get-verifications error:", err);
-    res.status(500).json({ success:false, message:"Failed to read verifications" });
-  }
-});
-
-// ==================== CAMPAIGN STORAGE ====================
+// ==================== CREATE CAMPAIGN ====================
 const campaignStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, "uploads", "campaigns");
@@ -261,7 +262,6 @@ const campaignStorage = multer.diskStorage({
 });
 const campaignUpload = multer({ storage: campaignStorage });
 
-// ==================== CREATE CAMPAIGN ====================
 app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
@@ -294,6 +294,12 @@ app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res
     ];
 
     await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
+
+    // ✅ Mailjet notification
+    await sendMailjetEmail(
+      "New Campaign Submitted",
+      `<p>User ${user.name} (${user.email}) submitted a new campaign titled "${title}" at ${createdAt}.</p>`
+    );
 
     console.log("✅ New campaign added:", newCampaignRow);
     res.json({ success: true, message: "Campaign submitted and pending approval", campaignId });
@@ -344,6 +350,7 @@ app.post("/api/create-checkout-session", async (req, res) => {
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId, "A:I");
     const campaign = rows.find(r => r[0] === campaignId);
+
     if (!campaign) return res.status(404).json({ error: "Campaign not found" });
 
     const session = await stripe.checkout.sessions.create({
@@ -369,90 +376,102 @@ app.post("/api/create-checkout-session", async (req, res) => {
 });
 
 // ==================== WAITLIST SUBMISSION ====================
-app.post("/api/waitlist", async (req, res) => {
-  try {
-    const { name, email, message } = req.body;
-    if (!name || !email) return res.status(400).json({ success: false, message: "Name and email required" });
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+app.post("/api/waitlist", async (req,res)=>{
+  try{
+    const { name, email } = req.body;
+    if(!name || !email) return res.status(400).json({ success:false, message:"Missing fields" });
+    if(!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
 
     const spreadsheetId = process.env.WAITLIST_SHEET_ID;
-    if (!spreadsheetId) return res.status(500).json({ success: false, message: "WAITLIST_SHEET_ID not configured" });
+    if(!spreadsheetId) return res.status(500).json({ success:false, message:"WAITLIST_SHEET_ID not configured" });
 
     const timestamp = new Date().toLocaleString();
-    const newRow = [timestamp, name, email, message || ""];
+    const newRow = [timestamp, name, email];
+    await appendSheetValues(spreadsheetId,"A:C",[newRow]);
 
-    await appendSheetValues(spreadsheetId, "A:D", [newRow]);
+    // ✅ Mailjet notification
+    await sendMailjetEmail("New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}.</p>`);
+
     console.log("✅ Waitlist submission:", newRow);
-    res.json({ success: true, message: "Thank you for joining the waitlist!" });
-  } catch (err) {
+    res.json({ success:true, message:"Waitlist info submitted successfully" });
+  }catch(err){
     console.error("❌ waitlist error:", err);
-    res.status(500).json({ success: false, message: "Failed to submit to waitlist" });
+    res.status(500).json({ success:false, message:"Failed to submit waitlist info" });
   }
 });
 
 // ==================== VOLUNTEER SUBMISSION ====================
-app.post("/api/volunteer", async (req, res) => {
-  try {
-    const { name, email, role } = req.body;
-    if (!name || !email || !role) return res.status(400).json({ success:false, message:"Missing fields" });
-    if (!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
+app.post("/api/volunteer", async (req,res)=>{
+  try{
+    const { name,email,role } = req.body;
+    if(!name||!email||!role) return res.status(400).json({ success:false,message:"Missing fields" });
+    if(!sheets) return res.status(500).json({ success:false,message:"Sheets not initialized" });
 
-    const spreadsheetId = process.env.VOLUNTEER_SHEET_ID;
-    if (!spreadsheetId) return res.status(500).json({ success:false, message:"VOLUNTEER_SHEET_ID not configured" });
+    const spreadsheetId = process.env.VOLUNTEERS_SHEET_ID;
+    if(!spreadsheetId) return res.status(500).json({ success:false,message:"VOLUNTEERS_SHEET_ID not configured" });
 
     const timestamp = new Date().toLocaleString();
-    const newRow = [timestamp, name, email, role];
+    const newRow = [timestamp,name,email,role];
+    await appendSheetValues(spreadsheetId,"A:D",[newRow]);
 
-    await appendSheetValues(spreadsheetId, "A:D", [newRow]);
+    // ✅ Mailjet notification
+    await sendMailjetEmail("New Volunteer Submission", `<p>${name} (${email}) signed up as ${role} at ${timestamp}.</p>`);
+
     console.log("✅ Volunteer submission:", newRow);
-    res.json({ success:true, message:"Volunteer info submitted successfully" });
-  } catch(err){
+    res.json({ success:true,message:"Volunteer info submitted successfully" });
+  }catch(err){
     console.error("❌ volunteer error:", err);
-    res.status(500).json({ success:false, message:"Failed to submit volunteer info" });
+    res.status(500).json({ success:false,message:"Failed to submit volunteer info" });
   }
 });
 
 // ==================== STREET TEAM SUBMISSION ====================
-app.post("/api/street-team", async (req, res) => {
-  try {
-    const { name, email, city } = req.body;
-    if (!name || !email || !city) return res.status(400).json({ success:false, message:"Missing fields" });
-    if (!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
+app.post("/api/street-team", async (req,res)=>{
+  try{
+    const { name,email,city } = req.body;
+    if(!name||!email||!city) return res.status(400).json({ success:false,message:"Missing fields" });
+    if(!sheets) return res.status(500).json({ success:false,message:"Sheets not initialized" });
 
     const spreadsheetId = process.env.STREET_TEAM_SHEET_ID;
-    if (!spreadsheetId) return res.status(500).json({ success:false, message:"STREET_TEAM_SHEET_ID not configured" });
+    if(!spreadsheetId) return res.status(500).json({ success:false,message:"STREET_TEAM_SHEET_ID not configured" });
 
     const timestamp = new Date().toLocaleString();
-    const newRow = [timestamp, name, email, city];
+    const newRow = [timestamp,name,email,city];
+    await appendSheetValues(spreadsheetId,"A:D",[newRow]);
 
-    await appendSheetValues(spreadsheetId, "A:D", [newRow]);
+    // ✅ Mailjet notification
+    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined street team in ${city} at ${timestamp}.</p>`);
+
     console.log("✅ Street team submission:", newRow);
-    res.json({ success:true, message:"Street team info submitted successfully" });
-  } catch(err){
+    res.json({ success:true,message:"Street team info submitted successfully" });
+  }catch(err){
     console.error("❌ street team error:", err);
-    res.status(500).json({ success:false, message:"Failed to submit street team info" });
+    res.status(500).json({ success:false,message:"Failed to submit street team info" });
   }
 });
 
-// ==================== CONTACT SUBMISSION (OPTIONAL) ====================
+// ==================== CONTACT SUBMISSION ====================
 app.post("/api/contact", async (req,res)=>{
   try{
-    const { name, email, message } = req.body;
-    if(!name || !email || !message) return res.status(400).json({ success:false, message:"Missing fields" });
-    if(!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
+    const { name,email,message } = req.body;
+    if(!name||!email||!message) return res.status(400).json({ success:false,message:"Missing fields" });
+    if(!sheets) return res.status(500).json({ success:false,message:"Sheets not initialized" });
 
     const spreadsheetId = process.env.CONTACT_SHEET_ID;
-    if(!spreadsheetId) return res.status(500).json({ success:false, message:"CONTACT_SHEET_ID not configured" });
+    if(!spreadsheetId) return res.status(500).json({ success:false,message:"CONTACT_SHEET_ID not configured" });
 
     const timestamp = new Date().toLocaleString();
-    const newRow = [timestamp, name, email, message];
+    const newRow = [timestamp,name,email,message];
+    await appendSheetValues(spreadsheetId,"A:D",[newRow]);
 
-    await appendSheetValues(spreadsheetId, "A:D", [newRow]);
+    // ✅ Mailjet notification
+    await sendMailjetEmail("New Contact Message", `<p>${name} (${email}) sent a message at ${timestamp}:<br>${message}</p>`);
+
     console.log("✅ Contact submission:", newRow);
-    res.json({ success:true, message:"Message sent successfully" });
+    res.json({ success:true,message:"Contact message submitted successfully" });
   }catch(err){
     console.error("❌ contact error:", err);
-    res.status(500).json({ success:false, message:"Failed to submit contact message" });
+    res.status(500).json({ success:false,message:"Failed to submit contact message" });
   }
 });
 
