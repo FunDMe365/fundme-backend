@@ -15,6 +15,7 @@ const app = express();
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 const PORT = process.env.PORT || 5000;
 
+// ==================== ✅ CAMPAIGN STORAGE ==================== 
 const campaignStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, "uploads", "campaigns");
@@ -28,7 +29,6 @@ const campaignStorage = multer.diskStorage({
     cb(null, `${sanitizedEmail}_${timestamp}${ext}`);
   }
 });
-
 const campaignUpload = multer({ storage: campaignStorage });
 
 // ==================== ✅ CORS CONFIG ==================== 
@@ -41,7 +41,7 @@ const allowedOrigins = [
 
 app.use(cors({ 
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true); // allow Postman, mobile apps 
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true); 
     return callback(new Error('CORS policy: Not allowed by origin ' + origin)); 
   }, 
@@ -193,7 +193,7 @@ app.post("/api/logout", (req, res) => {
 });
 
 // ==================== ✅ ID VERIFICATION ====================
-const storage = multer.diskStorage({
+const idStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, "uploads", "id-verifications");
     fs.mkdirSync(uploadDir, { recursive: true });
@@ -206,7 +206,7 @@ const storage = multer.diskStorage({
     cb(null, `${sanitizedEmail}_${timestamp}${ext}`);
   }
 });
-const upload = multer({ storage });
+const upload = multer({ storage: idStorage });
 
 app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   try {
@@ -262,20 +262,6 @@ app.get("/api/get-verifications", async (req, res) => {
 });
 
 // ==================== CREATE CAMPAIGN ====================
-const campaignStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, "uploads", "campaigns");
-    fs.mkdirSync(uploadDir, { recursive: true });
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const timestamp = Date.now();
-    const ext = path.extname(file.originalname);
-    cb(null, `${timestamp}${ext}`);
-  }
-});
-const campaignUpload = multer({ storage: campaignStorage });
-
 app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
@@ -323,7 +309,6 @@ app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res
     res.status(500).json({ success:false, message:"Failed to create campaign" });
   }
 });
-
 
 // ==================== GET CAMPAIGNS ====================
 app.get("/api/campaigns", async (req, res) => {
