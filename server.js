@@ -25,7 +25,7 @@ const allowedOrigins = [
 
 app.use(cors({ 
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true); // allow Postman, mobile apps 
+    if (!origin) return callback(null, true); 
     if (allowedOrigins.includes(origin)) return callback(null, true); 
     return callback(new Error('CORS policy: Not allowed by origin ' + origin)); 
   }, 
@@ -49,7 +49,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ==================== ✅ SESSION CONFIG ==================== 
-app.set("trust proxy", 1); // for Render/HTTPS
+app.set("trust proxy", 1);
 app.use(session({
   secret: process.env.SESSION_SECRET || "secret",
   resave: false,
@@ -177,7 +177,6 @@ app.post("/api/logout", (req, res) => {
 });
 
 // ==================== ✅ ID VERIFICATION ====================
-// keep original storage variable name 'storage' and multer instance 'upload' (as originally)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, "uploads", "id-verifications");
@@ -247,7 +246,6 @@ app.get("/api/get-verifications", async (req, res) => {
 });
 
 // ==================== CAMPAIGN STORAGE ====================
-// single declaration placed after session middleware so req.session is available in filename()
 const campaignStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = path.join(__dirname, "uploads", "campaigns");
@@ -267,69 +265,43 @@ const campaignUpload = multer({ storage: campaignStorage });
 app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user || !user.email)
-      return res.status(401).json({ success: false, message: "You must be signed in" });
+    if (!user || !user.email) return res.status(401).json({ success: false, message: "You must be signed in" });
 
     const { title, goal, description, category } = req.body;
     if (!title || !goal || !description || !category)
       return res.status(400).json({ success: false, message: "Missing required fields" });
 
-    // ✅ Ensure Google Sheets client is available
-    if (!sheets) {
-      console.error("Sheets client not initialized");
-      return res.status(500).json({ success: false, message: "Sheets not initialized" });
-    }
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    if (!spreadsheetId) {
-      console.error("CAMPAIGNS_SHEET_ID not set in .env");
-      return res.status(500).json({ success: false, message: "CAMPAIGNS_SHEET_ID not configured" });
-    }
+    if (!spreadsheetId) return res.status(500).json({ success: false, message: "CAMPAIGNS_SHEET_ID not configured" });
 
-    // ✅ Create uploads folder if missing (Render resets local storage)
-    const fs = require("fs");
-    const path = require("path");
-    const uploadDir = path.join(__dirname, "uploads", "campaigns");
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-    // ✅ Generate unique ID
     const campaignId = Date.now().toString();
-
-    // ✅ Handle uploaded image
-    let imageUrl = "";
-    if (req.file) {
-      imageUrl = `/uploads/campaigns/${req.file.filename}`;
-    } else {
-      imageUrl = "https://placehold.co/400x200?text=No+Image";
-    }
-
+    let imageUrl = req.file ? `/uploads/campaigns/${req.file.filename}` : "https://placehold.co/400x200?text=No+Image";
     const createdAt = new Date().toISOString();
-    const status = "Pending"; // ✅ Display properly capitalized "Pending"
+    const status = "Pending";
 
     const newCampaignRow = [
-      campaignId,          // Id
-      title,               // Title
-      user.email.toLowerCase(), // Email
-      goal,                // Goal
-      description,         // Description
-      category,            // Category
-      status,              // Status
-      createdAt,           // CreatedAt
-      imageUrl             // ImageURL
+      campaignId,
+      title,
+      user.email.toLowerCase(),
+      goal,
+      description,
+      category,
+      status,
+      createdAt,
+      imageUrl
     ];
 
-    // ✅ Append to Google Sheet
     await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
 
     console.log("✅ New campaign added:", newCampaignRow);
     res.json({ success: true, message: "Campaign submitted and pending approval", campaignId });
-
   } catch (err) {
     console.error("❌ create-campaign error:", err.message || err);
     res.status(500).json({ success: false, message: "Failed to create campaign" });
   }
 });
-
 
 // ==================== GET CAMPAIGNS ====================
 app.get("/api/campaigns", async (req, res) => {
@@ -372,7 +344,6 @@ app.post("/api/create-checkout-session", async (req, res) => {
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId, "A:I");
     const campaign = rows.find(r => r[0] === campaignId);
-
     if (!campaign) return res.status(404).json({ error: "Campaign not found" });
 
     const session = await stripe.checkout.sessions.create({
@@ -394,6 +365,94 @@ app.post("/api/create-checkout-session", async (req, res) => {
   } catch (err) {
     console.error("Stripe checkout error:", err);
     res.status(500).json({ error: "Failed to create checkout session" });
+  }
+});
+
+// ==================== WAITLIST SUBMISSION ====================
+app.post("/api/waitlist", async (req, res) => {
+  try {
+    const { name, email, message } = req.body;
+    if (!name || !email) return res.status(400).json({ success: false, message: "Name and email required" });
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+
+    const spreadsheetId = process.env.WAITLIST_SHEET_ID;
+    if (!spreadsheetId) return res.status(500).json({ success: false, message: "WAITLIST_SHEET_ID not configured" });
+
+    const timestamp = new Date().toLocaleString();
+    const newRow = [timestamp, name, email, message || ""];
+
+    await appendSheetValues(spreadsheetId, "A:D", [newRow]);
+    console.log("✅ Waitlist submission:", newRow);
+    res.json({ success: true, message: "Thank you for joining the waitlist!" });
+  } catch (err) {
+    console.error("❌ waitlist error:", err);
+    res.status(500).json({ success: false, message: "Failed to submit to waitlist" });
+  }
+});
+
+// ==================== VOLUNTEER SUBMISSION ====================
+app.post("/api/volunteer", async (req, res) => {
+  try {
+    const { name, email, role } = req.body;
+    if (!name || !email || !role) return res.status(400).json({ success:false, message:"Missing fields" });
+    if (!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
+
+    const spreadsheetId = process.env.VOLUNTEER_SHEET_ID;
+    if (!spreadsheetId) return res.status(500).json({ success:false, message:"VOLUNTEER_SHEET_ID not configured" });
+
+    const timestamp = new Date().toLocaleString();
+    const newRow = [timestamp, name, email, role];
+
+    await appendSheetValues(spreadsheetId, "A:D", [newRow]);
+    console.log("✅ Volunteer submission:", newRow);
+    res.json({ success:true, message:"Volunteer info submitted successfully" });
+  } catch(err){
+    console.error("❌ volunteer error:", err);
+    res.status(500).json({ success:false, message:"Failed to submit volunteer info" });
+  }
+});
+
+// ==================== STREET TEAM SUBMISSION ====================
+app.post("/api/street-team", async (req, res) => {
+  try {
+    const { name, email, city } = req.body;
+    if (!name || !email || !city) return res.status(400).json({ success:false, message:"Missing fields" });
+    if (!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
+
+    const spreadsheetId = process.env.STREET_TEAM_SHEET_ID;
+    if (!spreadsheetId) return res.status(500).json({ success:false, message:"STREET_TEAM_SHEET_ID not configured" });
+
+    const timestamp = new Date().toLocaleString();
+    const newRow = [timestamp, name, email, city];
+
+    await appendSheetValues(spreadsheetId, "A:D", [newRow]);
+    console.log("✅ Street team submission:", newRow);
+    res.json({ success:true, message:"Street team info submitted successfully" });
+  } catch(err){
+    console.error("❌ street team error:", err);
+    res.status(500).json({ success:false, message:"Failed to submit street team info" });
+  }
+});
+
+// ==================== CONTACT SUBMISSION (OPTIONAL) ====================
+app.post("/api/contact", async (req,res)=>{
+  try{
+    const { name, email, message } = req.body;
+    if(!name || !email || !message) return res.status(400).json({ success:false, message:"Missing fields" });
+    if(!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
+
+    const spreadsheetId = process.env.CONTACT_SHEET_ID;
+    if(!spreadsheetId) return res.status(500).json({ success:false, message:"CONTACT_SHEET_ID not configured" });
+
+    const timestamp = new Date().toLocaleString();
+    const newRow = [timestamp, name, email, message];
+
+    await appendSheetValues(spreadsheetId, "A:D", [newRow]);
+    console.log("✅ Contact submission:", newRow);
+    res.json({ success:true, message:"Message sent successfully" });
+  }catch(err){
+    console.error("❌ contact error:", err);
+    res.status(500).json({ success:false, message:"Failed to submit contact message" });
   }
 });
 
