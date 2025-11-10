@@ -1,159 +1,175 @@
-require('dotenv').config();
-const express = require('express');
-const bodyParser = require('body-parser');
-const session = require('express-session');
-const bcrypt = require('bcrypt');
-const Stripe = require('stripe');
-const cors = require('cors');
-const multer = require('multer');
-const Mailjet = require('node-mailjet');
-const path = require('path');
+require("dotenv").config();
+const express = require("express");
+const bodyParser = require("body-parser");
+const session = require("express-session");
+const bcrypt = require("bcrypt");
+const cors = require("cors");
+const multer = require("multer");
+const nodemailer = require("nodemailer");
+const { google } = require("googleapis");
+const Stripe = require("stripe");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ==================== MIDDLEWARE ====================
+// ----------------- MIDDLEWARE -----------------
+app.use(cors({ origin: true, credentials: true }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(cors({ origin: true, credentials: true }));
 
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || 'supersecret',
-    resave: false,
-    saveUninitialized: false,
-  })
-);
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: true,
+}));
 
-// ==================== MAILJET SETUP ====================
-const mj = Mailjet.apiConnect(
-  process.env.MJ_APIKEY_PUBLIC,
-  process.env.MJ_APIKEY_PRIVATE
-);
+// ----------------- MULTER -----------------
+const upload = multer({ dest: "uploads/" });
 
-async function sendWaitlistEmail({ name, email, source, reason }) {
-  try {
-    const request = await mj.post('send', { version: 'v3.1' }).request({
-      Messages: [
-        {
-          From: {
-            Email: 'noreply@joyfund.net',
-            Name: 'JoyFund INC.'
-          },
-          To: [
-            { Email: 'team@joyfund.net', Name: 'JoyFund Team' }
-          ],
-          Subject: 'New Waitlist Signup',
-          TextPart: `Name: ${name}\nEmail: ${email}\nSource: ${source}\nReason: ${reason}`,
-          HTMLPart: `<h3>New Waitlist Signup</h3>
-                     <p><strong>Name:</strong> ${name}</p>
-                     <p><strong>Email:</strong> ${email}</p>
-                     <p><strong>Source:</strong> ${source}</p>
-                     <p><strong>Reason:</strong> ${reason}</p>`
-        }
-      ]
-    });
-    console.log('Waitlist email sent:', request.body);
-    return true;
-  } catch (err) {
-    console.error('Mailjet sendWaitlistEmail error:', err);
-    return false;
+// ----------------- EMAIL -----------------
+const transporter = nodemailer.createTransport({
+  host: process.env.EMAIL_HOST,
+  port: process.env.EMAIL_PORT,
+  secure: process.env.EMAIL_SECURE === "true",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
   }
-}
+});
 
-// ==================== STRIPE SETUP ====================
+// ----------------- STRIPE -----------------
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ==================== MULTER SETUP ====================
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
+// ----------------- GOOGLE SHEETS -----------------
+const auth = new google.auth.GoogleAuth({
+  credentials: {
+    client_email: process.env.GOOGLE_CLIENT_EMAIL,
+    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
   },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${Date.now()}-${file.fieldname}${ext}`);
-  }
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
 });
-const upload = multer({ storage });
+const sheetsClient = auth.getClient();
+const sheets = google.sheets({ version: "v4", auth: sheetsClient });
 
-// ==================== ROUTES ====================
+// ----------------- ROUTES -----------------
 
-// ---------- CHECK SESSION ----------
-app.get('/api/check-session', (req, res) => {
-  const loggedIn = !!req.session.user;
-  res.json({ loggedIn, user: req.session.user || null });
-});
+// Health check
+app.get("/", (req, res) => res.send("JoyFund backend is running"));
 
-// ---------- LOGOUT ----------
-app.post('/api/logout', (req, res) => {
-  req.session.destroy(err => {
-    if (err) return res.status(500).json({ success: false });
-    res.clearCookie('connect.sid');
-    res.json({ success: true });
-  });
-});
+// ----------------- USER AUTH -----------------
+let users = []; // For testing; replace with DB in production
 
-// ---------- WAITLIST ----------
-app.post('/api/waitlist', async (req, res) => {
-  const { name, email, source, reason } = req.body;
-  if (!name || !email) return res.status(400).json({ success: false, message: 'Missing fields' });
-
-  // Here, you can optionally save to DB or Google Sheets
-
+app.post("/api/signup", async (req, res) => {
+  const { email, password } = req.body;
+  if (users.find(u => u.email === email)) return res.status(400).json({ message: "Email exists" });
+  const hash = await bcrypt.hash(password, 10);
+  const newUser = { email, password: hash };
+  users.push(newUser);
+  req.session.user = { email };
   res.json({ success: true });
 });
 
-app.post('/api/send-waitlist-email', async (req, res) => {
-  const { name, email, source, reason } = req.body;
-  if (!name || !email) return res.status(400).json({ success: false, message: 'Missing fields' });
-
-  const success = await sendWaitlistEmail({ name, email, source, reason });
-  if (success) return res.json({ success: true });
-  return res.status(500).json({ success: false, message: 'Failed to send email' });
-});
-
-// ---------- DONATIONS ----------
-app.post('/api/donations', async (req, res) => {
-  const { campaignId, amount } = req.body;
-  if (!campaignId || !amount) return res.status(400).json({ success: false });
-
-  // Save donation to DB if needed
+app.post("/api/login", async (req, res) => {
+  const { email, password } = req.body;
+  const user = users.find(u => u.email === email);
+  if (!user) return res.status(400).json({ message: "User not found" });
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) return res.status(400).json({ message: "Wrong password" });
+  req.session.user = { email };
   res.json({ success: true });
 });
 
-app.post('/api/create-checkout-session/:campaignId', async (req, res) => {
-  const { campaignId } = req.params;
-  const { amount, successUrl, cancelUrl } = req.body;
-  if (!campaignId || !amount) return res.status(400).json({ error: 'Missing fields' });
+app.post("/api/logout", (req, res) => {
+  req.session.destroy();
+  res.json({ success: true });
+});
 
+// ----------------- WAITLIST -----------------
+app.post("/api/waitlist", async (req, res) => {
+  const { name, email } = req.body;
   try {
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      line_items: [{
-        price_data: {
-          currency: 'usd',
-          product_data: { name: `Donation - ${campaignId}` },
-          unit_amount: Math.round(amount * 100)
-        },
-        quantity: 1
-      }],
-      mode: 'payment',
-      success_url: successUrl,
-      cancel_url: cancelUrl
+    // Append to Google Sheet
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: "Waitlist!A:B",
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [[name, email, new Date().toISOString()]] }
     });
-
-    res.json({ sessionId: session.id });
+    // Send confirmation email
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "JoyFund Waitlist Confirmation",
+      text: `Hi ${name}, thanks for joining the JoyFund waitlist!`
+    });
+    res.json({ success: true });
   } catch (err) {
-    console.error('Stripe create-checkout-session error:', err);
-    res.status(500).json({ error: 'Failed to create Stripe session' });
+    console.error(err);
+    res.status(500).json({ success: false });
   }
 });
 
-// ---------- STATIC FILES ----------
-app.use(express.static('public'));
-app.use('/uploads', express.static('uploads'));
-
-// ---------- START SERVER ----------
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// ----------------- DONATIONS -----------------
+app.post("/api/donate", async (req, res) => {
+  const { amount, email } = req.body;
+  try {
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amount * 100,
+      currency: "usd",
+      receipt_email: email
+    });
+    res.json({ clientSecret: paymentIntent.client_secret });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
 });
+
+// ----------------- VOLUNTEER / STREET TEAM -----------------
+app.post("/api/volunteer", async (req, res) => {
+  const { name, email, role } = req.body;
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: "Volunteers!A:C",
+      valueInputOption: "USER_ENTERED",
+      requestBody: { values: [[name, email, role, new Date().toISOString()]] }
+    });
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: email,
+      subject: "JoyFund Volunteer Confirmation",
+      text: `Hi ${name}, thanks for signing up as a ${role}!`
+    });
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ----------------- CREATE CAMPAIGN -----------------
+app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+  const user = req.session.user;
+  if (!user) return res.status(401).json({ message: "Not logged in" });
+  try {
+    // You can save the uploaded image in uploads/ and store path in DB
+    const { title, description, goal } = req.body;
+    res.json({ success: true, message: "Campaign created" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ----------------- ID VERIFICATION -----------------
+app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
+  const user = req.session.user;
+  if (!user) return res.status(401).json({ message: "Not logged in" });
+  if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+  // Save file and mark user as verified in DB
+  res.json({ success: true, message: "ID uploaded" });
+});
+
+// ----------------- START SERVER -----------------
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
