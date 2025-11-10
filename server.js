@@ -267,31 +267,48 @@ const campaignUpload = multer({ storage: campaignStorage });
 app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user || !user.email) return res.status(401).json({ success:false, message:"You must be signed in" });
+    if (!user || !user.email)
+      return res.status(401).json({ success: false, message: "You must be signed in" });
 
     const { title, goal, description, category } = req.body;
-    if (!title || !goal || !description || !category) 
-      return res.status(400).json({ success:false, message:"Missing required fields" });
+    if (!title || !goal || !description || !category)
+      return res.status(400).json({ success: false, message: "Missing required fields" });
 
-    if (!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
+    // ✅ Ensure Google Sheets client is available
+    if (!sheets) {
+      console.error("Sheets client not initialized");
+      return res.status(500).json({ success: false, message: "Sheets not initialized" });
+    }
+
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    if (!spreadsheetId) return res.status(500).json({ success:false, message:"CAMPAIGNS_SHEET_ID not configured" });
+    if (!spreadsheetId) {
+      console.error("CAMPAIGNS_SHEET_ID not set in .env");
+      return res.status(500).json({ success: false, message: "CAMPAIGNS_SHEET_ID not configured" });
+    }
 
-    // Generate unique ID
+    // ✅ Create uploads folder if missing (Render resets local storage)
+    const fs = require("fs");
+    const path = require("path");
+    const uploadDir = path.join(__dirname, "uploads", "campaigns");
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+    // ✅ Generate unique ID
     const campaignId = Date.now().toString();
 
-    // Handle uploaded image
+    // ✅ Handle uploaded image
     let imageUrl = "";
     if (req.file) {
       imageUrl = `/uploads/campaigns/${req.file.filename}`;
+    } else {
+      imageUrl = "https://placehold.co/400x200?text=No+Image";
     }
 
     const createdAt = new Date().toISOString();
-    const status = "pending"; // initially pending
+    const status = "Pending"; // ✅ Display properly capitalized "Pending"
 
     const newCampaignRow = [
       campaignId,          // Id
-      title,               // title
+      title,               // Title
       user.email.toLowerCase(), // Email
       goal,                // Goal
       description,         // Description
@@ -301,16 +318,18 @@ app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res
       imageUrl             // ImageURL
     ];
 
-    await appendSheetValues(spreadsheetId, "A:I", newCampaignRow);
+    // ✅ Append to Google Sheet
+    await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
 
-    console.log("New campaign added:", newCampaignRow);
-    res.json({ success:true, message:"Campaign submitted and pending approval", campaignId });
+    console.log("✅ New campaign added:", newCampaignRow);
+    res.json({ success: true, message: "Campaign submitted and pending approval", campaignId });
 
-  } catch(err) {
-    console.error("create-campaign error:", err);
-    res.status(500).json({ success:false, message:"Failed to create campaign" });
+  } catch (err) {
+    console.error("❌ create-campaign error:", err.message || err);
+    res.status(500).json({ success: false, message: "Failed to create campaign" });
   }
 });
+
 
 // ==================== GET CAMPAIGNS ====================
 app.get("/api/campaigns", async (req, res) => {
