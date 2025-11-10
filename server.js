@@ -48,7 +48,7 @@ app.use((req, res, next) => {
 app.use(bodyParser.json()); 
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ==================== ✅ SESSION CONFIG ====================
+// ==================== ✅ SESSION CONFIG ==================== 
 app.set("trust proxy", 1); // for Render/HTTPS
 app.use(session({
   secret: process.env.SESSION_SECRET || "secret",
@@ -56,8 +56,8 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production" ? true : false, // secure only in prod
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // cross-site in prod
+    secure: process.env.NODE_ENV === "production" ? true : false,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     maxAge: 1000 * 60 * 60 * 24 * 7
   }
 }));
@@ -190,7 +190,6 @@ const storage = multer.diskStorage({
     cb(null, `${sanitizedEmail}_${timestamp}${ext}`);
   }
 });
-
 const upload = multer({ storage });
 
 app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
@@ -223,7 +222,6 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   }
 });
 
-// ==================== VERIFICATION STATUS FOR DASHBOARD ====================
 app.get("/api/get-verifications", async (req, res) => {
   try {
     if (!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
@@ -247,64 +245,59 @@ app.get("/api/get-verifications", async (req, res) => {
   }
 });
 
-// ==================== ✅ CAMPAIGN CREATION (NEW) ====================
+// ==================== CREATE CAMPAIGN ====================
 const campaignStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, "uploads", "campaign-images");
+    const uploadDir = path.join(__dirname, "uploads", "campaigns");
     fs.mkdirSync(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     const timestamp = Date.now();
-    const sanitizedTitle = (req.body.title || "campaign").replace(/\s+/g, "_");
     const ext = path.extname(file.originalname);
-    cb(null, `${sanitizedTitle}_${timestamp}${ext}`);
+    cb(null, `${timestamp}${ext}`);
   }
 });
-
 const campaignUpload = multer({ storage: campaignStorage });
 
 app.post("/api/create-campaign", campaignUpload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user || !user.email) return res.status(401).json({ success: false, message: "You must be signed in to create a campaign." });
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized." });
+    if (!user || !user.email) return res.status(401).json({ success:false, message:"Not logged in" });
 
-    const { title, description, goal, category } = req.body;
-    if (!title?.trim() || !description?.trim() || !goal?.trim()) {
-      return res.status(400).json({ success: false, message: "Missing required fields." });
-    }
+    const { title, goal, description, category } = req.body;
+    if (!title || !goal || !description || !category) return res.status(400).json({ success:false, message:"Missing required fields" });
+
+    const imageUrl = req.file ? path.join("uploads", "campaigns", req.file.filename) : "";
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    if (!spreadsheetId) return res.status(500).json({ success: false, message: "CAMPAIGNS_SHEET_ID not configured." });
+    if (!spreadsheetId) return res.status(500).json({ success:false, message:"CAMPAIGNS_SHEET_ID not configured" });
 
-    const campaignId = "CMP-" + Date.now();
-    const timestamp = new Date().toLocaleString();
-    const status = "Draft";
-    const imageUrl = req.file ? `/uploads/campaign-images/${req.file.filename}` : "";
+    const timestamp = new Date().toISOString();
+    const campaignId = `camp_${Date.now()}`;
 
-    const newRow = [
+    const newCampaignRow = [
       campaignId,
       title,
       user.email.toLowerCase(),
       goal,
       description,
-      category || "Other",
-      status,
+      category,
+      "Pending",  // ✅ Automatically pending
       timestamp,
       imageUrl
     ];
 
-    await appendSheetValues(spreadsheetId, "A:I", [newRow]);
+    await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
 
-    res.json({ success: true, message: "Campaign created successfully!", campaignId });
-  } catch (err) {
+    res.json({ success:true, campaignId });
+  } catch(err) {
     console.error("create-campaign error:", err);
-    res.status(500).json({ success: false, message: "Failed to create campaign." });
+    res.status(500).json({ success:false, message:"Failed to create campaign" });
   }
 });
 
-// ==================== GET ALL CAMPAIGNS FOR DASHBOARD ====================
+// ==================== GET CAMPAIGNS ====================
 app.get("/api/campaigns", async (req, res) => {
   try {
     if (!sheets) return res.status(500).json({ success:false, message:"Sheets not initialized" });
@@ -318,21 +311,55 @@ app.get("/api/campaigns", async (req, res) => {
     const userCampaigns = rows
       .filter(r => (r[2]||"").toLowerCase() === user.email.toLowerCase())
       .map(r => ({
-        campaignId: r[0],          // Id
-        title: r[1],               // title
-        creatorEmail: r[2],        // Email
-        goal: r[3],                // Goal
-        description: r[4],         // Description
-        category: r[5],            // Category
-        status: r[6] ? r[6].charAt(0).toUpperCase() + r[6].slice(1).toLowerCase() : "Draft",
-        createdAt: r[7],           // CreatedAt
-        imageUrl: r[8] || ""       // ImageURL
+        campaignId: r[0],
+        title: r[1],
+        creatorEmail: r[2],
+        goal: r[3],
+        description: r[4],
+        category: r[5],
+        status: r[6] ? r[6].charAt(0).toUpperCase() + r[6].slice(1).toLowerCase() : "Pending",
+        createdAt: r[7],
+        imageUrl: r[8] || ""
       }));
 
     res.json({ success:true, campaigns: userCampaigns });
   } catch(err){
     console.error("get campaigns error:", err);
     res.status(500).json({ success:false, message:"Failed to get campaigns" });
+  }
+});
+
+// ==================== STRIPE DONATION ROUTE ====================
+app.post("/api/create-checkout-session", async (req, res) => {
+  const { campaignId, amount } = req.body;
+  if (!campaignId || !amount) return res.status(400).json({ error: "Missing campaignId or amount" });
+
+  try {
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    const rows = await getSheetValues(spreadsheetId, "A:I");
+    const campaign = rows.find(r => r[0] === campaignId);
+
+    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: campaign[1] },
+          unit_amount: parseInt(amount) * 100,
+        },
+        quantity: 1
+      }],
+      mode: "payment",
+      success_url: `${process.env.FRONTEND_URL}/thankyou.html?campaignId=${campaignId}`,
+      cancel_url: `${process.env.FRONTEND_URL}/campaigns.html`
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("Stripe checkout error:", err);
+    res.status(500).json({ error: "Failed to create checkout session" });
   }
 });
 
