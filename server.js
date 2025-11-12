@@ -196,7 +196,7 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req,res)=>{
 
     // Upload to Cloudinary
     const uploadResult = await new Promise((resolve,reject)=>{
-      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id-verifications", resource_type:"image" }, (err,result)=>{ if(err) reject(err); else resolve(result); });
+      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id-verifications" }, (err,result)=>{ if(err) reject(err); else resolve(result); });
       stream.end(req.file.buffer);
     });
 
@@ -208,8 +208,35 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req,res)=>{
 
     await sendMailjetEmail("New ID Verification Submitted",`<p>${user.name} (${user.email}) submitted an ID at ${timestamp}</p>`);
 
-    res.json({success:true,action:result.action,row:result.row,status:"Pending",fileUrl});
+    res.json({success:true,action:result.action,row:result.row});
   }catch(err){ console.error("verify-id error:",err); res.status(500).json({success:false,message:"Failed to submit ID verification"}); }
+});
+
+// -------------------- GET USER VERIFICATIONS --------------------
+app.get("/api/get-verifications", async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+
+    const spreadsheetId = process.env.ID_VERIFICATIONS_SHEET_ID;
+    if (!spreadsheetId) return res.status(500).json({ success: false, message: "ID_VERIFICATIONS_SHEET_ID not configured" });
+
+    const rows = await getSheetValues(spreadsheetId, "ID_Verifications!A:E");
+
+    const userRows = rows.filter(r => (r[1] || "").toLowerCase() === user.email.toLowerCase());
+
+    res.json({ success: true, verifications: userRows.map(r => ({
+      timestamp: r[0],
+      email: r[1],
+      name: r[2],
+      status: r[3] === "Approved" ? "Verified" : (r[3] || "Pending"), // convert Approved -> Verified
+      idImageUrl: r[4] || ""
+    })) });
+  } catch (err) {
+    console.error("get-verifications error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch verifications" });
+  }
 });
 
 // -------------------- CREATE CAMPAIGN --------------------
@@ -230,7 +257,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
 
     if(req.file){
       const uploadResult = await new Promise((resolve,reject)=>{
-        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns", resource_type:"image" }, (err,result)=>{ if(err) reject(err); else resolve(result); });
+        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err,result)=>{ if(err) reject(err); else resolve(result); });
         stream.end(req.file.buffer);
       });
       imageUrl = uploadResult.secure_url;
@@ -247,7 +274,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
   }catch(err){ console.error("create-campaign error:",err); res.status(500).json({success:false,message:"Failed to create campaign"}); }
 });
 
-// -------------------- FETCH CAMPAIGNS --------------------
+// -------------------- FETCH USER CAMPAIGNS --------------------
 app.get("/api/campaigns", async (req,res)=>{
   try{
     const user = req.session.user;
@@ -257,10 +284,10 @@ app.get("/api/campaigns", async (req,res)=>{
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId,"A:I");
 
-    // Only return campaigns with non-empty title and creator email
-    const campaigns = (rows||[])
-      .filter(r => r[1] && r[2])
-      .map(r=>({
+    // Filter only campaigns created by this user
+    const userCampaigns = rows
+      .filter(r => (r[2] || "").toLowerCase() === user.email.toLowerCase())
+      .map(r => ({
         campaignId: r[0],
         title: r[1],
         creator: r[2],
@@ -272,12 +299,12 @@ app.get("/api/campaigns", async (req,res)=>{
         imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
       }));
 
-    res.json({success:true,campaigns});
+    res.json({success:true,campaigns:userCampaigns});
   }catch(err){ console.error("fetch campaigns error:",err); res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
 
 // -------------------- OTHER ROUTES OMITTED FOR BREVITY --------------------
-// (Donations, waitlist, volunteer, street team, contact, stripe, profile updates, etc. remain unchanged)
+// Donations, waitlist, volunteer, street team, contact, stripe, profile updates, etc. remain unchanged
 
 // -------------------- START SERVER --------------------
 app.listen(PORT,()=>console.log(`🚀 JoyFund backend running on port ${PORT}`));
