@@ -60,8 +60,43 @@ app.use(session({
   }
 }));
 
-// -------------------- STRIPE --------------------
+// -------------------- STRIPE CHECKOUT --------------------
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY||"");
+
+// -------------------- STRIPE CHECKOUT --------------------
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+  try {
+    const { campaignId } = req.params;
+    const { amount, successUrl, cancelUrl } = req.body;
+    if (!amount || !successUrl || !cancelUrl) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Amount in cents
+    const amountCents = Math.round(amount * 100);
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: `JoyFund Donation - ${campaignId}` },
+          unit_amount: amountCents,
+        },
+        quantity: 1
+      }],
+      mode: "payment",
+      success_url: successUrl,
+      cancel_url: cancelUrl
+    });
+
+    res.json({ sessionId: session.id });
+  } catch (err) {
+    console.error("Stripe checkout error:", err);
+    res.status(500).json({ error: "Failed to create checkout session" });
+  }
+});
+
 
 // -------------------- MAILJET --------------------
 let mailjetClient = null;
