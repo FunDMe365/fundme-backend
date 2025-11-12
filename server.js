@@ -361,6 +361,7 @@ app.get("/api/campaigns", async (req,res)=>{
     res.json({success:true,campaigns:userCampaigns});
   }catch(err){ res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
+
 // -------------------- UPDATE CAMPAIGN --------------------
 app.put("/api/campaign/:id", upload.single("image"), async (req, res) => {
   try {
@@ -388,7 +389,7 @@ app.put("/api/campaign/:id", upload.single("image"), async (req, res) => {
 
     if (req.file) {
       const uploadResult = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns"        }, (err, result) => {
           if (err) reject(err); else resolve(result);
         });
         stream.end(req.file.buffer);
@@ -408,9 +409,6 @@ app.put("/api/campaign/:id", upload.single("image"), async (req, res) => {
       updatedImage
     ];
 
-    const startCol = "A";
-    const endCol = "I";
-    const updateRange = `${spreadsheetId}!${startCol}${rowIndex + 1}:${endCol}${rowIndex + 1}`;
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `A${rowIndex + 1}:I${rowIndex + 1}`,
@@ -425,5 +423,35 @@ app.put("/api/campaign/:id", upload.single("image"), async (req, res) => {
   }
 });
 
+// -------------------- PUBLIC ACTIVE CAMPAIGNS --------------------
+app.get("/api/public-campaigns", async (req, res) => {
+  try {
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    const rows = await getSheetValues(spreadsheetId, "A:I");
+
+    const activeCampaigns = rows
+      .filter(r => (r[6] || "").toLowerCase() === "approved")
+      .map(r => ({
+        campaignId: r[0],
+        title: r[1],
+        creator: r[2],
+        goal: r[3],
+        description: r[4],
+        category: r[5],
+        status: r[6] || "Pending",
+        createdAt: r[7],
+        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
+
+    res.json({ success: true, campaigns: activeCampaigns });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to fetch public campaigns" });
+  }
+});
+
 // -------------------- START SERVER --------------------
 app.listen(PORT,()=>console.log(`🚀 JoyFund backend running on port ${PORT}`));
+
