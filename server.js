@@ -361,6 +361,69 @@ app.get("/api/campaigns", async (req,res)=>{
     res.json({success:true,campaigns:userCampaigns});
   }catch(err){ res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
+// -------------------- UPDATE CAMPAIGN --------------------
+app.put("/api/campaign/:id", upload.single("image"), async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+
+    const campaignId = req.params.id;
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    const rows = await getSheetValues(spreadsheetId, "A:I");
+
+    const rowIndex = rows.findIndex(r => (r[0] || "").toString() === campaignId);
+    if (rowIndex === -1) return res.status(404).json({ success: false, error: "Campaign not found" });
+
+    // Ensure the logged-in user owns the campaign
+    if ((rows[rowIndex][2] || "").toLowerCase() !== user.email.toLowerCase()) {
+      return res.status(403).json({ success: false, error: "Unauthorized" });
+    }
+
+    // Update fields
+    const updatedTitle = req.body.title || rows[rowIndex][1];
+    const updatedGoal = req.body.goal || rows[rowIndex][3];
+    const updatedDescription = req.body.description || rows[rowIndex][4];
+    let updatedImage = rows[rowIndex][8];
+
+    if (req.file) {
+      const uploadResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => {
+          if (err) reject(err); else resolve(result);
+        });
+        stream.end(req.file.buffer);
+      });
+      updatedImage = uploadResult.secure_url;
+    }
+
+    const updatedRow = [
+      campaignId,
+      updatedTitle,
+      user.email.toLowerCase(),
+      updatedGoal,
+      updatedDescription,
+      rows[rowIndex][5], // category stays the same
+      rows[rowIndex][6], // status stays the same
+      rows[rowIndex][7], // createdAt stays the same
+      updatedImage
+    ];
+
+    const startCol = "A";
+    const endCol = "I";
+    const updateRange = `${spreadsheetId}!${startCol}${rowIndex + 1}:${endCol}${rowIndex + 1}`;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `A${rowIndex + 1}:I${rowIndex + 1}`,
+      valueInputOption: "USER_ENTERED",
+      resource: { values: [updatedRow] }
+    });
+
+    res.json({ success: true, message: "Campaign updated successfully" });
+  } catch (err) {
+    console.error("Error updating campaign:", err);
+    res.status(500).json({ success: false, error: "Failed to update campaign" });
+  }
+});
 
 // -------------------- START SERVER --------------------
 app.listen(PORT,()=>console.log(`🚀 JoyFund backend running on port ${PORT}`));
