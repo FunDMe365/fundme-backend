@@ -196,19 +196,19 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req,res)=>{
 
     // Upload to Cloudinary
     const uploadResult = await new Promise((resolve,reject)=>{
-      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id-verifications" }, (err,result)=>{ if(err) reject(err); else resolve(result); });
+      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id-verifications", resource_type:"image" }, (err,result)=>{ if(err) reject(err); else resolve(result); });
       stream.end(req.file.buffer);
     });
 
     const fileUrl = uploadResult.secure_url;
 
     const timestamp = new Date().toLocaleString();
-    const updatedRow=[timestamp,user.email.toLowerCase(),user.name,"pending",fileUrl];
+    const updatedRow=[timestamp,user.email.toLowerCase(),user.name,"Pending",fileUrl];
     const result = await findRowAndUpdateOrAppend(spreadsheetId,"ID_Verifications!A:E",1,user.email,updatedRow);
 
     await sendMailjetEmail("New ID Verification Submitted",`<p>${user.name} (${user.email}) submitted an ID at ${timestamp}</p>`);
 
-    res.json({success:true,action:result.action,row:result.row});
+    res.json({success:true,action:result.action,row:result.row,status:"Pending",fileUrl});
   }catch(err){ console.error("verify-id error:",err); res.status(500).json({success:false,message:"Failed to submit ID verification"}); }
 });
 
@@ -230,7 +230,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
 
     if(req.file){
       const uploadResult = await new Promise((resolve,reject)=>{
-        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err,result)=>{ if(err) reject(err); else resolve(result); });
+        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns", resource_type:"image" }, (err,result)=>{ if(err) reject(err); else resolve(result); });
         stream.end(req.file.buffer);
       });
       imageUrl = uploadResult.secure_url;
@@ -250,14 +250,28 @@ app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
 // -------------------- FETCH CAMPAIGNS --------------------
 app.get("/api/campaigns", async (req,res)=>{
   try{
-    if(!req.session.user) return res.status(401).json({success:false,message:"Sign in required"});
+    const user = req.session.user;
+    if(!user) return res.status(401).json({success:false,message:"Sign in required"});
     if(!sheets) return res.status(500).json({success:false,message:"Sheets not initialized"});
+
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId,"A:I");
-    const campaigns = rows.map(r=>({
-      campaignId:r[0], title:r[1], creator:r[2], goal:r[3], description:r[4],
-      category:r[5], status:r[6], createdAt:r[7], imageUrl:r[8] || "https://placehold.co/400x200?text=No+Image"
-    }));
+
+    // Only return campaigns with non-empty title and creator email
+    const campaigns = (rows||[])
+      .filter(r => r[1] && r[2])
+      .map(r=>({
+        campaignId: r[0],
+        title: r[1],
+        creator: r[2],
+        goal: r[3],
+        description: r[4],
+        category: r[5],
+        status: r[6] || "Pending",
+        createdAt: r[7],
+        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
+
     res.json({success:true,campaigns});
   }catch(err){ console.error("fetch campaigns error:",err); res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
