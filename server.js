@@ -194,11 +194,13 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req,res)=>{
     const spreadsheetId=process.env.ID_VERIFICATIONS_SHEET_ID;
     if(!spreadsheetId) return res.status(500).json({success:false,message:"ID_VERIFICATIONS_SHEET_ID not configured"});
 
-    // Upload to Cloudinary
-    const uploadResult = await cloudinary.uploader.upload_stream({ folder: "joyfund/id-verifications" }, (err,result)=>{
-      if(err) throw err;
-      return result;
-    }).end(req.file.buffer);
+    const uploadResult = await new Promise((resolve,reject)=>{
+      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id-verifications" }, (err,result)=>{
+        if(err) reject(err);
+        else resolve(result);
+      });
+      stream.end(req.file.buffer);
+    });
 
     const fileUrl = uploadResult.secure_url;
 
@@ -208,7 +210,7 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req,res)=>{
 
     await sendMailjetEmail("New ID Verification Submitted",`<p>${user.name} (${user.email}) submitted an ID at ${timestamp}</p>`);
 
-    res.json({success:true,action:result.action,row:result.row});
+    res.json({success:true,action:result.action,row:result.row,fileUrl});
   }catch(err){ console.error("verify-id error:",err); res.status(500).json({success:false,message:"Failed to submit ID verification"}); }
 });
 
@@ -229,10 +231,13 @@ app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
     let imageUrl = "https://placehold.co/400x200?text=No+Image";
 
     if(req.file){
-      const uploadResult = await cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err,result)=>{
-        if(err) throw err;
-        return result;
-      }).end(req.file.buffer);
+      const uploadResult = await new Promise((resolve,reject)=>{
+        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err,result)=>{
+          if(err) reject(err);
+          else resolve(result);
+        });
+        stream.end(req.file.buffer);
+      });
 
       imageUrl = uploadResult.secure_url;
     }
@@ -246,6 +251,29 @@ app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
 
     res.json({success:true,message:"Campaign submitted and pending approval",campaignId});
   }catch(err){ console.error("create-campaign error:",err); res.status(500).json({success:false,message:"Failed to create campaign"}); }
+});
+
+// -------------------- GET CAMPAIGNS FOR DASHBOARD --------------------
+app.get("/api/get-campaigns", async (req,res)=>{
+  try{
+    if(!sheets) return res.status(500).json({success:false,message:"Sheets not initialized"});
+    if(!process.env.CAMPAIGNS_SHEET_ID) return res.status(500).json({success:false,message:"CAMPAIGNS_SHEET_ID not configured"});
+
+    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID,"A:I");
+    const campaigns = rows.map(r=>({
+      id: r[0],
+      title: r[1],
+      email: r[2],
+      goal: r[3],
+      description: r[4],
+      category: r[5],
+      status: r[6],
+      createdAt: r[7],
+      imageUrl: r[8]
+    }));
+
+    res.json({success:true,campaigns});
+  }catch(err){ console.error("get-campaigns error:",err); res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
 
 // -------------------- STRIPE DONATION --------------------
