@@ -367,40 +367,43 @@ app.get("/api/search-campaigns", async (req, res) => {
   try {
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
+    const maxGoal = parseFloat(req.query.max) || Infinity;
+    const categoryFilter = (req.query.category || "All").toLowerCase();
+
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId, "A:I");
 
-    let campaigns = rows
-      .filter(r => (r[6] || "").toLowerCase() === "approved") // only active
-      .map(r => ({
-        id: r[0],
-        title: r[1],
-        creator: r[2],
-        goal: parseFloat(r[3]) || 0,
-        description: r[4],
-        category: r[5],
-        status: r[6],
-        createdAt: r[7],
-        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
-      }));
+    // Only include approved campaigns
+    let activeCampaigns = rows.filter(r => (r[6] || "").toLowerCase() === "approved");
 
     // Filter by max goal
-    const max = parseFloat(req.query.max) || Infinity;
-    campaigns = campaigns.filter(c => c.goal <= max);
+    activeCampaigns = activeCampaigns.filter(r => parseFloat(r[3] || 0) <= maxGoal);
 
-    // Filter by category if provided
-    const category = req.query.category;
-    if (category && category !== "All") {
-      campaigns = campaigns.filter(c => c.category === category);
+    // Filter by category if not "all"
+    if (categoryFilter !== "all") {
+      activeCampaigns = activeCampaigns.filter(r => ((r[5] || "").toLowerCase() === categoryFilter));
     }
 
-    res.json({ success: true, campaigns });
+    // Map to standard response
+    const campaigns = activeCampaigns.map(r => ({
+      id: r[0],
+      title: r[1],
+      creator: r[2],
+      goal: parseFloat(r[3] || 0),
+      description: r[4],
+      category: r[5],
+      status: r[6] || "Pending",
+      createdAt: r[7],
+      imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+    }));
 
+    res.json({ success: true, campaigns });
   } catch (err) {
-    console.error("Search campaigns error:", err);
+    console.error(err);
     res.status(500).json({ success: false, message: "Failed to fetch campaigns" });
   }
 });
+
 
 
 
