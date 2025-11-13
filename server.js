@@ -367,31 +367,41 @@ app.get("/api/search-campaigns", async (req, res) => {
   try {
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
-    const maxGoal = parseFloat(req.query.max) || Infinity;
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId, "A:I");
 
-    const filteredCampaigns = rows
-      .filter(r => (r[6] || "").toLowerCase() === "approved") // Only approved/active campaigns
-      .filter(r => parseFloat(r[3] || 0) <= maxGoal) // Filter by max goal
+    let campaigns = rows
+      .filter(r => (r[6] || "").toLowerCase() === "approved") // only active
       .map(r => ({
         id: r[0],
         title: r[1],
         creator: r[2],
-        goal: r[3],
+        goal: parseFloat(r[3]) || 0,
         description: r[4],
         category: r[5],
-        status: r[6] || "Pending",
+        status: r[6],
         createdAt: r[7],
         imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
       }));
 
-    res.json({ success: true, campaigns: filteredCampaigns });
+    // Filter by max goal
+    const max = parseFloat(req.query.max) || Infinity;
+    campaigns = campaigns.filter(c => c.goal <= max);
+
+    // Filter by category if provided
+    const category = req.query.category;
+    if (category && category !== "All") {
+      campaigns = campaigns.filter(c => c.category === category);
+    }
+
+    res.json({ success: true, campaigns });
+
   } catch (err) {
     console.error("Search campaigns error:", err);
-    res.status(500).json({ success: false, message: "Failed to search campaigns" });
+    res.status(500).json({ success: false, message: "Failed to fetch campaigns" });
   }
 });
+
 
 
 // -------------------- UPDATE CAMPAIGN --------------------
