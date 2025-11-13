@@ -356,53 +356,45 @@ app.get("/api/campaigns", async (req,res)=>{
   }catch(err){ res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
 
-// Get all active campaigns (public)
+// ------------------ PUBLIC CAMPAIGNS ------------------
 app.get('/api/public-campaigns', async (req, res) => {
   try {
-    // Replace 'Campaign' with your actual campaign model name
-    const campaigns = await Campaign.find({ status: 'Approved' });
-    res.json(campaigns);
+    const campaigns = await Campaign.find({
+      status: { $in: ['Approved', 'active'] }
+    });
+
+    res.status(200).json(campaigns || []);
   } catch (err) {
-    console.error('Error fetching public campaigns:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('Error fetching public campaigns:', err.message);
+    res.status(500).json({ error: 'Server error: ' + err.message });
   }
 });
 
-// ==================== SEARCH CAMPAIGNS ====================
-app.get("/api/search-campaigns", async (req, res) => {
+
+// ------------------ SEARCH CAMPAIGNS ------------------
+app.get('/api/search-campaigns', async (req, res) => {
   try {
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+    const { category, amount } = req.query;
 
-    const maxGoal = parseFloat(req.query.max) || Infinity;
-    const categoryFilter = (req.query.category || "All").toLowerCase();
+    let filter = {
+      status: { $in: ['Approved', 'active'] }
+    };
 
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, "A:I");
-
-    let activeCampaigns = rows.filter(r => (r[6] || "").toLowerCase() === "Approved");
-
-    activeCampaigns = activeCampaigns.filter(r => parseFloat(r[3] || 0) <= maxGoal);
-
-    if (categoryFilter !== "all") {
-      activeCampaigns = activeCampaigns.filter(r => ((r[5] || "").toLowerCase() === categoryFilter));
+    // Apply filters dynamically
+    if (category && category !== 'all') {
+      filter.category = category;
     }
 
-    const campaigns = activeCampaigns.map(r => ({
-      id: r[0],
-      title: r[1],
-      creator: r[2],
-      goal: parseFloat(r[3] || 0),
-      description: r[4],
-      category: r[5],
-      status: r[6],
-      createdAt: r[7],
-      imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
-    }));
+    if (amount) {
+      filter.goal = { $lte: parseInt(amount) };
+    }
 
-    res.json({ success: true, campaigns });
+    const campaigns = await Campaign.find(filter);
+
+    res.status(200).json(campaigns || []);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to search campaigns" });
+    console.error('Error searching campaigns:', err.message);
+    res.status(500).json({ error: 'Server error: ' + err.message });
   }
 });
 
