@@ -20,6 +20,20 @@ const jwt = require("jsonwebtoken");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// -------------------- REQUIRED ENV VARIABLES --------------------
+const requiredEnvs = [
+  "JWT_SECRET",
+  "SESSION_SECRET",
+  "STRIPE_SECRET_KEY",
+  "FRONTEND_URL"
+];
+for (const envVar of requiredEnvs) {
+  if (!process.env[envVar]) {
+    console.error(`Missing required environment variable: ${envVar}`);
+    process.exit(1);
+  }
+}
+
 // -------------------- CORS --------------------
 const allowedOrigins = [
   "https://fundasmile.net",
@@ -44,17 +58,16 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 // -------------------- SESSION --------------------
-// Trust proxy for Render/Heroku
 app.set('trust proxy', 1);
 
 app.use(session({
   name: 'sessionId',
-  secret: process.env.SESSION_SECRET || 'supersecretkey',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production", // true on HTTPS
+    secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
     maxAge: 1000 * 60 * 60 * 24
   }
@@ -64,13 +77,14 @@ app.use(session({
 app.use(express.static(path.join(__dirname, "public")));
 
 // -------------------- STRIPE --------------------
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY || "");
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // -------------------- MAILJET --------------------
 let mailjetClient = null;
 if (process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET) {
   mailjetClient = mailjetLib.apiConnect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
 }
+
 async function sendMailjetEmail(subject, htmlContent, toEmail) {
   if (!mailjetClient) return;
   try {
@@ -163,48 +177,33 @@ async function checkPassword(inputPassword, storedHash) {
   return await bcrypt.compare(inputPassword.trim(), storedHash.trim());
 }
 
-// ⭐ NEW: COOKIE-BASED LOGIN (Works on iOS) ⭐
+// -------------------- SIGN-IN (JWT + Cookie + Session) --------------------
 app.post("/api/signin", async (req, res) => {
   try {
     const { email, password } = req.body;
-
-    if (!email || !password)
-      return res.status(400).json({ error: "Email and password are required" });
+    if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
 
     const user = await getUserFromDB(email);
-
     if (!user || !(await checkPassword(password, user.passwordHash))) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // Create secure session token (JWT)
     const sessionToken = jwt.sign(
-      {
-        email: user.email,
-        name: user.name,
-      },
-      process.env.JWT_SECRET || "fallback_jwt_secret",
+      { email: user.email, name: user.name },
+      process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    // MUST HAVE for iOS cookies
     res.cookie("session", sessionToken, {
       httpOnly: true,
-      secure: true,
-      sameSite: "none",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
       path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
-    // Also populate express-session for backward compatibility with existing routes
     req.session.user = { email: user.email, name: user.name, joinDate: user.joinDate };
-
-    return res.json({
-      ok: true,
-      loggedIn: true,
-      name: user.name,
-      email: user.email,
-    });
+    return res.json({ ok: true, loggedIn: true, name: user.name, email: user.email });
 
   } catch (error) {
     console.error("Signin error:", error);
@@ -212,19 +211,14 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-//-------------CHECK-AUTH (reads JWT cookie)----------------------
+// -------------------- CHECK AUTH --------------------
 app.get("/api/check-auth", (req, res) => {
   try {
     const token = req.cookies && req.cookies.session;
     if (!token) return res.json({ loggedIn: false });
 
-    const user = jwt.verify(token, process.env.JWT_SECRET || "fallback_jwt_secret");
-
-    return res.json({
-      loggedIn: true,
-      email: user.email,
-      name: user.name
-    });
+    const user = jwt.verify(token, process.env.JWT_SECRET);
+    return res.json({ loggedIn: true, email: user.email, name: user.name });
 
   } catch (err) {
     return res.json({ loggedIn: false });
@@ -233,22 +227,12 @@ app.get("/api/check-auth", (req, res) => {
 
 // -------------------- LOGOUT --------------------
 app.post("/api/logout", (req, res) => {
-  // clear JWT cookie
-  try {
-    res.clearCookie('session', { path: '/' });
-  } catch (e) {
-    // ignore
-  }
+  try { res.clearCookie('session', { path: '/' }); } catch(e){}
 
-  // destroy express session if present
   if (req.session) {
     req.session.destroy(err => {
-      // clear sessionId cookie name if any
       try { res.clearCookie('sessionId', { path: '/' }); } catch(e){}
-      if (err) {
-        console.error("Error destroying session:", err);
-        return res.status(500).json({ success: false, message: "Logout failed" });
-      }
+      if (err) return res.status(500).json({ success: false, message: "Logout failed" });
       return res.json({ success: true });
     });
   } else {
@@ -259,11 +243,12 @@ app.post("/api/logout", (req, res) => {
 // -------------------- CAMPAIGNS --------------------
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
-    const user = req.session && req.session.user;
+    const user = req.session?.user;
     if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
 
     const { title, goal, description, category } = req.body;
-    if (!title || !goal || !description || !category) return res.status(400).json({ success: false, message: "Missing required fields" });
+    if (!title || !goal || !description || !category)
+      return res.status(400).json({ success: false, message: "Missing required fields" });
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const campaignId = Date.now().toString();
@@ -296,14 +281,14 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
 app.get("/api/my-campaigns", async (req, res) => {
   try {
-    const user = req.session && req.session.user;
+    const user = req.session?.user;
     if (!user) return res.status(401).json({ success: false, message: "Not logged in" });
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId, "A:I");
 
     const myCampaigns = rows
-      .filter(r => r[2] && r[2].toLowerCase() === user.email.toLowerCase())
+      .filter(r => r[2]?.toLowerCase() === user.email.toLowerCase())
       .map(r => ({
         campaignId: r[0],
         title: r[1],
@@ -326,6 +311,7 @@ app.get("/api/my-campaigns", async (req, res) => {
 app.get("/api/public-campaigns", async (req, res) => {
   try {
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId, "A:I");
 
@@ -462,7 +448,7 @@ app.post("/api/street-team", async (req, res) => {
     const timestamp = new Date().toLocaleDateString();
     await appendSheetValues(spreadsheetId, "StreetTeam!A:E", [[timestamp, name, email.toLowerCase(), city, hoursAvailable || ""]]);
 
-    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined the street team in ${city} at ${timestamp}. Hours Available: ${hoursAvailable || "N/A"}</p>`);
+    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined street team in ${city} at ${timestamp}. Hours Available: ${hoursAvailable || "N/A"}</p>`);
 
     res.json({ success: true, message: "Street team submission successful" });
   } catch (err) {
@@ -471,67 +457,87 @@ app.post("/api/street-team", async (req, res) => {
   }
 });
 
-// -------------------- DASHBOARD --------------------
-app.get("/api/check-session", (req, res) => {
-  res.json({ loggedIn: !!req.session.user, user: req.session.user || null });
-});
-
 // -------------------- ID VERIFICATION --------------------
-app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
+app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
-    const user = req.session && req.session.user;
-    if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
-    if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
+    const { email } = req.body;
+    if (!email || !req.file) return res.status(400).json({ success: false, message: "Missing email or ID image" });
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
-    const spreadsheetId = process.env.ID_VERIFICATIONS_SHEET_ID;
-
     const uploadResult = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id-verifications" }, (err, result) => {
+      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id-verification" }, (err, result) => {
         if (err) reject(err); else resolve(result);
       });
       stream.end(req.file.buffer);
     });
 
-    const fileUrl = uploadResult.secure_url;
-    const timestamp = new Date().toLocaleString();
+    const spreadsheetId = process.env.ID_VERIFICATION_SHEET_ID;
+    const timestamp = new Date().toISOString();
+    await appendSheetValues(spreadsheetId, "A:D", [[timestamp, email.toLowerCase(), uploadResult.secure_url, "Verified"]]);
 
-    const updatedRow = [timestamp, user.email.toLowerCase(), user.name, "Pending", fileUrl];
+    await sendMailjetEmail("New ID Verification", `<p>${email} uploaded an ID for verification at ${timestamp}</p>`);
 
-    await findRowAndUpdateOrAppend(spreadsheetId, "ID_Verifications!A:E", 1, user.email, updatedRow);
-
-    await sendMailjetEmail(
-      "New ID Verification Submitted",
-      `<p>${user.name} (${user.email}) submitted an ID verification at ${timestamp}.</p><p><a href="${fileUrl}">View document</a></p>`
-    );
-
-    res.json({ success: true, message: "ID submitted for verification", fileUrl });
+    res.json({ success: true, message: "ID verified successfully" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Failed to submit ID" });
+    res.status(500).json({ success: false, message: "Failed to verify ID" });
   }
 });
 
 // -------------------- PASSWORD RESET --------------------
-app.post("/api/request-password-reset", async (req, res) => {
+app.post("/api/password-reset-request", async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: "Email required" });
+    if (!email) return res.status(400).json({ success: false, message: "Email is required" });
 
     const user = await getUserFromDB(email);
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (!user) return res.json({ success: true, message: "If the email exists, a reset link will be sent" });
 
-    const token = crypto.randomBytes(32).toString("hex");
-    const resetLink = `${process.env.FRONTEND_URL}/reset-password.html?token=${token}&email=${encodeURIComponent(email)}`;
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
 
-    // Normally store token in DB / sheet, skipped for brevity
+    // Store token in Google Sheet (optional)
+    const spreadsheetId = process.env.USERS_SHEET_ID;
+    const users = await getSheetValues(spreadsheetId, "A:D");
+    const rowIndex = users.findIndex(r => r[2]?.toLowerCase() === email.toLowerCase());
+    if (rowIndex >= 0) {
+      users[rowIndex][4] = resetToken;
+      const updateRange = `A${rowIndex + 1}:E${rowIndex + 1}`;
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: updateRange, valueInputOption: "USER_ENTERED", resource: { values: [users[rowIndex]] } });
+    }
 
-    await sendMailjetEmail("Password Reset Request", `<p>Click <a href="${resetLink}">here</a> to reset your password.</p>`, email);
+    await sendMailjetEmail("Password Reset", `<p>Click <a href="${resetLink}">here</a> to reset your password</p>`, email);
 
-    res.json({ success: true, message: "Password reset email sent" });
+    res.json({ success: true, message: "If the email exists, a reset link will be sent" });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Failed to request password reset" });
+  }
+});
+
+app.post("/api/password-reset", async (req, res) => {
+  try {
+    const { email, token, newPassword } = req.body;
+    if (!email || !token || !newPassword) return res.status(400).json({ success: false, message: "Missing fields" });
+
+    const user = await getUserFromDB(email);
+    if (!user) return res.status(400).json({ success: false, message: "Invalid token or email" });
+
+    const spreadsheetId = process.env.USERS_SHEET_ID;
+    const users = await getSheetValues(spreadsheetId, "A:E");
+    const rowIndex = users.findIndex(r => r[2]?.toLowerCase() === email.toLowerCase());
+    if (rowIndex < 0 || users[rowIndex][4] !== token) return res.status(400).json({ success: false, message: "Invalid token" });
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    users[rowIndex][3] = newHash;
+    users[rowIndex][4] = ""; // Clear token
+    const updateRange = `A${rowIndex + 1}:E${rowIndex + 1}`;
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: updateRange, valueInputOption: "USER_ENTERED", resource: { values: [users[rowIndex]] } });
+
+    res.json({ success: true, message: "Password reset successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to reset password" });
   }
 });
 
