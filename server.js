@@ -362,6 +362,38 @@ app.get("/api/campaigns", async (req,res)=>{
   }catch(err){ res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
 
+// -------------------- SEARCH CAMPAIGNS --------------------
+app.get("/api/search-campaigns", async (req, res) => {
+  try {
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+
+    const maxGoal = parseFloat(req.query.max) || Infinity;
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    const rows = await getSheetValues(spreadsheetId, "A:I");
+
+    const filteredCampaigns = rows
+      .filter(r => (r[6] || "").toLowerCase() === "approved") // Only approved/active campaigns
+      .filter(r => parseFloat(r[3] || 0) <= maxGoal) // Filter by max goal
+      .map(r => ({
+        id: r[0],
+        title: r[1],
+        creator: r[2],
+        goal: r[3],
+        description: r[4],
+        category: r[5],
+        status: r[6] || "Pending",
+        createdAt: r[7],
+        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
+
+    res.json({ success: true, campaigns: filteredCampaigns });
+  } catch (err) {
+    console.error("Search campaigns error:", err);
+    res.status(500).json({ success: false, message: "Failed to search campaigns" });
+  }
+});
+
+
 // -------------------- UPDATE CAMPAIGN --------------------
 app.put("/api/campaign/:id", upload.single("image"), async (req, res) => {
   try {
