@@ -13,7 +13,7 @@ const cors = require("cors");
 const mailjetLib = require("node-mailjet");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
-const crypto = require("crypto"); // <-- for password reset tokens
+const crypto = require("crypto"); // for password reset tokens
 
 // -------------------- CLOUDINARY --------------------
 cloudinary.config({
@@ -61,19 +61,16 @@ app.use(session({
   }
 }));
 
-// -------------------- STRIPE CHECKOUT --------------------
+// -------------------- STRIPE --------------------
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY||"");
 
-// -------------------- STRIPE CHECKOUT --------------------
+// ==================== STRIPE CHECKOUT ====================
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const { campaignId } = req.params;
     const { amount, successUrl, cancelUrl } = req.body;
-    if (!amount || !successUrl || !cancelUrl) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
+    if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ error: "Missing required fields" });
 
-    // Amount in cents
     const amountCents = Math.round(amount * 100);
 
     const session = await stripe.checkout.sessions.create({
@@ -98,8 +95,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   }
 });
 
-
-// -------------------- MAILJET --------------------
+// ==================== MAILJET ====================
 let mailjetClient = null;
 if(process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET){
   mailjetClient = mailjetLib.apiConnect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
@@ -118,7 +114,7 @@ async function sendMailjetEmail(subject, htmlContent, toEmail){
   }catch(err){ console.error("Mailjet error:",err); }
 }
 
-// -------------------- GOOGLE SHEETS --------------------
+// ==================== GOOGLE SHEETS ====================
 let sheets;
 try{
   if(process.env.GOOGLE_CREDENTIALS_JSON){
@@ -160,7 +156,7 @@ async function findRowAndUpdateOrAppend(spreadsheetId,rangeCols,matchColIndex,ma
   }
 }
 
-//===================== WAITLIST / VOLUNTEERS / STREET TEAM ====================
+// ==================== WAITLIST / VOLUNTEERS / STREET TEAM ====================
 app.post("/api/waitlist", async (req, res) => {
   try {
     const { name, email, reason } = req.body;
@@ -218,7 +214,7 @@ app.post("/api/street-team", async (req, res) => {
   }
 });
 
-//===================== USERS / SIGNIN / SESSION ====================
+// ==================== USERS / SIGNIN / SESSION ====================
 async function getUsers(){ 
   if(!process.env.USERS_SHEET_ID) return []; 
   return getSheetValues(process.env.USERS_SHEET_ID,"A:D"); 
@@ -248,11 +244,11 @@ app.post("/api/logout",(req,res)=>{
   req.session.destroy(err=>{ if(err) return res.status(500).json({error:"Failed to logout"}); res.json({ok:true}); }); 
 });
 
-//===================== MULTER ====================
+// ==================== MULTER ====================
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-//===================== ID VERIFICATION ====================
+// ==================== ID VERIFICATION ====================
 app.post("/api/verify-id", upload.single("idDocument"), async (req,res)=>{
   try{
     const user=req.session.user;
@@ -300,7 +296,7 @@ app.get("/api/get-verifications", async (req, res) => {
   }
 });
 
-//===================== CAMPAIGNS ====================
+// ==================== CAMPAIGNS ====================
 app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
   try{
     const user = req.session.user;
@@ -360,7 +356,7 @@ app.get("/api/campaigns", async (req,res)=>{
   }catch(err){ res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
 
-// =================== SEARCH CAMPAIGNS ====================
+// ==================== SEARCH CAMPAIGNS ====================
 app.get("/api/search-campaigns", async (req, res) => {
   try {
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
@@ -371,18 +367,14 @@ app.get("/api/search-campaigns", async (req, res) => {
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId, "A:I");
 
-    // Only include approved campaigns
     let activeCampaigns = rows.filter(r => (r[6] || "").toLowerCase() === "approved");
 
-    // Filter by max goal
     activeCampaigns = activeCampaigns.filter(r => parseFloat(r[3] || 0) <= maxGoal);
 
-    // Filter by category if not "all"
     if (categoryFilter !== "all") {
       activeCampaigns = activeCampaigns.filter(r => ((r[5] || "").toLowerCase() === categoryFilter));
     }
 
-    // Map to standard response
     const campaigns = activeCampaigns.map(r => ({
       id: r[0],
       title: r[1],
@@ -402,9 +394,9 @@ app.get("/api/search-campaigns", async (req, res) => {
   }
 });
 
-const resetTokens = {}; // In-memory store for demo. Can use DB/Sheets in production
+// -------------------- PASSWORD RESET (Google Sheets) --------------------
 
-// -------------------- REQUEST PASSWORD RESET --------------------
+// Request password reset
 app.post("/api/request-reset-password", async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: "Email required" });
@@ -416,7 +408,16 @@ app.post("/api/request-reset-password", async (req, res) => {
 
     const token = crypto.randomBytes(32).toString("hex");
     const expires = Date.now() + 1000 * 60 * 60; // 1 hour
-    resetTokens[token] = { email: email.toLowerCase(), expires };
+
+    // Save token to Google Sheet
+    const spreadsheetId = process.env.PASSWORD_RESET_SHEET_ID;
+    await findRowAndUpdateOrAppend(
+      spreadsheetId,
+      "PasswordResets!A:C",
+      0, // match by email (column A)
+      email.toLowerCase(),
+      [email.toLowerCase(), token, expires]
+    );
 
     const resetLink = `${process.env.FRONTEND_URL || "https://fundasmile.net"}/update-password.html?token=${token}`;
 
@@ -441,36 +442,38 @@ app.post("/api/request-reset-password", async (req, res) => {
   }
 });
 
-// -------------------- UPDATE PASSWORD --------------------
+// Update password
 app.post("/api/update-password", async (req, res) => {
   const { token, newPassword } = req.body;
   if (!token || !newPassword) return res.status(400).json({ error: "Token and new password required" });
 
-  const tokenData = resetTokens[token];
-  if (!tokenData) return res.status(400).json({ error: "Invalid or expired token" });
-  if (Date.now() > tokenData.expires) {
-    delete resetTokens[token];
-    return res.status(400).json({ error: "Token expired" });
-  }
-
   try {
-    const users = await getUsers();
-    const rowIndex = users.findIndex(u => u[2] && u[2].toLowerCase() === tokenData.email);
-    if (rowIndex === -1) return res.status(404).json({ error: "User not found" });
+    const spreadsheetId = process.env.PASSWORD_RESET_SHEET_ID;
+    const rows = await getSheetValues(spreadsheetId, "PasswordResets!A:C");
+    const rowIndex = rows.findIndex(r => r[1] === token);
+    if (rowIndex === -1) return res.status(400).json({ error: "Invalid or expired token" });
+
+    const [email, , expires] = rows[rowIndex];
+    if (Date.now() > parseInt(expires)) return res.status(400).json({ error: "Token expired" });
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    const spreadsheetId = process.env.USERS_SHEET_ID;
-    const rowNumber = rowIndex + 1;
-    const updateRange = `D${rowNumber}`; // Password is in column D
+    // Update password in Users sheet
+    const users = await getUsers();
+    const userRowIndex = users.findIndex(u => u[2].toLowerCase() === email.toLowerCase());
+    if (userRowIndex === -1) return res.status(404).json({ error: "User not found" });
+    const updateRange = `D${userRowIndex + 1}`;
     await sheets.spreadsheets.values.update({
-      spreadsheetId,
+      spreadsheetId: process.env.USERS_SHEET_ID,
       range: updateRange,
       valueInputOption: "USER_ENTERED",
       resource: { values: [[hashedPassword]] }
     });
 
-    delete resetTokens[token]; // Remove used token
+    // Remove token from PasswordResets sheet
+    const deleteRange = `A${rowIndex + 1}:C${rowIndex + 1}`;
+    await sheets.spreadsheets.values.clear({ spreadsheetId, range: deleteRange });
+
     res.json({ ok: true, message: "Password updated successfully" });
   } catch (err) {
     console.error(err);
@@ -478,7 +481,7 @@ app.post("/api/update-password", async (req, res) => {
   }
 });
 
-//===================== START SERVER ====================
+// ==================== START SERVER ====================
 app.listen(PORT, () => {
   console.log(`JoyFund backend running on port ${PORT}`);
 });
