@@ -6,7 +6,6 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
-const bcrypt = require("bcryptjs");
 const { google } = require("googleapis");
 const Stripe = require("stripe");
 const cors = require("cors");
@@ -127,6 +126,9 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 // -------------------- MULTER --------------------
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
+
+const bcrypt = require("bcrypt"); // make sure bcrypt is installed: npm install bcrypt
+
 // -------------------- USERS / SIGNIN / SESSION --------------------
 
 // Fetch all users from Google Sheet
@@ -138,8 +140,7 @@ async function getUsers() {
 // Find a user by email
 async function getUserFromDB(email) {
   const users = await getUsers();
-  // Column C = Email
-  const row = users.find(u => u[2].toLowerCase() === email.toLowerCase());
+  const row = users.find(u => u[2].toLowerCase() === email.toLowerCase()); // Column C = Email
   if (!row) return null;
   return {
     joinDate: row[0],      // Column A
@@ -149,12 +150,11 @@ async function getUserFromDB(email) {
   };
 }
 
-// Simple password check (replace with bcrypt if using hashed passwords)
-function checkPassword(inputPassword, storedHash) {
-  // If storedHash is plain text for now, just compare
-  return inputPassword === storedHash;
-  // If you later switch to bcrypt:
-  // return await bcrypt.compare(inputPassword, storedHash);
+// Check hashed password with bcrypt
+async function checkPassword(inputPassword, storedHash) {
+  // Ensure both are strings and trim spaces
+  if (!inputPassword || !storedHash) return false;
+  return await bcrypt.compare(inputPassword.trim(), storedHash.trim());
 }
 
 // Sign In route
@@ -168,7 +168,13 @@ app.post("/api/signin", async (req, res) => {
 
   // Look up user
   const user = await getUserFromDB(email);
-  if (!user || !checkPassword(password, user.passwordHash)) {
+  if (!user) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+
+  // Compare password
+  const valid = await checkPassword(password, user.passwordHash);
+  if (!valid) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
