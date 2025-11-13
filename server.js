@@ -14,26 +14,6 @@ const mailjetLib = require("node-mailjet");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
 const crypto = require("crypto"); // for password reset tokens
-const mongoose = require('mongoose');
-
-// Campaign schema and model (defined directly in server.js)
-const campaignSchema = new mongoose.Schema({
-  title: String,
-  description: String,
-  goal: Number,
-  imageUrl: String,
-  status: { type: String, default: 'Pending' }
-});
-
-const Campaign = mongoose.model('Campaign', campaignSchema);
-
-
-// -------------------- CLOUDINARY --------------------
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "",
-  api_key: process.env.CLOUDINARY_API_KEY || "",
-  api_secret: process.env.CLOUDINARY_API_SECRET || "",
-});
 
 // -------------------- APP --------------------
 const app = express();
@@ -310,6 +290,10 @@ app.get("/api/get-verifications", async (req, res) => {
 });
 
 // ==================== CAMPAIGNS ====================
+
+// Temporary campaigns array for backend without MongoDB
+const campaigns = [];
+
 app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
   try{
     const user = req.session.user;
@@ -317,7 +301,6 @@ app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
 
     const { title,goal,description,category } = req.body;
     if(!title||!goal||!description||!category) return res.status(400).json({success:false,message:"Missing required fields"});
-    if(!sheets) return res.status(500).json({success:false,message:"Sheets not initialized"});
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const campaignId = Date.now().toString();
@@ -333,9 +316,15 @@ app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
 
     const createdAt = new Date().toISOString();
     const status = "Pending";
-    const newCampaignRow = [campaignId,title,user.email.toLowerCase(),goal,description,category,status,createdAt,imageUrl];
+    const newCampaign = { campaignId, title, creator: user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl };
 
-    await appendSheetValues(spreadsheetId,"A:I",[newCampaignRow]);
+    campaigns.push(newCampaign);
+
+    if(sheets){
+      const newCampaignRow = [campaignId,title,user.email.toLowerCase(),goal,description,category,status,createdAt,imageUrl];
+      await appendSheetValues(spreadsheetId,"A:I",[newCampaignRow]);
+    }
+
     await sendMailjetEmail("New Campaign Submitted",`<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
 
     res.json({success:true,message:"Campaign submitted",campaignId});
@@ -346,25 +335,8 @@ app.get("/api/campaigns", async (req,res)=>{
   try{
     const user = req.session.user;
     if(!user) return res.status(401).json({success:false,message:"Sign in required"});
-    if(!sheets) return res.status(500).json({success:false,message:"Sheets not initialized"});
 
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId,"A:I");
-
-    const userCampaigns = rows
-      .filter(r => (r[2] || "").toLowerCase() === user.email.toLowerCase())
-      .map(r => ({
-        campaignId: r[0],
-        title: r[1],
-        creator: r[2],
-        goal: r[3],
-        description: r[4],
-        category: r[5],
-        status: r[6] || "Pending",
-        createdAt: r[7],
-        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
-      }));
-
+    const userCampaigns = campaigns.filter(c => c.creator.toLowerCase() === user.email.toLowerCase());
     res.json({success:true,campaigns:userCampaigns});
   }catch(err){ res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
@@ -372,50 +344,32 @@ app.get("/api/campaigns", async (req,res)=>{
 // ------------------ PUBLIC CAMPAIGNS ------------------
 app.get('/api/public-campaigns', async (req, res) => {
   try {
-    // Fetch campaigns with status Approved or active
-    const campaigns = await Campaign.find({
-      status: { $in: ['Approved', 'active'] }
-    });
-
-    // Return them in a consistent JSON structure
-    res.json({
-      success: true,
-      campaigns: campaigns.map(c => ({
-        campaignId: c._id,
-        title: c.title,
-        description: c.description,
-        goal: c.goal,
-        imageUrl: c.imageUrl || 'https://fundasmile.net/default.jpg'
-      }))
-    });
+    const publicCampaigns = campaigns.filter(c => ['Approved','active'].includes(c.status));
+    res.json({ success: true, campaigns: publicCampaigns });
   } catch (err) {
     console.error('Error fetching public campaigns:', err);
     res.status(500).json({ success: false, message: 'Server error fetching campaigns' });
   }
 });
 
-
 // ------------------ SEARCH CAMPAIGNS ------------------
 app.get('/api/search-campaigns', async (req, res) => {
   try {
     const { category, amount } = req.query;
 
-    let filter = {
-      status: { $in: ['Approved', 'active'] }
-    };
+    let filteredCampaigns = [...campaigns];
 
-    // Apply filters dynamically
     if (category && category !== 'all') {
-      filter.category = category;
+      filteredCampaigns = filteredCampaigns.filter(c => c.category === category);
     }
 
     if (amount) {
-      filter.goal = { $lte: parseInt(amount) };
+      filteredCampaigns = filteredCampaigns.filter(c => c.goal <= parseInt(amount));
     }
 
-    const campaigns = await Campaign.find(filter);
+    filteredCampaigns = filteredCampaigns.filter(c => ['Approved','active'].includes(c.status));
 
-    res.status(200).json(campaigns || []);
+    res.status(200).json(filteredCampaigns);
   } catch (err) {
     console.error('Error searching campaigns:', err.message);
     res.status(500).json({ error: 'Server error: ' + err.message });
