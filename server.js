@@ -242,16 +242,25 @@ app.get("/api/check-session", (req, res) => {
 
 // -------------------- LOGOUT --------------------
 app.post("/api/logout", (req, res) => {
-  try { res.clearCookie('session', { path: '/' }); } catch(e){}
+  try {
+    // Clear JWT cookie
+    res.clearCookie("session", { path: "/" });
 
-  if (req.session) {
-    req.session.destroy(err => {
-      try { res.clearCookie('sessionId', { path: '/' }); } catch(e){}
-      if (err) return res.status(500).json({ success: false, message: "Logout failed" });
+    // Destroy express-session if it exists
+    if (req.session) {
+      req.session.destroy(err => {
+        // Clear sessionId cookie
+        res.clearCookie("sessionId", { path: "/" });
+        if (err) return res.status(500).json({ success: false, message: "Logout failed" });
+        return res.json({ success: true });
+      });
+    } else {
       return res.json({ success: true });
-    });
-  } else {
-    return res.json({ success: true });
+    }
+
+  } catch (err) {
+    console.error("Logout error:", err);
+    return res.status(500).json({ success: false, message: "Logout error" });
   }
 });
 
