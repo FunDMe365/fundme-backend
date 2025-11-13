@@ -342,13 +342,32 @@ app.get("/api/campaigns", async (req,res)=>{
 });
 
 // ------------------ PUBLIC CAMPAIGNS ------------------
-app.get('/api/public-campaigns', async (req, res) => {
+app.get("/api/public-campaigns", async (req, res) => {
   try {
-    const publicCampaigns = campaigns.filter(c => ['Approved','active'].includes(c.status));
-    res.json({ success: true, campaigns: publicCampaigns });
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    const rows = await getSheetValues(spreadsheetId, "A:I"); // adjust range if needed
+
+    // Only include campaigns with status Approved or active
+    const activeCampaigns = rows
+      .filter(r => r[6] && ["Approved", "active"].includes(r[6]))
+      .map(r => ({
+        campaignId: r[0],
+        title: r[1],
+        creator: r[2],
+        goal: r[3],
+        description: r[4],
+        category: r[5],
+        status: r[6],
+        createdAt: r[7],
+        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
+
+    res.json({ success: true, campaigns: activeCampaigns });
   } catch (err) {
-    console.error('Error fetching public campaigns:', err);
-    res.status(500).json({ success: false, message: 'Server error fetching campaigns' });
+    console.error("Error fetching public campaigns:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch campaigns" });
   }
 });
 
@@ -357,19 +376,39 @@ app.get('/api/search-campaigns', async (req, res) => {
   try {
     const { category, amount } = req.query;
 
-    let filteredCampaigns = [...campaigns];
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    const rows = await getSheetValues(spreadsheetId, "A:I"); // same range as public campaigns
+
+    // Map rows to campaign objects
+    let allCampaigns = rows.map(r => ({
+      campaignId: r[0],
+      title: r[1],
+      creator: r[2],
+      goal: parseFloat(r[3]) || 0,
+      description: r[4],
+      category: r[5],
+      status: r[6],
+      createdAt: r[7],
+      imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+    }));
+
+    // Only include Approved or active campaigns
+    let filteredCampaigns = allCampaigns.filter(c => ['Approved','active'].includes(c.status));
+
+    // Apply category filter
     if (category && category !== 'all') {
       filteredCampaigns = filteredCampaigns.filter(c => c.category === category);
     }
 
+    // Apply amount filter
     if (amount) {
-      filteredCampaigns = filteredCampaigns.filter(c => c.goal <= parseInt(amount));
+      filteredCampaigns = filteredCampaigns.filter(c => c.goal <= parseFloat(amount));
     }
 
-    filteredCampaigns = filteredCampaigns.filter(c => ['Approved','active'].includes(c.status));
+    res.status(200).json({ success: true, campaigns: filteredCampaigns });
 
-    res.status(200).json(filteredCampaigns);
   } catch (err) {
     console.error('Error searching campaigns:', err.message);
     res.status(500).json({ error: 'Server error: ' + err.message });
