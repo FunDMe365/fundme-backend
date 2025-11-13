@@ -40,17 +40,19 @@ app.use(cors({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended:true }));
 
+const session = require('express-session');
+
 // -------------------- SESSION --------------------
-app.set("trust proxy",1);
 app.use(session({
-  secret: process.env.SESSION_SECRET || "secret",
-  resave:false,
-  saveUninitialized:false,
-  cookie:{
-    httpOnly:true,
-    secure: process.env.NODE_ENV==="production"?true:false,
-    sameSite: process.env.NODE_ENV==="production"?"none":"lax",
-    maxAge:1000*60*60*24*7
+  name: 'sessionId',                         // cookie name
+  secret: process.env.SESSION_SECRET || 'supersecretkey',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,       // JS can’t read
+    secure: true,         // HTTPS only (Render uses HTTPS)
+    sameSite: 'none',     // allow cross-site cookies
+    maxAge: 1000*60*60*24 // 1 day
   }
 }));
 
