@@ -14,6 +14,8 @@ const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
 const crypto = require("crypto");
 const bcrypt = require("bcrypt");
+const cookieParser = require("cookie-parser");
+const jwt = require("jsonwebtoken");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -21,6 +23,7 @@ const PORT = process.env.PORT || 5000;
 // -------------------- CORS --------------------
 const allowedOrigins = [
   "https://fundasmile.net",
+  "https://www.fundasmile.net",
   "https://fundme-backend.onrender.com",
   "http://localhost:5000",
   "http://127.0.0.1:5000"
@@ -38,9 +41,12 @@ app.use(cors({
 // -------------------- BODY PARSING --------------------
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 // -------------------- SESSION --------------------
+// Trust proxy for Render/Heroku
 app.set('trust proxy', 1);
+
 app.use(session({
   name: 'sessionId',
   secret: process.env.SESSION_SECRET || 'supersecretkey',
@@ -48,7 +54,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production", // true on HTTPS
     sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
     maxAge: 1000 * 60 * 60 * 24
   }
@@ -134,7 +140,7 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// -------------------- USERS / SIGNIN --------------------
+// -------------------- USERS / SIGN-IN --------------------
 async function getUsers() {
   if (!process.env.USERS_SHEET_ID) return [];
   return getSheetValues(process.env.USERS_SHEET_ID, "A:D");
@@ -142,7 +148,7 @@ async function getUsers() {
 
 async function getUserFromDB(email) {
   const users = await getUsers();
-  const row = users.find(u => u[2].toLowerCase() === email.toLowerCase());
+  const row = users.find(u => (u[2] || "").toLowerCase() === (email || "").toLowerCase());
   if (!row) return null;
   return {
     joinDate: row[0],
@@ -157,32 +163,103 @@ async function checkPassword(inputPassword, storedHash) {
   return await bcrypt.compare(inputPassword.trim(), storedHash.trim());
 }
 
+// ⭐ NEW: COOKIE-BASED LOGIN (Works on iOS) ⭐
 app.post("/api/signin", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
+  try {
+    const { email, password } = req.body;
 
-  const user = await getUserFromDB(email);
-  if (!user || !(await checkPassword(password, user.passwordHash))) {
-    return res.status(401).json({ error: "Invalid credentials" });
+    if (!email || !password)
+      return res.status(400).json({ error: "Email and password are required" });
+
+    const user = await getUserFromDB(email);
+
+    if (!user || !(await checkPassword(password, user.passwordHash))) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+
+    // Create secure session token (JWT)
+    const sessionToken = jwt.sign(
+      {
+        email: user.email,
+        name: user.name,
+      },
+      process.env.JWT_SECRET || "fallback_jwt_secret",
+      { expiresIn: "7d" }
+    );
+
+    // MUST HAVE for iOS cookies
+    res.cookie("session", sessionToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    // Also populate express-session for backward compatibility with existing routes
+    req.session.user = { email: user.email, name: user.name, joinDate: user.joinDate };
+
+    return res.json({
+      ok: true,
+      loggedIn: true,
+      name: user.name,
+      email: user.email,
+    });
+
+  } catch (error) {
+    console.error("Signin error:", error);
+    res.status(500).json({ error: "Server error" });
   }
+});
 
-  req.session.user = { email: user.email, name: user.name, joinDate: user.joinDate };
-  res.json({ ok: true, loggedIn: true, email: user.email, name: user.name });
+//-------------CHECK-AUTH (reads JWT cookie)----------------------
+app.get("/api/check-auth", (req, res) => {
+  try {
+    const token = req.cookies && req.cookies.session;
+    if (!token) return res.json({ loggedIn: false });
+
+    const user = jwt.verify(token, process.env.JWT_SECRET || "fallback_jwt_secret");
+
+    return res.json({
+      loggedIn: true,
+      email: user.email,
+      name: user.name
+    });
+
+  } catch (err) {
+    return res.json({ loggedIn: false });
+  }
 });
 
 // -------------------- LOGOUT --------------------
 app.post("/api/logout", (req, res) => {
-  req.session.destroy(err => {
-    if (err) return res.status(500).json({ success: false, message: "Logout failed" });
-    res.clearCookie('sessionId');
-    res.json({ success: true });
-  });
+  // clear JWT cookie
+  try {
+    res.clearCookie('session', { path: '/' });
+  } catch (e) {
+    // ignore
+  }
+
+  // destroy express session if present
+  if (req.session) {
+    req.session.destroy(err => {
+      // clear sessionId cookie name if any
+      try { res.clearCookie('sessionId', { path: '/' }); } catch(e){}
+      if (err) {
+        console.error("Error destroying session:", err);
+        return res.status(500).json({ success: false, message: "Logout failed" });
+      }
+      return res.json({ success: true });
+    });
+  } else {
+    return res.json({ success: true });
+  }
 });
 
 // -------------------- CAMPAIGNS --------------------
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
-    const user = req.session.user;
+    const user = req.session && req.session.user;
     if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
 
     const { title, goal, description, category } = req.body;
@@ -219,7 +296,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
 app.get("/api/my-campaigns", async (req, res) => {
   try {
-    const user = req.session.user;
+    const user = req.session && req.session.user;
     if (!user) return res.status(401).json({ success: false, message: "Not logged in" });
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
@@ -363,7 +440,7 @@ app.post("/api/volunteer", async (req, res) => {
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
     const spreadsheetId = process.env.VOLUNTEERS_SHEET_ID;
-    const timestamp = new Date().toLocaleString();
+    const timestamp = new Date().toLocaleDateString();
     await appendSheetValues(spreadsheetId, "Volunteers!A:E", [[timestamp, name, email.toLowerCase(), role, availability || ""]]);
 
     await sendMailjetEmail("New Volunteer Submission", `<p>${name} (${email}) signed up as a volunteer for ${role} at ${timestamp}. Availability: ${availability || "N/A"}</p>`);
@@ -382,7 +459,7 @@ app.post("/api/street-team", async (req, res) => {
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
     const spreadsheetId = process.env.STREET_TEAM_SHEET_ID;
-    const timestamp = new Date().toLocaleString();
+    const timestamp = new Date().toLocaleDateString();
     await appendSheetValues(spreadsheetId, "StreetTeam!A:E", [[timestamp, name, email.toLowerCase(), city, hoursAvailable || ""]]);
 
     await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined the street team in ${city} at ${timestamp}. Hours Available: ${hoursAvailable || "N/A"}</p>`);
@@ -402,7 +479,7 @@ app.get("/api/check-session", (req, res) => {
 // -------------------- ID VERIFICATION --------------------
 app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   try {
-    const user = req.session.user;
+    const user = req.session && req.session.user;
     if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
     if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
@@ -460,4 +537,3 @@ app.post("/api/request-password-reset", async (req, res) => {
 
 // -------------------- START SERVER --------------------
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
