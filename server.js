@@ -7,13 +7,13 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const { google } = require("googleapis");
 const Stripe = require("stripe");
 const cors = require("cors");
 const mailjetLib = require("node-mailjet");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
-const crypto = require("crypto");
 
 // -------------------- CLOUDINARY --------------------
 cloudinary.config({
@@ -72,7 +72,9 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
     if (!amount || !successUrl || !cancelUrl) {
       return res.status(400).json({ error: "Missing required fields" });
     }
+
     const amountCents = Math.round(amount * 100);
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [{
@@ -87,6 +89,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       success_url: successUrl,
       cancel_url: cancelUrl
     });
+
     res.json({ sessionId: session.id });
   } catch (err) {
     console.error("Stripe checkout error:", err);
@@ -99,13 +102,13 @@ let mailjetClient = null;
 if(process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET){
   mailjetClient = mailjetLib.apiConnect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
 }
-async function sendMailjetEmail(subject, htmlContent, toEmail) {
+async function sendMailjetEmail(toEmail, subject, htmlContent){
   if(!mailjetClient) return;
   try{
     await mailjetClient.post("send", {'version':'v3.1'}).request({
       Messages:[{
         From: { Email: process.env.MAILJET_SENDER_EMAIL, Name:"JoyFund INC" },
-        To: [{ Email: toEmail || process.env.NOTIFY_EMAIL }],
+        To: [{ Email: toEmail }],
         Subject: subject,
         HTMLPart: htmlContent
       }]
@@ -141,6 +144,7 @@ async function findRowAndUpdateOrAppend(spreadsheetId,rangeCols,matchColIndex,ma
   if(!sheets) throw new Error("Sheets not initialized");
   const rows = await getSheetValues(spreadsheetId,rangeCols);
   const rowIndex = rows.findIndex(r=>(r[matchColIndex]||"").toString().trim().toLowerCase() === (matchValue||"").toString().trim().toLowerCase());
+
   if(rowIndex===-1){
     await appendSheetValues(spreadsheetId,rangeCols,[updatedValues]);
     return {action:"appended",row:rows.length+1};
@@ -153,10 +157,6 @@ async function findRowAndUpdateOrAppend(spreadsheetId,rangeCols,matchColIndex,ma
     return {action:"updated",row:rowNumber};
   }
 }
-
-// -------------------- MULTER --------------------
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
 
 // -------------------- USERS --------------------
 async function getUsers(){ 
@@ -189,123 +189,9 @@ app.post("/api/logout",(req,res)=>{
   req.session.destroy(err=>{ if(err) return res.status(500).json({error:"Failed to logout"}); res.json({ok:true}); }); 
 });
 
-// -------------------- REQUEST PASSWORD RESET --------------------
-const resetTokens = {};
-
-app.post("/api/request-reset-password", async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: "Email required" });
-
-    const users = await getUsers();
-    const userRow = users.find(u => u[2] && u[2].trim().toLowerCase() === email.trim().toLowerCase());
-    if (!userRow) return res.status(404).json({ success: false, message: "Email not found" });
-
-    const token = crypto.randomBytes(32).toString("hex");
-    resetTokens[email] = { token, expires: Date.now() + 1000 * 60 * 60 };
-
-    const resetLink = `${process.env.FRONTEND_URL || "https://fundasmile.net"}/reset-password.html?email=${encodeURIComponent(email)}&token=${token}`;
-    await sendMailjetEmail("Reset your JoyFund password", `<p>Click the link below to reset your password (expires in 1 hour):</p><p><a href="${resetLink}">${resetLink}</a></p>`, email);
-
-    res.json({ success: true });
-  } catch(err){
-    console.error("Reset link error:", err);
-    res.status(500).json({ success: false, message: "Failed to send reset link" });
-  }
-});
-
-// -------------------- RESET PASSWORD --------------------
-app.post("/api/reset-password", async (req, res) => {
-  try {
-    const { email, token, newPassword } = req.body;
-    if (!email || !token || !newPassword) return res.status(400).json({ success: false, message: "Missing fields" });
-
-    const record = resetTokens[email];
-    if (!record || record.token !== token || Date.now() > record.expires) {
-      return res.status(400).json({ success: false, message: "Invalid or expired token" });
-    }
-
-    const users = await getUsers();
-    const rowIndex = users.findIndex(u => u[2] && u[2].trim().toLowerCase() === email.trim().toLowerCase());
-    if (rowIndex === -1) return res.status(404).json({ success: false, message: "User not found" });
-
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    const spreadsheetId = process.env.USERS_SHEET_ID;
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `D${rowIndex+1}`,
-      valueInputOption: "USER_ENTERED",
-      resource: { values: [[hashedPassword]] }
-    });
-
-    delete resetTokens[email];
-
-    res.json({ success: true });
-  } catch(err){
-    console.error("Password reset error:", err);
-    res.status(500).json({ success: false, message: "Failed to reset password" });
-  }
-});
-
-// -------------------- WAITLIST --------------------
-app.post("/api/waitlist", async (req, res) => {
-  try {
-    const { name, email, reason } = req.body;
-    if (!name || !email) return res.status(400).json({ success: false, message: "Missing name or email" });
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
-
-    const spreadsheetId = process.env.WAITLIST_SHEET_ID;
-    const timestamp = new Date().toLocaleString();
-    await appendSheetValues(spreadsheetId, "Waitlist!A:D", [[timestamp, name, email.toLowerCase(), reason || ""]]);
-
-    await sendMailjetEmail("New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}. Reason: ${reason || "N/A"}</p>`);
-
-    res.json({ success: true, message: "Waitlist submission successful" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to submit waitlist" });
-  }
-});
-
-// -------------------- VOLUNTEER --------------------
-app.post("/api/volunteer", async (req, res) => {
-  try {
-    const { name, email, role, availability } = req.body;
-    if (!name || !email || !role) return res.status(400).json({ success: false, message: "Missing required fields" });
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
-
-    const spreadsheetId = process.env.VOLUNTEERS_SHEET_ID;
-    const timestamp = new Date().toLocaleString();
-    await appendSheetValues(spreadsheetId, "Volunteers!A:E", [[timestamp, name, email.toLowerCase(), role, availability || ""]]);
-
-    await sendMailjetEmail("New Volunteer Submission", `<p>${name} (${email}) signed up as a volunteer for ${role} at ${timestamp}. Availability: ${availability || "N/A"}</p>`);
-
-    res.json({ success: true, message: "Volunteer submission successful" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to submit volunteer" });
-  }
-});
-
-// -------------------- STREET TEAM --------------------
-app.post("/api/street-team", async (req, res) => {
-  try {
-    const { name, email, city, hoursAvailable } = req.body;
-    if (!name || !email || !city) return res.status(400).json({ success: false, message: "Missing required fields" });
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
-
-    const spreadsheetId = process.env.STREET_TEAM_SHEET_ID;
-    const timestamp = new Date().toLocaleString();
-    await appendSheetValues(spreadsheetId, "StreetTeam!A:E", [[timestamp, name, email.toLowerCase(), city, hoursAvailable || ""]]);
-
-    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined the street team in ${city} at ${timestamp}. Hours Available: ${hoursAvailable || "N/A"}</p>`);
-
-    res.json({ success: true, message: "Street team submission successful" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to submit street team" });
-  }
-});
+// -------------------- MULTER --------------------
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 
 // -------------------- ID VERIFICATION --------------------
 app.post("/api/verify-id", upload.single("idDocument"), async (req,res)=>{
@@ -327,7 +213,7 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req,res)=>{
     const updatedRow=[timestamp,user.email.toLowerCase(),user.name,"Pending",fileUrl];
 
     await findRowAndUpdateOrAppend(spreadsheetId,"ID_Verifications!A:E",1,user.email,updatedRow);
-    await sendMailjetEmail("New ID Verification Submitted",`<p>${user.name} (${user.email}) submitted an ID at ${timestamp}</p>`);
+    await sendMailjetEmail(process.env.NOTIFY_EMAIL, "New ID Verification Submitted",`<p>${user.name} (${user.email}) submitted an ID at ${timestamp}</p>`);
 
     res.json({success:true,message:"ID submitted",fileUrl});
   }catch(err){ res.status(500).json({success:false,message:"Failed to submit ID verification"}); }
@@ -352,6 +238,66 @@ app.get("/api/get-verifications", async (req, res) => {
     })) });
   } catch (err) {
     res.status(500).json({ success: false, message: "Failed to fetch verifications" });
+  }
+});
+
+// -------------------- WAITLIST --------------------
+app.post("/api/waitlist", async (req, res) => {
+  try {
+    const { name, email, reason } = req.body;
+    if (!name || !email) return res.status(400).json({ success: false, message: "Missing name or email" });
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+
+    const spreadsheetId = process.env.WAITLIST_SHEET_ID;
+    const timestamp = new Date().toLocaleString();
+    await appendSheetValues(spreadsheetId, "Waitlist!A:D", [[timestamp, name, email.toLowerCase(), reason || ""]]);
+
+    await sendMailjetEmail(process.env.NOTIFY_EMAIL, "New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}. Reason: ${reason || "N/A"}</p>`);
+
+    res.json({ success: true, message: "Waitlist submission successful" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to submit waitlist" });
+  }
+});
+
+// -------------------- VOLUNTEER --------------------
+app.post("/api/volunteer", async (req, res) => {
+  try {
+    const { name, email, role, availability } = req.body;
+    if (!name || !email || !role) return res.status(400).json({ success: false, message: "Missing required fields" });
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+
+    const spreadsheetId = process.env.VOLUNTEERS_SHEET_ID;
+    const timestamp = new Date().toLocaleString();
+    await appendSheetValues(spreadsheetId, "Volunteers!A:E", [[timestamp, name, email.toLowerCase(), role, availability || ""]]);
+
+    await sendMailjetEmail(process.env.NOTIFY_EMAIL, "New Volunteer Submission", `<p>${name} (${email}) signed up as a volunteer for ${role} at ${timestamp}. Availability: ${availability || "N/A"}</p>`);
+
+    res.json({ success: true, message: "Volunteer submission successful" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to submit volunteer" });
+  }
+});
+
+// -------------------- STREET TEAM --------------------
+app.post("/api/street-team", async (req, res) => {
+  try {
+    const { name, email, city, hoursAvailable } = req.body;
+    if (!name || !email || !city) return res.status(400).json({ success: false, message: "Missing required fields" });
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+
+    const spreadsheetId = process.env.STREET_TEAM_SHEET_ID;
+    const timestamp = new Date().toLocaleString();
+    await appendSheetValues(spreadsheetId, "StreetTeam!A:E", [[timestamp, name, email.toLowerCase(), city, hoursAvailable || ""]]);
+
+    await sendMailjetEmail(process.env.NOTIFY_EMAIL, "New Street Team Submission", `<p>${name} (${email}) joined the street team in ${city} at ${timestamp}. Hours Available: ${hoursAvailable || "N/A"}</p>`);
+
+    res.json({ success: true, message: "Street team submission successful" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to submit street team" });
   }
 });
 
@@ -382,23 +328,135 @@ app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
     const newCampaignRow = [campaignId,title,user.email.toLowerCase(),goal,description,category,status,createdAt,imageUrl];
 
     await appendSheetValues(spreadsheetId,"A:I",[newCampaignRow]);
-    await sendMailjetEmail("New Campaign Submitted",`<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
+    await sendMailjetEmail(process.env.NOTIFY_EMAIL, "New Campaign Submitted",`<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
 
-    res.json({success:true,message:"Campaign created",campaignId});
+    res.json({success:true,message:"Campaign submitted",campaignId});
   }catch(err){ res.status(500).json({success:false,message:"Failed to create campaign"}); }
 });
 
-app.get("/api/get-campaigns", async (req,res)=>{
+app.get("/api/campaigns", async (req,res)=>{
   try{
+    const user = req.session.user;
+    if(!user) return res.status(401).json({success:false,message:"Sign in required"});
     if(!sheets) return res.status(500).json({success:false,message:"Sheets not initialized"});
+
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId,"A:I");
-    res.json({success:true,campaigns:rows.map(r=>({
-      id:r[0],title:r[1],owner:r[2],goal:r[3],description:r[4],category:r[5],status:r[6],createdAt:r[7],imageUrl:r[8]
-    }))});
+
+    const userCampaigns = rows
+      .filter(r => (r[2] || "").toLowerCase() === user.email.toLowerCase())
+      .map(r => ({
+        campaignId: r[0],
+        title: r[1],
+        creator: r[2],
+        goal: r[3],
+        description: r[4],
+        category: r[5],
+        status: r[6] || "Pending",
+        createdAt: r[7],
+        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
+
+    res.json({success:true,campaigns:userCampaigns});
   }catch(err){ res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
 
-// -------------------- SERVER LISTEN --------------------
-app.listen(PORT, () => { console.log(`JoyFund backend running on port ${PORT}`); });
+// -------------------- SEARCH CAMPAIGNS --------------------
+app.get("/api/search-campaigns", async (req, res) => {
+  try {
+    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
+    const maxGoal = parseFloat(req.query.max) || Infinity;
+    const categoryFilter = (req.query.category || "All").toLowerCase();
+
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    const rows = await getSheetValues(spreadsheetId, "A:I");
+
+    let activeCampaigns = rows.filter(r => (r[6] || "").toLowerCase() === "approved");
+
+    activeCampaigns = activeCampaigns.filter(r => parseFloat(r[3] || 0) <= maxGoal);
+
+    if (categoryFilter !== "all") {
+      activeCampaigns = activeCampaigns.filter(r => ((r[5] || "").toLowerCase() === categoryFilter));
+    }
+
+    const campaigns = activeCampaigns.map(r => ({
+      id: r[0],
+      title: r[1],
+      creator: r[2],
+      goal: parseFloat(r[3] || 0),
+      description: r[4],
+      category: r[5],
+      status: r[6] || "Pending",
+      createdAt: r[7],
+      imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+    }));
+
+    res.json({ success: true, campaigns });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to search campaigns" });
+  }
+});
+
+// -------------------- PASSWORD RESET --------------------
+
+// Request password reset
+app.post("/api/request-reset-password", async (req,res)=>{
+  try{
+    const { email } = req.body;
+    if(!email) return res.status(400).json({error:"Email required"});
+    if(!sheets) return res.status(500).json({error:"Sheets not initialized"});
+
+    const spreadsheetId = process.env.USERS_SHEET_ID;
+    const users = await getSheetValues(spreadsheetId,"A:D");
+    const userRowIndex = users.findIndex(u => (u[2]||"").toLowerCase() === email.toLowerCase());
+    if(userRowIndex===-1) return res.status(404).json({error:"Email not found"});
+
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiry = Date.now() + 1000*60*60; // 1 hr expiry
+    const resetTokenSheetId = process.env.RESET_TOKENS_SHEET_ID;
+
+    await appendSheetValues(resetTokenSheetId,"A:C",[[email,token,expiry]]);
+
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password.html?token=${token}&email=${encodeURIComponent(email)}`;
+    await sendMailjetEmail(email,"JoyFund Password Reset",`<p>Click <a href="${resetLink}">here</a> to reset your password. Link expires in 1 hour.</p>`);
+
+    res.json({ok:true,message:"Reset link sent"});
+  }catch(err){ console.error(err); res.status(500).json({error:"Failed to send reset link"}); }
+});
+
+// Reset password
+app.post("/api/reset-password", async (req,res)=>{
+  try{
+    const { email, token, newPassword } = req.body;
+    if(!email||!token||!newPassword) return res.status(400).json({error:"Missing fields"});
+    if(!sheets) return res.status(500).json({error:"Sheets not initialized"});
+
+    const resetTokenSheetId = process.env.RESET_TOKENS_SHEET_ID;
+    const tokens = await getSheetValues(resetTokenSheetId,"A:C");
+    const tokenRowIndex = tokens.findIndex(t=> (t[0]||"").toLowerCase()===email.toLowerCase() && t[1]===token && parseInt(t[2]||0)>Date.now());
+    if(tokenRowIndex===-1) return res.status(400).json({error:"Invalid or expired token"});
+
+    const hashedPassword = await bcrypt.hash(newPassword,10);
+
+    // Update users sheet
+    const usersSheetId = process.env.USERS_SHEET_ID;
+    const users = await getSheetValues(usersSheetId,"A:D");
+    const userRowIndex = users.findIndex(u => (u[2]||"").toLowerCase()===email.toLowerCase());
+    if(userRowIndex===-1) return res.status(404).json({error:"User not found"});
+
+    users[userRowIndex][3] = hashedPassword;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: usersSheetId,
+      range: `A${userRowIndex+1}:D${userRowIndex+1}`,
+      valueInputOption:"USER_ENTERED",
+      resource:{ values:[users[userRowIndex]] }
+    });
+
+    res.json({ok:true,message:"Password updated"});
+  }catch(err){ console.error(err); res.status(500).json({error:"Failed to reset password"}); }
+});
+
+// -------------------- START SERVER --------------------
+app.listen(PORT,()=>{ console.log(`JoyFund backend running on port ${PORT}`); });
