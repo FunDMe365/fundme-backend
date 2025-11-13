@@ -13,28 +13,9 @@ const mailjetLib = require("node-mailjet");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
 const crypto = require("crypto"); // for password reset tokens
+const bcrypt = require("bcrypt"); // if not already installed
 
-app.use(cors({
-  origin: "https://your-frontend-domain.com", // change to your frontend URL
-  credentials: true
-}));
-
-app.use(session({
-  secret: "Purp1e3l3phant",  // replace with a strong secret
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: true,    // set to true if using HTTPS
-    httpOnly: true,
-    sameSite: "lax"   // "lax" works for mobile and desktop; use "none" with HTTPS
-  }
-}));
-
-// Parse JSON bodies
-app.use(express.json());
-
-
-// -------------------- APP --------------------
+// -------------------- INITIALIZE APP --------------------
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -48,19 +29,21 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true); // allow non-browser requests (like Postman)
     if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error("CORS not allowed"));
   },
   credentials: true
 }));
 
-// -------------------- MIDDLEWARE --------------------
+// -------------------- BODY PARSING --------------------
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // -------------------- SESSION --------------------
-app.set('trust proxy', 1); // for Render/Heroku behind proxy
+// Trust proxy (required for Render / Heroku behind proxy)
+app.set('trust proxy', 1);
+
 app.use(session({
   name: 'sessionId',
   secret: process.env.SESSION_SECRET || 'supersecretkey',
@@ -68,11 +51,14 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
+    secure: process.env.NODE_ENV === "production", // true on HTTPS
+    sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax', // works for mobile
     maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
+
+// -------------------- STATIC FILES --------------------
+app.use(express.static(path.join(__dirname, "public")));
 
 // -------------------- STRIPE --------------------
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY || "");
