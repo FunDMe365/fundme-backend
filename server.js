@@ -147,8 +147,6 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-const bcrypt = require("bcrypt"); // make sure bcrypt is installed: npm install bcrypt
-
 // -------------------- USERS / SIGNIN / SESSION --------------------
 const bcrypt = require("bcrypt"); // make sure installed: npm install bcrypt
 
