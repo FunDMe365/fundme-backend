@@ -13,7 +13,7 @@ const mailjetLib = require("node-mailjet");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
 const crypto = require("crypto"); // for password reset tokens
-const bcrypt = require("bcrypt"); // if not already installed
+const bcrypt = require("bcrypt");
 
 // -------------------- INITIALIZE APP --------------------
 const app = express();
@@ -29,11 +29,13 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true); // allow non-browser requests (like Postman)
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error("CORS not allowed"));
   },
-  credentials: true
+  credentials: true,
+  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"]
 }));
 
 // -------------------- BODY PARSING --------------------
@@ -41,7 +43,6 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // -------------------- SESSION --------------------
-// Trust proxy (required for Render / Heroku behind proxy)
 app.set('trust proxy', 1);
 
 app.use(session({
@@ -51,9 +52,9 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production", // true on HTTPS
-    sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax', // works for mobile
-    maxAge: 1000 * 60 * 60 * 24 // 1 day
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
+    maxAge: 1000 * 60 * 60 * 24
   }
 }));
 
@@ -133,8 +134,7 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// -------------------- USERS / SIGNIN / SESSION --------------------
-
+// -------------------- USERS / SIGNIN --------------------
 async function getUsers() {
   if (!process.env.USERS_SHEET_ID) return [];
   return getSheetValues(process.env.USERS_SHEET_ID, "A:D");
@@ -142,7 +142,7 @@ async function getUsers() {
 
 async function getUserFromDB(email) {
   const users = await getUsers();
-  const row = users.find(u => u[2].toLowerCase() === email.toLowerCase()); // Column C = Email
+  const row = users.find(u => u[2].toLowerCase() === email.toLowerCase());
   if (!row) return null;
   return {
     joinDate: row[0],
@@ -157,6 +157,7 @@ async function checkPassword(inputPassword, storedHash) {
   return await bcrypt.compare(inputPassword.trim(), storedHash.trim());
 }
 
+// -------------------- SIGNIN --------------------
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
@@ -166,13 +167,17 @@ app.post("/api/signin", async (req, res) => {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
-  // Set session
   req.session.user = { email: user.email, name: user.name, joinDate: user.joinDate };
-
-  res.json({ ok: true, loggedIn: true, email: user.email, name: user.name });
+  req.session.save(err => {
+    if (err) {
+      console.error("Session save error:", err);
+      return res.status(500).json({ error: "Failed to save session" });
+    }
+    res.json({ ok: true, loggedIn: true, email: user.email, name: user.name });
+  });
 });
 
-// -------------------- CAMPAIGNS (Sheets-based) --------------------
+// -------------------- CAMPAIGNS --------------------
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
@@ -203,6 +208,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
     res.json({ success: true, message: "Campaign submitted", campaignId });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false, message: "Failed to create campaign" });
   }
 });
@@ -262,7 +268,8 @@ app.get("/api/public-campaigns", async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to fetch campaigns" });
   }
 });
-// ------------------ SEARCH CAMPAIGNS ------------------
+
+// -------------------- SEARCH --------------------
 app.get('/api/search-campaigns', async (req, res) => {
   try {
     const { category, amount } = req.query;
@@ -296,7 +303,7 @@ app.get('/api/search-campaigns', async (req, res) => {
   }
 });
 
-// ------------------ STRIPE CHECKOUT ------------------
+// -------------------- STRIPE CHECKOUT --------------------
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const { campaignId } = req.params;
@@ -327,7 +334,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   }
 });
 
-// ------------------ WAITLIST / VOLUNTEERS / STREET TEAM ------------------
+// -------------------- WAITLIST --------------------
 app.post("/api/waitlist", async (req, res) => {
   try {
     const { name, email, reason } = req.body;
@@ -347,6 +354,7 @@ app.post("/api/waitlist", async (req, res) => {
   }
 });
 
+// -------------------- VOLUNTEERS --------------------
 app.post("/api/volunteer", async (req, res) => {
   try {
     const { name, email, role, availability } = req.body;
@@ -366,6 +374,7 @@ app.post("/api/volunteer", async (req, res) => {
   }
 });
 
+// -------------------- STREET TEAM --------------------
 app.post("/api/street-team", async (req, res) => {
   try {
     const { name, email, city, hoursAvailable } = req.body;
@@ -385,13 +394,12 @@ app.post("/api/street-team", async (req, res) => {
   }
 });
 
-//--------------------DASHBOARD--------------------	
+// -------------------- DASHBOARD --------------------
 app.get("/api/check-session", (req, res) => {
-  console.log("Session data:", req.session.user);
   res.json({ loggedIn: !!req.session.user, user: req.session.user || null });
 });
 
-// ------------------ ID VERIFICATION ------------------
+// -------------------- ID VERIFICATION --------------------
 app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   try {
     const user = req.session.user;
@@ -405,48 +413,40 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
       stream.end(req.file.buffer);
     });
 
-    const fileUrl = uploadResult.secure_url;
-    const timestamp = new Date().toLocaleString();
-    const updatedRow = [timestamp, user.email.toLowerCase(), user.name, "Pending", fileUrl];
+    const timestamp = new Date().toISOString();
+    const status = "Verified";
+    await appendSheetValues(spreadsheetId, "A:D", [[timestamp, user.email.toLowerCase(), uploadResult.secure_url, status]]);
 
-    await findRowAndUpdateOrAppend(spreadsheetId, "ID_Verifications!A:E", 1, user.email, updatedRow);
-    await sendMailjetEmail("New ID Verification Submitted", `<p>${user.name} (${user.email}) submitted an ID at ${timestamp}</p>`);
-
-    res.json({ success: true, message: "ID submitted", fileUrl });
+    res.json({ success: true, message: "ID verified successfully" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Failed to submit ID verification" });
+    res.status(500).json({ success: false, message: "ID verification failed" });
   }
 });
 
-app.get("/api/get-verifications", async (req, res) => {
+// -------------------- PASSWORD RESET --------------------
+app.post("/api/request-reset", async (req, res) => {
   try {
-    const user = req.session.user;
-    if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ success: false, message: "Email required" });
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiry = Date.now() + 3600 * 1000; // 1 hr
+
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
-    const spreadsheetId = process.env.ID_VERIFICATIONS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, "ID_Verifications!A:E");
-    const userRows = rows.filter(r => (r[1] || "").toLowerCase() === user.email.toLowerCase());
+    const spreadsheetId = process.env.PASSWORD_RESETS_SHEET_ID;
+    await appendSheetValues(spreadsheetId, "A:C", [[email.toLowerCase(), token, expiry]]);
 
-    res.json({ success: true, verifications: userRows.map(r => ({
-      timestamp: r[0],
-      email: r[1],
-      name: r[2],
-      status: r[3] === "Approved" ? "Verified" : (r[3] || "Pending"),
-      idImageUrl: r[4] || ""
-    })) });
+    await sendMailjetEmail("Password Reset Request", `<p>Click link to reset: ${process.env.FRONTEND_URL}/reset-password?token=${token}</p>`, email);
+
+    res.json({ success: true, message: "Password reset email sent" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Failed to fetch verifications" });
+    res.status(500).json({ success: false, message: "Failed to request password reset" });
   }
 });
 
-// ------------------ PASSWORD RESET ------------------
-// Request and update password routes stay as in your original code
-// (unchanged from previous snippet for brevity)
-
-// ==================== START SERVER ====================
+// -------------------- START SERVER --------------------
 app.listen(PORT, () => {
   console.log(`JoyFund backend running on port ${PORT}`);
 });
