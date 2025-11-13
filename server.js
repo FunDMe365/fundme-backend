@@ -359,14 +359,25 @@ app.get("/api/campaigns", async (req,res)=>{
 // ------------------ PUBLIC CAMPAIGNS ------------------
 app.get('/api/public-campaigns', async (req, res) => {
   try {
+    // Fetch campaigns with status Approved or active
     const campaigns = await Campaign.find({
       status: { $in: ['Approved', 'active'] }
     });
 
-    res.status(200).json(campaigns || []);
+    // Return them in a consistent JSON structure
+    res.json({
+      success: true,
+      campaigns: campaigns.map(c => ({
+        campaignId: c._id,
+        title: c.title,
+        description: c.description,
+        goal: c.goal,
+        imageUrl: c.imageUrl || 'https://fundasmile.net/default.jpg'
+      }))
+    });
   } catch (err) {
-    console.error('Error fetching public campaigns:', err.message);
-    res.status(500).json({ error: 'Server error: ' + err.message });
+    console.error('Error fetching public campaigns:', err);
+    res.status(500).json({ success: false, message: 'Server error fetching campaigns' });
   }
 });
 
