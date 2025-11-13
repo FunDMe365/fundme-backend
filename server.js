@@ -127,41 +127,56 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 // -------------------- MULTER --------------------
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
-
 // -------------------- USERS / SIGNIN / SESSION --------------------
+
+// Fetch all users from Google Sheet
 async function getUsers() {
   if (!process.env.USERS_SHEET_ID) return [];
-  return getSheetValues(process.env.USERS_SHEET_ID, "A:D");
+  return getSheetValues(process.env.USERS_SHEET_ID, "A:D"); // adjust range if needed
 }
 
+// Find a user by email
+async function getUserFromDB(email) {
+  const users = await getUsers();
+  // Column C = Email
+  const row = users.find(u => u[2].toLowerCase() === email.toLowerCase());
+  if (!row) return null;
+  return {
+    joinDate: row[0],      // Column A
+    name: row[1],          // Column B
+    email: row[2],         // Column C
+    passwordHash: row[3]   // Column D
+  };
+}
+
+// Simple password check (replace with bcrypt if using hashed passwords)
+function checkPassword(inputPassword, storedHash) {
+  // If storedHash is plain text for now, just compare
+  return inputPassword === storedHash;
+  // If you later switch to bcrypt:
+  // return await bcrypt.compare(inputPassword, storedHash);
+}
+
+// Sign In route
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: "Missing email or password" });
-  try {
-    const users = await getUsers();
-    const inputEmail = email.trim().toLowerCase();
-    const userRow = users.find(u => u[2] && u[2].trim().toLowerCase() === inputEmail);
-    if (!userRow) return res.status(401).json({ error: "Invalid credentials" });
-    const match = await bcrypt.compare(password, (userRow[3] || "").trim());
-    if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
-    req.session.user = { name: userRow[1], email: userRow[2], joinDate: userRow[0] };
-    res.json({ ok: true, user: req.session.user });
-  } catch (err) {
-    res.status(500).json({ error: "Server error" });
+  // Validate input
+  if (!email || !password) {
+    return res.status(400).json({ error: "Email and password are required" });
   }
-});
 
-app.get("/api/check-session", (req, res) => {
-  if (req.session.user) res.json({ loggedIn: true, user: req.session.user });
-  else res.json({ loggedIn: false });
-});
+  // Look up user
+  const user = await getUserFromDB(email);
+  if (!user || !checkPassword(password, user.passwordHash)) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
 
-app.post("/api/logout", (req, res) => {
-  req.session.destroy(err => {
-    if (err) return res.status(500).json({ error: "Failed to logout" });
-    res.json({ ok: true });
-  });
+  // Set session
+  req.session.user = { email: user.email, name: user.name, joinDate: user.joinDate };
+
+  // Respond success
+  res.json({ ok: true, loggedIn: true, email: user.email, name: user.name });
 });
 
 // -------------------- CAMPAIGNS (Sheets-based) --------------------
