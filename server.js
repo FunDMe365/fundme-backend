@@ -14,6 +14,19 @@ const mailjetLib = require("node-mailjet");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
 const crypto = require("crypto"); // for password reset tokens
+const mongoose = require('mongoose');
+
+// Campaign schema and model (defined directly in server.js)
+const campaignSchema = new mongoose.Schema({
+  title: String,
+  description: String,
+  goal: Number,
+  imageUrl: String,
+  status: { type: String, default: 'Pending' }
+});
+
+const Campaign = mongoose.model('Campaign', campaignSchema);
+
 
 // -------------------- CLOUDINARY --------------------
 cloudinary.config({
