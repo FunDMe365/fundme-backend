@@ -134,7 +134,6 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // -------------------- USERS / SIGNIN / SESSION --------------------
-const bcrypt = require("bcrypt"); // make sure installed: npm install bcrypt
 
 async function getUsers() {
   if (!process.env.USERS_SHEET_ID) return [];
