@@ -13,7 +13,6 @@ const mailjetLib = require("node-mailjet");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
 const crypto = require("crypto"); // for password reset tokens
-const cors = require("cors");
 
 app.use(cors({
   origin: "https://your-frontend-domain.com", // change to your frontend URL
