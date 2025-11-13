@@ -186,32 +186,28 @@ app.post("/api/signin", async (req, res) => {
       return res.status(400).json({ error: "Email and password are required" });
     }
 
-    const user = await getUserFromDB(email); // your function to get user from Google Sheet
+    const user = await getUserFromDB(email);
 
     if (!user || !(await checkPassword(password, user.passwordHash))) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // Create JWT token
     const sessionToken = jwt.sign(
       { email: user.email, name: user.name },
-      process.env.JWT_SECRET, // make sure JWT_SECRET is in your .env
+      process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
 
-    // Set cookie for mobile and desktop
     res.cookie("session", sessionToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // must be true on HTTPS
+      secure: process.env.NODE_ENV === "production",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
-    // Optional: keep express-session backward compatible
     req.session.user = { email: user.email, name: user.name };
 
-    // Send response
     return res.json({
       ok: true,
       loggedIn: true,
@@ -225,11 +221,10 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
-
 // -------------------- CHECK-AUTH --------------------
-app.get("/api/check-auth", (req, res) => {
+app.get("/api/check-session", (req, res) => {
   try {
-    const token = req.cookies?.session; // read cookie
+    const token = req.cookies?.session;
     if (!token) return res.json({ loggedIn: false });
 
     const user = jwt.verify(token, process.env.JWT_SECRET);
@@ -244,7 +239,6 @@ app.get("/api/check-auth", (req, res) => {
     return res.json({ loggedIn: false });
   }
 });
-
 
 // -------------------- LOGOUT --------------------
 app.post("/api/logout", (req, res) => {
@@ -300,6 +294,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
+// -------------------- GET MY CAMPAIGNS --------------------
 app.get("/api/my-campaigns", async (req, res) => {
   try {
     const user = req.session?.user;
@@ -329,6 +324,7 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
+// -------------------- PUBLIC CAMPAIGNS --------------------
 app.get("/api/public-campaigns", async (req, res) => {
   try {
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
@@ -466,10 +462,10 @@ app.post("/api/street-team", async (req, res) => {
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
     const spreadsheetId = process.env.STREET_TEAM_SHEET_ID;
-    const timestamp = new Date().toLocaleDateString();
+    const timestamp = new Date().toLocaleString();
     await appendSheetValues(spreadsheetId, "StreetTeam!A:E", [[timestamp, name, email.toLowerCase(), city, hoursAvailable || ""]]);
 
-    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined street team in ${city} at ${timestamp}. Hours Available: ${hoursAvailable || "N/A"}</p>`);
+    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) signed up for the street team in ${city} at ${timestamp}. Hours: ${hoursAvailable || "N/A"}</p>`);
 
     res.json({ success: true, message: "Street team submission successful" });
   } catch (err) {
@@ -481,86 +477,61 @@ app.post("/api/street-team", async (req, res) => {
 // -------------------- ID VERIFICATION --------------------
 app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email || !req.file) return res.status(400).json({ success: false, message: "Missing email or ID image" });
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
+    const user = req.session?.user;
+    if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
+    if (!req.file) return res.status(400).json({ success: false, message: "No ID uploaded" });
 
-    const uploadResult = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id-verification" }, (err, result) => {
-        if (err) reject(err); else resolve(result);
+    let imageUrl = "";
+    if (req.file) {
+      const uploadResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/ids" }, (err, result) => {
+          if (err) reject(err); else resolve(result);
+        });
+        stream.end(req.file.buffer);
       });
-      stream.end(req.file.buffer);
-    });
+      imageUrl = uploadResult.secure_url;
+    }
 
     const spreadsheetId = process.env.ID_VERIFICATION_SHEET_ID;
-    const timestamp = new Date().toISOString();
-    await appendSheetValues(spreadsheetId, "A:D", [[timestamp, email.toLowerCase(), uploadResult.secure_url, "Verified"]]);
+    const timestamp = new Date().toLocaleString();
+    await appendSheetValues(spreadsheetId, "IDs!A:C", [[timestamp, user.email.toLowerCase(), imageUrl]]);
 
-    await sendMailjetEmail("New ID Verification", `<p>${email} uploaded an ID for verification at ${timestamp}</p>`);
+    await sendMailjetEmail("New ID Submission", `<p>${user.name} (${user.email}) submitted an ID at ${timestamp}. <a href="${imageUrl}">View ID</a></p>`);
 
-    res.json({ success: true, message: "ID verified successfully" });
+    res.json({ success: true, message: "ID uploaded successfully", imageUrl });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Failed to verify ID" });
+    res.status(500).json({ success: false, message: "Failed to upload ID" });
   }
 });
 
 // -------------------- PASSWORD RESET --------------------
-app.post("/api/password-reset-request", async (req, res) => {
+app.post("/api/reset-password", async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: "Email is required" });
+    if (!email) return res.status(400).json({ success: false, message: "Email required" });
 
     const user = await getUserFromDB(email);
-    if (!user) return res.json({ success: true, message: "If the email exists, a reset link will be sent" });
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
-
-    // Store token in Google Sheet (optional)
-    const spreadsheetId = process.env.USERS_SHEET_ID;
-    const users = await getSheetValues(spreadsheetId, "A:D");
-    const rowIndex = users.findIndex(r => r[2]?.toLowerCase() === email.toLowerCase());
-    if (rowIndex >= 0) {
-      users[rowIndex][4] = resetToken;
-      const updateRange = `A${rowIndex + 1}:E${rowIndex + 1}`;
-      await sheets.spreadsheets.values.update({ spreadsheetId, range: updateRange, valueInputOption: "USER_ENTERED", resource: { values: [users[rowIndex]] } });
-    }
-
-    await sendMailjetEmail("Password Reset", `<p>Click <a href="${resetLink}">here</a> to reset your password</p>`, email);
-
-    res.json({ success: true, message: "If the email exists, a reset link will be sent" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to request password reset" });
-  }
-});
-
-app.post("/api/password-reset", async (req, res) => {
-  try {
-    const { email, token, newPassword } = req.body;
-    if (!email || !token || !newPassword) return res.status(400).json({ success: false, message: "Missing fields" });
-
-    const user = await getUserFromDB(email);
-    if (!user) return res.status(400).json({ success: false, message: "Invalid token or email" });
+    const hashedToken = await bcrypt.hash(resetToken, 10);
 
     const spreadsheetId = process.env.USERS_SHEET_ID;
-    const users = await getSheetValues(spreadsheetId, "A:E");
-    const rowIndex = users.findIndex(r => r[2]?.toLowerCase() === email.toLowerCase());
-    if (rowIndex < 0 || users[rowIndex][4] !== token) return res.status(400).json({ success: false, message: "Invalid token" });
+    await findRowAndUpdateOrAppend(spreadsheetId, "A:D", 2, email, [user.joinDate, user.name, user.email, user.passwordHash, hashedToken]);
 
-    const newHash = await bcrypt.hash(newPassword, 10);
-    users[rowIndex][3] = newHash;
-    users[rowIndex][4] = ""; // Clear token
-    const updateRange = `A${rowIndex + 1}:E${rowIndex + 1}`;
-    await sheets.spreadsheets.values.update({ spreadsheetId, range: updateRange, valueInputOption: "USER_ENTERED", resource: { values: [users[rowIndex]] } });
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
 
-    res.json({ success: true, message: "Password reset successfully" });
+    await sendMailjetEmail("Password Reset", `<p>Hello ${user.name},</p><p>Click here to reset your password: <a href="${resetUrl}">${resetUrl}</a></p>`);
+
+    res.json({ success: true, message: "Password reset email sent" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Failed to reset password" });
+    res.status(500).json({ success: false, message: "Failed to send password reset email" });
   }
 });
 
 // -------------------- START SERVER --------------------
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`JoyFund Backend running on port ${PORT}`);
+});
