@@ -356,6 +356,18 @@ app.get("/api/campaigns", async (req,res)=>{
   }catch(err){ res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
 
+// Get all active campaigns (public)
+app.get('/api/public-campaigns', async (req, res) => {
+  try {
+    // Replace 'Campaign' with your actual campaign model name
+    const campaigns = await Campaign.find({ status: 'active' });
+    res.json(campaigns);
+  } catch (err) {
+    console.error('Error fetching public campaigns:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ==================== SEARCH CAMPAIGNS ====================
 app.get("/api/search-campaigns", async (req, res) => {
   try {
