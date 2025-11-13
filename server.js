@@ -341,6 +341,36 @@ app.get("/api/campaigns", async (req,res)=>{
   }catch(err){ res.status(500).json({success:false,message:"Failed to fetch campaigns"}); }
 });
 
+// ------------------ MY CAMPAIGNS ------------------
+app.get("/api/my-campaigns", async (req, res) => {
+  try {
+    const userEmail = req.user?.email?.toLowerCase();
+    if (!userEmail) return res.status(401).json({ success:false, message:"Not logged in" });
+
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    const rows = await getSheetValues(spreadsheetId, "A:I");
+
+    const myCampaigns = rows
+      .filter(r => r[2] && r[2].toLowerCase() === userEmail)
+      .map(r => ({
+        campaignId: r[0],
+        title: r[1],
+        creator: r[2],
+        goal: r[3],
+        description: r[4],
+        category: r[5],
+        status: r[6],
+        createdAt: r[7],
+        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
+
+    res.json({ success:true, campaigns: myCampaigns });
+  } catch(err) {
+    console.error("Error fetching user campaigns:", err);
+    res.status(500).json({ success:false, message:"Failed to fetch campaigns" });
+  }
+});
+
 // ------------------ PUBLIC CAMPAIGNS ------------------
 app.get("/api/public-campaigns", async (req, res) => {
   try {
