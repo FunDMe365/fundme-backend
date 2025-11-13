@@ -40,8 +40,6 @@ app.use(cors({
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended:true }));
 
-const session = require('express-session');
-
 // -------------------- SESSION --------------------
 app.use(session({
   name: 'sessionId',                         // cookie name
