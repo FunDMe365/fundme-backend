@@ -13,6 +13,28 @@ const mailjetLib = require("node-mailjet");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
 const crypto = require("crypto"); // for password reset tokens
+const session = require("express-session");
+const cors = require("cors");
+
+app.use(cors({
+  origin: "https://your-frontend-domain.com", // change to your frontend URL
+  credentials: true
+}));
+
+app.use(session({
+  secret: "Purp1e3l3phant",  // replace with a strong secret
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: true,    // set to true if using HTTPS
+    httpOnly: true,
+    sameSite: "lax"   // "lax" works for mobile and desktop; use "none" with HTTPS
+  }
+}));
+
+// Parse JSON bodies
+app.use(express.json());
+
 
 // -------------------- APP --------------------
 const app = express();
@@ -130,58 +152,42 @@ const upload = multer({ storage });
 const bcrypt = require("bcrypt"); // make sure bcrypt is installed: npm install bcrypt
 
 // -------------------- USERS / SIGNIN / SESSION --------------------
+const bcrypt = require("bcrypt"); // make sure installed: npm install bcrypt
 
-// Fetch all users from Google Sheet
 async function getUsers() {
   if (!process.env.USERS_SHEET_ID) return [];
-  return getSheetValues(process.env.USERS_SHEET_ID, "A:D"); // adjust range if needed
+  return getSheetValues(process.env.USERS_SHEET_ID, "A:D");
 }
 
-// Find a user by email
 async function getUserFromDB(email) {
   const users = await getUsers();
   const row = users.find(u => u[2].toLowerCase() === email.toLowerCase()); // Column C = Email
   if (!row) return null;
   return {
-    joinDate: row[0],      // Column A
-    name: row[1],          // Column B
-    email: row[2],         // Column C
-    passwordHash: row[3]   // Column D
+    joinDate: row[0],
+    name: row[1],
+    email: row[2],
+    passwordHash: row[3]
   };
 }
 
-// Check hashed password with bcrypt
 async function checkPassword(inputPassword, storedHash) {
-  // Ensure both are strings and trim spaces
   if (!inputPassword || !storedHash) return false;
   return await bcrypt.compare(inputPassword.trim(), storedHash.trim());
 }
 
-// Sign In route
 app.post("/api/signin", async (req, res) => {
   const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
 
-  // Validate input
-  if (!email || !password) {
-    return res.status(400).json({ error: "Email and password are required" });
-  }
-
-  // Look up user
   const user = await getUserFromDB(email);
-  if (!user) {
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
-
-  // Compare password
-  const valid = await checkPassword(password, user.passwordHash);
-  if (!valid) {
+  if (!user || !(await checkPassword(password, user.passwordHash))) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
   // Set session
   req.session.user = { email: user.email, name: user.name, joinDate: user.joinDate };
 
-  // Respond success
   res.json({ ok: true, loggedIn: true, email: user.email, name: user.name });
 });
 
@@ -396,6 +402,12 @@ app.post("/api/street-team", async (req, res) => {
     console.error(err);
     res.status(500).json({ success: false, message: "Failed to submit street team" });
   }
+});
+
+//--------------------DASHBOARD--------------------	
+app.get("/api/check-session", (req, res) => {
+  console.log("Session data:", req.session.user);
+  res.json({ loggedIn: !!req.session.user, user: req.session.user || null });
 });
 
 // ------------------ ID VERIFICATION ------------------
