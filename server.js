@@ -177,53 +177,74 @@ async function checkPassword(inputPassword, storedHash) {
   return await bcrypt.compare(inputPassword.trim(), storedHash.trim());
 }
 
-// -------------------- SIGN-IN (JWT + Cookie + Session) --------------------
+// -------------------- SIGN-IN --------------------
 app.post("/api/signin", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
 
-    const user = await getUserFromDB(email);
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    const user = await getUserFromDB(email); // your function to get user from Google Sheet
+
     if (!user || !(await checkPassword(password, user.passwordHash))) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
+    // Create JWT token
     const sessionToken = jwt.sign(
       { email: user.email, name: user.name },
-      process.env.JWT_SECRET,
+      process.env.JWT_SECRET, // make sure JWT_SECRET is in your .env
       { expiresIn: "7d" }
     );
 
+    // Set cookie for mobile and desktop
     res.cookie("session", sessionToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
+      secure: process.env.NODE_ENV === "production", // must be true on HTTPS
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
     });
 
-    req.session.user = { email: user.email, name: user.name, joinDate: user.joinDate };
-    return res.json({ ok: true, loggedIn: true, name: user.name, email: user.email });
+    // Optional: keep express-session backward compatible
+    req.session.user = { email: user.email, name: user.name };
+
+    // Send response
+    return res.json({
+      ok: true,
+      loggedIn: true,
+      name: user.name,
+      email: user.email,
+    });
 
   } catch (error) {
     console.error("Signin error:", error);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
-// -------------------- CHECK AUTH --------------------
+
+// -------------------- CHECK-AUTH --------------------
 app.get("/api/check-auth", (req, res) => {
   try {
-    const token = req.cookies && req.cookies.session;
+    const token = req.cookies?.session; // read cookie
     if (!token) return res.json({ loggedIn: false });
 
     const user = jwt.verify(token, process.env.JWT_SECRET);
-    return res.json({ loggedIn: true, email: user.email, name: user.name });
+
+    return res.json({
+      loggedIn: true,
+      email: user.email,
+      name: user.name
+    });
 
   } catch (err) {
     return res.json({ loggedIn: false });
   }
 });
+
 
 // -------------------- LOGOUT --------------------
 app.post("/api/logout", (req, res) => {
