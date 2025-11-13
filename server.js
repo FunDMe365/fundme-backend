@@ -402,59 +402,80 @@ app.get("/api/search-campaigns", async (req, res) => {
   }
 });
 
-//===================== PASSWORD RESET ====================
-const resetTokens = {}; // In-memory, replace with DB for production
+const crypto = require("crypto");
+const resetTokens = {}; // In-memory store for demo. Can use DB/Sheets in production
 
-// Request reset
+// -------------------- REQUEST PASSWORD RESET --------------------
 app.post("/api/request-reset-password", async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: "Email required" });
+
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: "Email required" });
     const users = await getUsers();
-    const userRow = users.find(u => (u[2] || "").toLowerCase() === email.trim().toLowerCase());
-    if (!userRow) return res.status(404).json({ success: false, message: "Email not found" });
+    const userRow = users.find(u => u[2] && u[2].toLowerCase() === email.toLowerCase());
+    if (!userRow) return res.status(404).json({ error: "User not found" });
 
     const token = crypto.randomBytes(32).toString("hex");
-    resetTokens[token] = { email: userRow[2], expires: Date.now() + 3600 * 1000 }; // 1 hr
+    const expires = Date.now() + 1000 * 60 * 60; // 1 hour
+    resetTokens[token] = { email: email.toLowerCase(), expires };
 
     const resetLink = `${process.env.FRONTEND_URL || "https://fundasmile.net"}/update-password.html?token=${token}`;
-    await sendMailjetEmail("JoyFund Password Reset", `<p>Click to reset your password: <a href="${resetLink}">${resetLink}</a></p>`, userRow[2]);
 
-    res.json({ success: true, message: "Reset link sent" });
+    if (mailjetClient) {
+      await mailjetClient.post("send", { version: "v3.1" }).request({
+        Messages: [{
+          From: { Email: process.env.MAILJET_SENDER_EMAIL, Name: "JoyFund INC" },
+          To: [{ Email: email }],
+          Subject: "Password Reset Request",
+          HTMLPart: `<p>Hello,</p>
+                     <p>You requested a password reset. Click the link below to reset your password:</p>
+                     <p><a href="${resetLink}">${resetLink}</a></p>
+                     <p>This link will expire in 1 hour.</p>`
+        }]
+      });
+    }
+
+    res.json({ ok: true, message: "Reset link sent" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Failed to send reset link" });
+    res.status(500).json({ error: "Failed to send reset link" });
   }
 });
 
-// Update password
+// -------------------- UPDATE PASSWORD --------------------
 app.post("/api/update-password", async (req, res) => {
+  const { token, newPassword } = req.body;
+  if (!token || !newPassword) return res.status(400).json({ error: "Token and new password required" });
+
+  const tokenData = resetTokens[token];
+  if (!tokenData) return res.status(400).json({ error: "Invalid or expired token" });
+  if (Date.now() > tokenData.expires) {
+    delete resetTokens[token];
+    return res.status(400).json({ error: "Token expired" });
+  }
+
   try {
-    const { token, password } = req.body;
-    if (!token || !password) return res.status(400).json({ success: false, message: "Token and password required" });
-    const tokenData = resetTokens[token];
-    if (!tokenData || tokenData.expires < Date.now()) return res.status(400).json({ success: false, message: "Invalid or expired token" });
-
     const users = await getUsers();
-    const rowIndex = users.findIndex(u => (u[2] || "").toLowerCase() === tokenData.email.toLowerCase());
-    if (rowIndex === -1) return res.status(404).json({ success: false, message: "User not found" });
+    const rowIndex = users.findIndex(u => u[2] && u[2].toLowerCase() === tokenData.email);
+    if (rowIndex === -1) return res.status(404).json({ error: "User not found" });
 
-    const hashed = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
     const spreadsheetId = process.env.USERS_SHEET_ID;
-    const userRow = users[rowIndex];
-    const updatedRow = [userRow[0], userRow[1], userRow[2], hashed];
+    const rowNumber = rowIndex + 1;
+    const updateRange = `D${rowNumber}`; // Password is in column D
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `A${rowIndex+1}:D${rowIndex+1}`,
+      range: updateRange,
       valueInputOption: "USER_ENTERED",
-      resource: { values: [updatedRow] }
+      resource: { values: [[hashedPassword]] }
     });
 
-    delete resetTokens[token];
-    res.json({ success: true, message: "Password updated" });
+    delete resetTokens[token]; // Remove used token
+    res.json({ ok: true, message: "Password updated successfully" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: "Failed to update password" });
+    res.status(500).json({ error: "Failed to update password" });
   }
 });
 
