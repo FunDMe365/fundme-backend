@@ -360,7 +360,7 @@ app.get("/api/campaigns", async (req,res)=>{
 app.get('/api/public-campaigns', async (req, res) => {
   try {
     // Replace 'Campaign' with your actual campaign model name
-    const campaigns = await Campaign.find({ status: 'active' });
+    const campaigns = await Campaign.find({ status: 'Approved' });
     res.json(campaigns);
   } catch (err) {
     console.error('Error fetching public campaigns:', err);
@@ -379,7 +379,7 @@ app.get("/api/search-campaigns", async (req, res) => {
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId, "A:I");
 
-    let activeCampaigns = rows.filter(r => (r[6] || "").toLowerCase() === "approved");
+    let activeCampaigns = rows.filter(r => (r[6] || "").toLowerCase() === "Approved");
 
     activeCampaigns = activeCampaigns.filter(r => parseFloat(r[3] || 0) <= maxGoal);
 
