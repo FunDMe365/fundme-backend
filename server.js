@@ -243,26 +243,41 @@ app.get("/api/check-session", (req, res) => {
 // -------------------- LOGOUT --------------------
 app.post("/api/logout", (req, res) => {
   try {
-    // Clear JWT cookie
-    res.clearCookie("session", { path: "/" });
+    // Clear the JWT cookie
+    res.clearCookie("session", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/"
+    });
 
-    // Destroy express-session if it exists
+    // Clear the express-session cookie
+    res.clearCookie("sessionId", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      path: "/"
+    });
+
+    // Destroy express session
     if (req.session) {
       req.session.destroy(err => {
-        // Clear sessionId cookie
-        res.clearCookie("sessionId", { path: "/" });
-        if (err) return res.status(500).json({ success: false, message: "Logout failed" });
-        return res.json({ success: true });
+        if (err) {
+          console.error("Session destroy error:", err);
+          return res.status(500).json({ success: false, message: "Logout failed" });
+        }
+        return res.json({ success: true, message: "Logged out successfully" });
       });
     } else {
-      return res.json({ success: true });
+      // No session? Just return success
+      return res.json({ success: true, message: "Logged out successfully" });
     }
-
   } catch (err) {
     console.error("Logout error:", err);
-    return res.status(500).json({ success: false, message: "Logout error" });
+    return res.status(500).json({ success: false, message: "Server error during logout" });
   }
 });
+
 
 // -------------------- CAMPAIGNS --------------------
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
