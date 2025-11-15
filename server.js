@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - JOYFUND BACKEND ====================
+// ==================== SERVER.JS - JOYFUND BACKEND (FIXED) ====================
 
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -102,28 +102,60 @@ async function sendMailjetEmail(subject, htmlContent, toEmail) {
 }
 
 // -------------------- GOOGLE SHEETS --------------------
+// Note: using CommonJS require at top. Removed stray `import` to avoid runtime errors.
+
 let sheets;
+
+function safeJSONParse(input) {
+  try {
+    return JSON.parse(input);
+  } catch (e) {
+    console.error("❌ Failed to parse GOOGLE_CREDENTIALS_JSON:", e.message);
+    return null;
+  }
+}
+
+// Initialize sheets
 try {
-  if (process.env.GOOGLE_CREDENTIALS_JSON) {
-    const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+  const creds = safeJSONParse(process.env.GOOGLE_CREDENTIALS_JSON);
+  if (creds) {
     const auth = new google.auth.GoogleAuth({
       credentials: creds,
       scopes: ["https://www.googleapis.com/auth/spreadsheets"]
     });
     sheets = google.sheets({ version: "v4", auth });
+    console.log("✅ Google Sheets initialized successfully.");
+  } else {
+    console.log("❌ No valid GOOGLE_CREDENTIALS_JSON loaded.");
   }
 } catch (err) {
-  console.error("Google Sheets init failed", err.message);
+  console.error("❌ Google Sheets init failed:", err.message);
 }
 
+// Utility: convert 0-based column index → A1 string (0 -> A, 25 -> Z, 26 -> AA)
+function colToA1(n) {
+  let s = "";
+  while (n >= 0) {
+    s = String.fromCharCode((n % 26) + 65) + s;
+    n = Math.floor(n / 26) - 1;
+  }
+  return s;
+}
+
+// Read values from sheet (returns raw rows, including header row if present)
 async function getSheetValues(spreadsheetId, range) {
   if (!sheets) return [];
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range
+  });
   return res.data.values || [];
 }
 
+// Append rows
 async function appendSheetValues(spreadsheetId, range, values) {
   if (!sheets) throw new Error("Sheets not initialized");
+
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range,
@@ -132,37 +164,89 @@ async function appendSheetValues(spreadsheetId, range, values) {
   });
 }
 
-async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex, matchValue, updatedValues) {
-  if (!sheets) throw new Error("Sheets not initialized");
-  const rows = await getSheetValues(spreadsheetId, rangeCols);
-  const rowIndex = rows.findIndex(r => (r[matchColIndex] || "").toString().trim().toLowerCase() === (matchValue || "").toString().trim().toLowerCase());
+// findRowAndUpdateOrAppend:
+// - rangeCols expects sheetName!A:Z (start and end columns OK), e.g. "Campaigns!A:I"
+// - matchColIndex is 0-based index relative to the returned row array
+async function findRowAndUpdateOrAppend(
+  spreadsheetId,
+  rangeCols,
+  matchColIndex,
+  matchValue,
+  updatedValues
+) {
 
+  if (!sheets) throw new Error("Sheets not initialized");
+
+  const rows = await getSheetValues(spreadsheetId, rangeCols);
+
+  // If no rows at all, just append header-less values
+  if (!rows || rows.length === 0) {
+    await appendSheetValues(spreadsheetId, rangeCols, [updatedValues]);
+    return { action: "appended", row: 1 };
+  }
+
+  // attempt to skip header row when searching by data
+  const dataRows = rows.length > 1 ? rows.slice(1) : [];
+
+  const rowIndex = dataRows.findIndex(r =>
+    (r[matchColIndex] || "").toString().trim().toLowerCase() ===
+    (matchValue || "").toString().trim().toLowerCase()
+  );
+
+  // Row not found → append
   if (rowIndex === -1) {
     await appendSheetValues(spreadsheetId, rangeCols, [updatedValues]);
     return { action: "appended", row: rows.length + 1 };
-  } else {
-    const rowNumber = rowIndex + 1;
-    const startCol = rangeCols.split("!")[1].charAt(0);
-    const endCol = String.fromCharCode(startCol.charCodeAt(0) + updatedValues.length - 1);
-    const updateRange = `${rangeCols.split("!")[0]}!${startCol}${rowNumber}:${endCol}${rowNumber}`;
-    await sheets.spreadsheets.values.update({ spreadsheetId, range: updateRange, valueInputOption: "USER_ENTERED", resource: { values: [updatedValues] } });
-    return { action: "updated", row: rowNumber };
   }
+
+  // Update existing row
+  // parse rangeCols sheet and start column correctly
+  const [sheetName, rangePart] = rangeCols.split("!");
+  // rangePart may be like "A:I" or "A:E" or "A2:Z"
+  const startColLetter = (rangePart.split(":")[0] || "").replace(/[^A-Z]/gi, "").toUpperCase();
+  if (!startColLetter) throw new Error("Invalid rangeCols start column");
+
+  // convert column letter to 0-based index
+  const startColIndex = startColLetter.split('').reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 65 + 1), 0) - 1;
+
+  const endColLetter = colToA1(startColIndex + updatedValues.length - 1);
+
+  // +2: one for header skip and one because sheet rows are 1-indexed
+  const updateRowNumber = rowIndex + 2;
+
+  const updateRange = `${sheetName}!${startColLetter}${updateRowNumber}:${endColLetter}${updateRowNumber}`;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: updateRange,
+    valueInputOption: "USER_ENTERED",
+    resource: { values: [updatedValues] }
+  });
+
+  return { action: "updated", row: updateRowNumber };
 }
 
 // -------------------- MULTER --------------------
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
+// -------------------- SHEET RANGE CONSTANTS (match your tabs) --------------------
+const VERIFICATIONS_RANGE = "ID_Verifications!A:E";
+const CAMPAIGNS_RANGE = "Campaigns!A:I";
+const DONATIONS_RANGE = "Donations!A:I";
+const USERS_RANGE = "Users!A:E"; // adjust if your users tab name differs
+
 // -------------------- USERS / SIGN-IN --------------------
 async function getUsers() {
   if (!process.env.USERS_SHEET_ID) return [];
-  return getSheetValues(process.env.USERS_SHEET_ID, "A:D");
+  return getSheetValues(process.env.USERS_SHEET_ID, USERS_RANGE);
 }
 
 async function getUserFromDB(email) {
   const users = await getUsers();
-  const row = users.find(u => (u[2] || "").toLowerCase() === (email || "").toLowerCase());
+  if (!users || users.length <= 1) return null;
+  const dataRows = users.slice(1);
+  const row = dataRows.find(u => (u[2] || "").toLowerCase() === (email || "").toLowerCase());
   if (!row) return null;
   return {
     joinDate: row[0],
@@ -278,7 +362,6 @@ app.post("/api/logout", (req, res) => {
   }
 });
 
-
 // -------------------- CAMPAIGNS --------------------
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
@@ -307,7 +390,8 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     const status = "Pending";
     const newCampaignRow = [campaignId, title, user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl];
 
-    await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
+    // append to the Campaigns sheet (explicit sheet range)
+    await appendSheetValues(spreadsheetId, CAMPAIGNS_RANGE, [newCampaignRow]);
 
     await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
 
@@ -325,10 +409,12 @@ app.get("/api/my-campaigns", async (req, res) => {
     if (!user) return res.status(401).json({ success: false, message: "Not logged in" });
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, "A:I");
+    const rows = await getSheetValues(spreadsheetId, CAMPAIGNS_RANGE);
 
-    const myCampaigns = rows
-      .filter(r => r[2]?.toLowerCase() === user.email.toLowerCase())
+    const dataRows = rows.length > 1 ? rows.slice(1) : [];
+
+    const myCampaigns = dataRows
+      .filter(r => (r[2] || "").toLowerCase() === user.email.toLowerCase())
       .map(r => ({
         campaignId: r[0],
         title: r[1],
@@ -354,10 +440,15 @@ app.get("/api/public-campaigns", async (req, res) => {
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, "A:I");
+    const rows = await getSheetValues(spreadsheetId, CAMPAIGNS_RANGE);
 
-    const activeCampaigns = rows
-      .filter(r => r[6] && ["Approved", "active"].includes(r[6]))
+    const dataRows = rows.length > 1 ? rows.slice(1) : [];
+
+    const activeCampaigns = dataRows
+      .filter(r => {
+        const status = (r[6] || "").toString().trim().toLowerCase();
+        return ["approved", "active"].includes(status);
+      })
       .map(r => ({
         campaignId: r[0],
         title: r[1],
@@ -384,9 +475,11 @@ app.get("/api/search-campaigns", async (req, res) => {
     if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, "A:I");
+    const rows = await getSheetValues(spreadsheetId, CAMPAIGNS_RANGE);
 
-    let allCampaigns = rows.map(r => ({
+    const dataRows = rows.length > 1 ? rows.slice(1) : [];
+
+    let allCampaigns = dataRows.map(r => ({
       campaignId: r[0],
       title: r[1],
       creator: r[2],
@@ -398,7 +491,10 @@ app.get("/api/search-campaigns", async (req, res) => {
       imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
     }));
 
-    let filteredCampaigns = allCampaigns.filter(c => ['Approved', 'active'].includes(c.status));
+    let filteredCampaigns = allCampaigns.filter(c => {
+      const s = (c.status || "").toString().trim().toLowerCase();
+      return ['approved', 'active'].includes(s);
+    });
 
     if (category && category !== 'all') filteredCampaigns = filteredCampaigns.filter(c => c.category === category);
     if (amount) filteredCampaigns = filteredCampaigns.filter(c => c.goal <= parseFloat(amount));
@@ -518,7 +614,9 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
 
     const spreadsheetId = process.env.ID_VERIFICATION_SHEET_ID;
     const timestamp = new Date().toLocaleString();
-    await appendSheetValues(spreadsheetId, "IDs!A:C", [[timestamp, user.email.toLowerCase(), imageUrl]]);
+
+    // append to ID_Verifications sheet with correct columns (A:E). We append: TimeStamp, Email, Name, Status, ID Photo URL
+    await appendSheetValues(spreadsheetId, VERIFICATIONS_RANGE, [[timestamp, user.email.toLowerCase(), user.name || "", "Pending", imageUrl]]);
 
     await sendMailjetEmail("New ID Submission", `<p>${user.name} (${user.email}) submitted an ID at ${timestamp}. <a href="${imageUrl}">View ID</a></p>`);
 
@@ -542,7 +640,8 @@ app.post("/api/reset-password", async (req, res) => {
     const hashedToken = await bcrypt.hash(resetToken, 10);
 
     const spreadsheetId = process.env.USERS_SHEET_ID;
-    await findRowAndUpdateOrAppend(spreadsheetId, "A:D", 2, email, [user.joinDate, user.name, user.email, user.passwordHash, hashedToken]);
+    // Using USERS_RANGE; update or append adds token as a 5th column
+    await findRowAndUpdateOrAppend(spreadsheetId, USERS_RANGE, 2, email, [user.joinDate, user.name, user.email, user.passwordHash, hashedToken]);
 
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
 
