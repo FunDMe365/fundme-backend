@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - JOYFUND BACKEND (FULL PRESERVED + DASHBOARD FIX) ====================
+// ==================== SERVER.JS - JOYFUND BACKEND (FULL COMPLETE) ====================
 
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -12,7 +12,6 @@ const cors = require("cors");
 const mailjetLib = require("node-mailjet");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
-const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
@@ -25,7 +24,18 @@ const requiredEnvs = [
   "JWT_SECRET",
   "SESSION_SECRET",
   "STRIPE_SECRET_KEY",
-  "FRONTEND_URL"
+  "FRONTEND_URL",
+  "GOOGLE_CREDENTIALS_JSON",
+  "USERS_SHEET_ID",
+  "CAMPAIGNS_SHEET_ID",
+  "DONATIONS_SHEET_ID",
+  "ID_VERIFICATIONS_SHEET",
+  "WAITLIST_SHEET_ID",
+  "VOLUNTEERS_SHEET_ID",
+  "MAILJET_API_KEY",
+  "MAILJET_API_SECRET",
+  "MAILJET_SENDER_EMAIL",
+  "NOTIFY_EMAIL"
 ];
 for (const envVar of requiredEnvs) {
   if (!process.env[envVar]) {
@@ -79,13 +89,8 @@ app.use(express.static(path.join(__dirname, "public")));
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // -------------------- MAILJET --------------------
-let mailjetClient = null;
-if (process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET) {
-  mailjetClient = mailjetLib.apiConnect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
-}
-
+const mailjetClient = mailjetLib.apiConnect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
 async function sendMailjetEmail(subject, htmlContent, toEmail) {
-  if (!mailjetClient) return;
   try {
     await mailjetClient.post("send", { 'version': 'v3.1' }).request({
       Messages: [{
@@ -245,157 +250,72 @@ app.delete("/api/delete-account", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
 
-// -------------------- CAMPAIGNS --------------------
-app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
-  try {
-    const user = req.session?.user; if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
-    const { title, goal, description, category } = req.body;
-    if (!title || !goal || !description || !category) return res.status(400).json({ success: false, message: "Missing required fields" });
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const campaignId = Date.now().toString();
-    let imageUrl = "https://placehold.co/400x200?text=No+Image";
-    if (req.file) {
-      const uploadResult = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => {
-          if (err) reject(err); else resolve(result);
-        });
-        stream.end(req.file.buffer);
-      });
-      imageUrl = uploadResult.secure_url;
-    }
-    const createdAt = new Date().toISOString();
-    const status = "Pending";
-    const newCampaignRow = [campaignId, title, user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl];
-    await appendSheetValues(spreadsheetId, CAMPAIGNS_RANGE, [newCampaignRow]);
-    await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
-    res.json({ success: true, message: "Campaign submitted", campaignId });
-  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to create campaign" }); }
-});
-
-app.get("/api/my-campaigns", async (req, res) => {
-  try {
-    const token = req.cookies?.session; if (!token) return res.status(401).json({ success: false });
-    const user = jwt.verify(token, process.env.JWT_SECRET);
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, CAMPAIGNS_RANGE);
-    const dataRows = rows.length > 1 ? rows.slice(1) : [];
-    const myCampaigns = dataRows.filter(r => (r[2] || "").toLowerCase() === user.email.toLowerCase())
-      .map(r => ({ campaignId: r[0], title: r[1], creator: r[2], goal: r[3], description: r[4], category: r[5], status: r[6], createdAt: r[7], imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image" }));
-    res.json({ success: true, campaigns: myCampaigns });
-  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to fetch campaigns" }); }
-});
-
-app.get("/api/public-campaigns", async (req, res) => {
-  try {
-    if (!sheets) return res.status(500).json({ success: false });
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, CAMPAIGNS_RANGE);
-    const dataRows = rows.length > 1 ? rows.slice(1) : [];
-    const activeCampaigns = dataRows.filter(r => ["approved","active"].includes((r[6]||"").toLowerCase()))
-      .map(r => ({ campaignId: r[0], title: r[1], creator: r[2], goal: r[3], description: r[4], category: r[5], status: r[6], createdAt: r[7], imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image" }));
-    res.json({ success: true, campaigns: activeCampaigns });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
-});
-
-// -------------------- WAITLIST --------------------
-app.post("/api/join-waitlist", async (req, res) => {
-  try {
-    const { name, email } = req.body;
-    if (!name || !email) return res.status(400).json({ success: false, message: "Missing fields" });
-    await appendSheetValues(process.env.WAITLIST_SHEET_ID, WAITLIST_RANGE, [[Date.now().toString(), name, email]]);
-    await sendMailjetEmail("New Waitlist Entry", `<p>${name} (${email}) joined the waitlist</p>`);
-    res.json({ success: true });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
-});
-
-app.get("/api/get-waitlist", async (req, res) => {
-  try {
-    const rows = await getSheetValues(process.env.WAITLIST_SHEET_ID, WAITLIST_RANGE);
-    const dataRows = rows.length > 1 ? rows.slice(1) : [];
-    res.json({ success: true, waitlist: dataRows });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
-});
-
-// -------------------- VOLUNTEERS --------------------
-app.post("/api/add-volunteer", async (req, res) => {
-  try {
-    const { name, role, email } = req.body;
-    if (!name || !role || !email) return res.status(400).json({ success: false });
-    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, VOLUNTEERS_RANGE, [[Date.now().toString(), name, role, email]]);
-    res.json({ success: true });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
-});
-
-app.get("/api/get-volunteers", async (req, res) => {
-  try {
-    const rows = await getSheetValues(process.env.VOLUNTEERS_SHEET_ID, VOLUNTEERS_RANGE);
-    const dataRows = rows.length > 1 ? rows.slice(1) : [];
-    res.json({ success: true, volunteers: dataRows });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
-});
-
 // -------------------- ID VERIFICATIONS --------------------
-app.get("/api/get-verifications", async (req, res) => {
-  try {
-    const rows = await getSheetValues(process.env.ID_VERIFICATIONS_SHEET, VERIFICATIONS_RANGE);
-    const dataRows = rows.length > 1 ? rows.slice(1) : [];
-    res.json({ success: true, verifications: dataRows });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
-});
-
-app.post("/api/submit-verification", async (req, res) => {
-  try {
-    const { email, documentType, documentUrl } = req.body;
-    if (!email || !documentType || !documentUrl) return res.status(400).json({ success: false });
-    await appendSheetValues(process.env.VERIFICATIONS_SHEET_ID, VERIFICATIONS_RANGE, [[Date.now().toString(), email, documentType, documentUrl]]);
-    await sendMailjetEmail("New ID Verification", `<p>${email} submitted a ${documentType} verification.</p>`);
-    res.json({ success: true });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
-});
-
-// -------------------- DONATIONS / STRIPE --------------------
-app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
-  try {
-    const { campaignId } = req.params;
-    const { amount, successUrl, cancelUrl } = req.body;
-    if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ error: "Missing fields" });
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: "usd",
-          product_data: { name: `Donation for campaign ${campaignId}` },
-          unit_amount: Math.round(amount*100)
-        },
-        quantity: 1
-      }],
-      mode: "payment",
-      success_url: successUrl,
-      cancel_url: cancelUrl
-    });
-    res.json({ ok: true, url: session.url });
-  } catch (err) { console.error(err); res.status(500).json({ ok: false, message: "Failed to create checkout session" }); }
-});
-
-// -------------------- DASHBOARD --------------------
-app.get("/api/dashboard", async (req, res) => {
+app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
     const token = req.cookies?.session;
     if (!token) return res.status(401).json({ success: false, message: "Not logged in" });
     const user = jwt.verify(token, process.env.JWT_SECRET);
 
-    const campaignsRows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, CAMPAIGNS_RANGE);
-    const campaigns = (campaignsRows.length > 1 ? campaignsRows.slice(1) : []).filter(r => (r[2] || "").toLowerCase() === user.email.toLowerCase())
-      .map(r => ({ campaignId: r[0], title: r[1], goal: r[3], status: r[6] }));
+    if (!req.file) return res.status(400).json({ success: false, message: "ID image required" });
 
-    const donationsRows = await getSheetValues(process.env.DONATIONS_SHEET_ID, DONATIONS_RANGE);
-    const donations = (donationsRows.length > 1 ? donationsRows.slice(1) : []).filter(r => (r[2] || "").toLowerCase() === user.email.toLowerCase())
-      .map(r => ({ donationId: r[0], campaignId: r[1], amount: r[3], date: r[7] }));
+    const uploadResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id-verifications" }, (err, result) => {
+        if (err) reject(err); else resolve(result);
+      });
+      stream.end(req.file.buffer);
+    });
 
-    res.json({ success: true, user: { name: user.name, email: user.email }, campaigns, donations });
-  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to load dashboard" }); }
+    const verificationRow = [
+      user.email.toLowerCase(),
+      uploadResult.secure_url,
+      "Pending",
+      new Date().toISOString(),
+      ""
+    ];
+
+    await appendSheetValues(process.env.ID_VERIFICATIONS_SHEET, VERIFICATIONS_RANGE, [verificationRow]);
+
+    await sendMailjetEmail("New ID Verification Submitted", `<p>${user.name} (${user.email}) submitted ID verification.</p>`);
+
+    res.json({ success: true, message: "ID submitted for verification" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to submit ID" });
+  }
+});
+
+// -------------------- VOLUNTEERS --------------------
+app.post("/api/volunteer", async (req, res) => {
+  try {
+    const { name, email, role } = req.body;
+    if (!name || !email || !role) return res.status(400).json({ success: false, message: "Name, email, and role required" });
+
+    const volunteerRow = [name, email, role, new Date().toISOString()];
+    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, VOLUNTEERS_RANGE, [volunteerRow]);
+
+    await sendMailjetEmail("New Volunteer Signup", `<p>${name} (${email}) signed up for volunteer role: ${role}</p>`);
+
+    res.json({ success: true, message: "Volunteer registered" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to register volunteer" });
+  }
+});
+
+// -------------------- WAITLIST --------------------
+app.post("/api/waitlist", async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    if (!name || !email) return res.status(400).json({ success: false, message: "Name and email required" });
+    await appendSheetValues(process.env.WAITLIST_SHEET_ID, WAITLIST_RANGE, [[name, email, new Date().toISOString()]]);
+    await sendMailjetEmail("New Waitlist Signup", `<p>${name} (${email}) joined the waitlist.</p>`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to join waitlist" });
+  }
 });
 
 // -------------------- START SERVER --------------------
 app.listen(PORT, () => console.log(`🚀 JoyFund backend running on port ${PORT}`));
-
