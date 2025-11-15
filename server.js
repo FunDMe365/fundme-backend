@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - JOYFUND BACKEND (FULL PRESERVED) ====================
+// ==================== SERVER.JS - JOYFUND BACKEND (FULL PRESERVED + DASHBOARD FIX) ====================
 
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
@@ -212,8 +212,8 @@ app.get("/api/check-session", (req, res) => {
 
 app.post("/api/logout", (req, res) => {
   try {
-    res.clearCookie("session", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", path: "/" });
-    res.clearCookie("sessionId", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", path: "/" });
+    res.clearCookie("session", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: process.env.NODE_ENV === "production" ? "none" : 'lax', path: "/" });
+    res.clearCookie("sessionId", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: process.env.NODE_ENV === "production" ? "none" : 'lax', path: "/" });
     if (req.session) { req.session.destroy(err => { if (err) { console.error(err); return res.status(500).json({ success: false }); } return res.json({ success: true }); }); } else return res.json({ success: true });
   } catch (err) { console.error(err); return res.status(500).json({ success: false }); }
 });
@@ -254,7 +254,15 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const campaignId = Date.now().toString();
     let imageUrl = "https://placehold.co/400x200?text=No+Image";
-    if (req.file) { const uploadResult = await new Promise((resolve, reject) => { const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => { if (err) reject(err); else resolve(result); }); stream.end(req.file.buffer); }); imageUrl = uploadResult.secure_url; }
+    if (req.file) {
+      const uploadResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => {
+          if (err) reject(err); else resolve(result);
+        });
+        stream.end(req.file.buffer);
+      });
+      imageUrl = uploadResult.secure_url;
+    }
     const createdAt = new Date().toISOString();
     const status = "Pending";
     const newCampaignRow = [campaignId, title, user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl];
@@ -329,7 +337,7 @@ app.get("/api/get-volunteers", async (req, res) => {
 // -------------------- ID VERIFICATIONS --------------------
 app.get("/api/get-verifications", async (req, res) => {
   try {
-    const rows = await getSheetValues(process.env.VERIFICATIONS_SHEET_ID, VERIFICATIONS_RANGE);
+    const rows = await getSheetValues(process.env.ID_VERIFICATIONS_SHEET, VERIFICATIONS_RANGE);
     const dataRows = rows.length > 1 ? rows.slice(1) : [];
     res.json({ success: true, verifications: dataRows });
   } catch (err) { console.error(err); res.status(500).json({ success: false }); }
@@ -353,7 +361,14 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
     if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ error: "Missing fields" });
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      line_items: [{ price_data: { currency: "usd", product_data: { name: `Donation for campaign ${campaignId}` }, unit_amount: Math.round(amount*100) }, quantity: 1 }],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: `Donation for campaign ${campaignId}` },
+          unit_amount: Math.round(amount*100)
+        },
+        quantity: 1
+      }],
       mode: "payment",
       success_url: successUrl,
       cancel_url: cancelUrl
@@ -362,5 +377,25 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ ok: false, message: "Failed to create checkout session" }); }
 });
 
+// -------------------- DASHBOARD --------------------
+app.get("/api/dashboard", async (req, res) => {
+  try {
+    const token = req.cookies?.session;
+    if (!token) return res.status(401).json({ success: false, message: "Not logged in" });
+    const user = jwt.verify(token, process.env.JWT_SECRET);
+
+    const campaignsRows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, CAMPAIGNS_RANGE);
+    const campaigns = (campaignsRows.length > 1 ? campaignsRows.slice(1) : []).filter(r => (r[2] || "").toLowerCase() === user.email.toLowerCase())
+      .map(r => ({ campaignId: r[0], title: r[1], goal: r[3], status: r[6] }));
+
+    const donationsRows = await getSheetValues(process.env.DONATIONS_SHEET_ID, DONATIONS_RANGE);
+    const donations = (donationsRows.length > 1 ? donationsRows.slice(1) : []).filter(r => (r[2] || "").toLowerCase() === user.email.toLowerCase())
+      .map(r => ({ donationId: r[0], campaignId: r[1], amount: r[3], date: r[7] }));
+
+    res.json({ success: true, user: { name: user.name, email: user.email }, campaigns, donations });
+  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to load dashboard" }); }
+});
+
 // -------------------- START SERVER --------------------
 app.listen(PORT, () => console.log(`🚀 JoyFund backend running on port ${PORT}`));
+
