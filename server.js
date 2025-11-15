@@ -102,8 +102,6 @@ async function sendMailjetEmail(subject, htmlContent, toEmail) {
 }
 
 // -------------------- GOOGLE SHEETS --------------------
-// Note: using CommonJS require at top. Removed stray `import` to avoid runtime errors.
-
 let sheets;
 
 function safeJSONParse(input) {
@@ -164,9 +162,7 @@ async function appendSheetValues(spreadsheetId, range, values) {
   });
 }
 
-// findRowAndUpdateOrAppend:
-// - rangeCols expects sheetName!A:Z (start and end columns OK), e.g. "Campaigns!A:I"
-// - matchColIndex is 0-based index relative to the returned row array
+// findRowAndUpdateOrAppend
 async function findRowAndUpdateOrAppend(
   spreadsheetId,
   rangeCols,
@@ -174,18 +170,15 @@ async function findRowAndUpdateOrAppend(
   matchValue,
   updatedValues
 ) {
-
   if (!sheets) throw new Error("Sheets not initialized");
 
   const rows = await getSheetValues(spreadsheetId, rangeCols);
 
-  // If no rows at all, just append header-less values
   if (!rows || rows.length === 0) {
     await appendSheetValues(spreadsheetId, rangeCols, [updatedValues]);
     return { action: "appended", row: 1 };
   }
 
-  // attempt to skip header row when searching by data
   const dataRows = rows.length > 1 ? rows.slice(1) : [];
 
   const rowIndex = dataRows.findIndex(r =>
@@ -193,27 +186,18 @@ async function findRowAndUpdateOrAppend(
     (matchValue || "").toString().trim().toLowerCase()
   );
 
-  // Row not found → append
   if (rowIndex === -1) {
     await appendSheetValues(spreadsheetId, rangeCols, [updatedValues]);
     return { action: "appended", row: rows.length + 1 };
   }
 
-  // Update existing row
-  // parse rangeCols sheet and start column correctly
   const [sheetName, rangePart] = rangeCols.split("!");
-  // rangePart may be like "A:I" or "A:E" or "A2:Z"
   const startColLetter = (rangePart.split(":")[0] || "").replace(/[^A-Z]/gi, "").toUpperCase();
   if (!startColLetter) throw new Error("Invalid rangeCols start column");
 
-  // convert column letter to 0-based index
   const startColIndex = startColLetter.split('').reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 65 + 1), 0) - 1;
-
   const endColLetter = colToA1(startColIndex + updatedValues.length - 1);
-
-  // +2: one for header skip and one because sheet rows are 1-indexed
   const updateRowNumber = rowIndex + 2;
-
   const updateRange = `${sheetName}!${startColLetter}${updateRowNumber}:${endColLetter}${updateRowNumber}`;
 
   await sheets.spreadsheets.values.update({
@@ -230,11 +214,11 @@ async function findRowAndUpdateOrAppend(
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// -------------------- SHEET RANGE CONSTANTS (match your tabs) --------------------
+// -------------------- SHEET RANGE CONSTANTS --------------------
 const VERIFICATIONS_RANGE = "ID_Verifications!A:E";
 const CAMPAIGNS_RANGE = "Campaigns!A:I";
 const DONATIONS_RANGE = "Donations!A:I";
-const USERS_RANGE = "Users!A:E"; // adjust if your users tab name differs
+const USERS_RANGE = "Users!A:E";
 
 // -------------------- USERS / SIGN-IN --------------------
 async function getUsers() {
@@ -327,7 +311,6 @@ app.get("/api/check-session", (req, res) => {
 // -------------------- LOGOUT --------------------
 app.post("/api/logout", (req, res) => {
   try {
-    // Clear the JWT cookie
     res.clearCookie("session", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -335,7 +318,6 @@ app.post("/api/logout", (req, res) => {
       path: "/"
     });
 
-    // Clear the express-session cookie
     res.clearCookie("sessionId", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -343,7 +325,6 @@ app.post("/api/logout", (req, res) => {
       path: "/"
     });
 
-    // Destroy express session
     if (req.session) {
       req.session.destroy(err => {
         if (err) {
@@ -353,7 +334,6 @@ app.post("/api/logout", (req, res) => {
         return res.json({ success: true, message: "Logged out successfully" });
       });
     } else {
-      // No session? Just return success
       return res.json({ success: true, message: "Logged out successfully" });
     }
   } catch (err) {
@@ -390,7 +370,6 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     const status = "Pending";
     const newCampaignRow = [campaignId, title, user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl];
 
-    // append to the Campaigns sheet (explicit sheet range)
     await appendSheetValues(spreadsheetId, CAMPAIGNS_RANGE, [newCampaignRow]);
 
     await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
@@ -402,11 +381,18 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
-// -------------------- GET MY CAMPAIGNS --------------------
+// -------------------- GET MY CAMPAIGNS (JWT FIXED) --------------------
 app.get("/api/my-campaigns", async (req, res) => {
   try {
-    const user = req.session?.user;
-    if (!user) return res.status(401).json({ success: false, message: "Not logged in" });
+    const token = req.cookies?.session;
+    if (!token) return res.status(401).json({ success: false, message: "Not logged in" });
+
+    let user;
+    try {
+      user = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ success: false, message: "Invalid session" });
+    }
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId, CAMPAIGNS_RANGE);
@@ -428,8 +414,9 @@ app.get("/api/my-campaigns", async (req, res) => {
       }));
 
     res.json({ success: true, campaigns: myCampaigns });
+
   } catch (err) {
-    console.error(err);
+    console.error("My campaigns error:", err);
     res.status(500).json({ success: false, message: "Failed to fetch campaigns" });
   }
 });
@@ -511,16 +498,15 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const { campaignId } = req.params;
     const { amount, successUrl, cancelUrl } = req.body;
-    if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ error: "Missing required fields" });
+    if (!amount || !successUrl || !cancelUrl) return res.status(400).json({ error: "Missing fields" });
 
-    const amountCents = Math.round(amount * 100);
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [{
         price_data: {
           currency: "usd",
-          product_data: { name: `JoyFund Donation - ${campaignId}` },
-          unit_amount: amountCents,
+          product_data: { name: `Donation for campaign ${campaignId}` },
+          unit_amount: Math.round(amount * 100)
         },
         quantity: 1
       }],
@@ -529,132 +515,12 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       cancel_url: cancelUrl
     });
 
-    res.json({ sessionId: session.id });
+    res.json({ ok: true, url: session.url });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to create checkout session" });
-  }
-});
-
-// -------------------- WAITLIST / VOLUNTEERS / STREET TEAM --------------------
-app.post("/api/waitlist", async (req, res) => {
-  try {
-    const { name, email, reason } = req.body;
-    if (!name || !email) return res.status(400).json({ success: false, message: "Missing name or email" });
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
-
-    const spreadsheetId = process.env.WAITLIST_SHEET_ID;
-    const timestamp = new Date().toLocaleString();
-    await appendSheetValues(spreadsheetId, "Waitlist!A:D", [[timestamp, name, email.toLowerCase(), reason || ""]]);
-
-    await sendMailjetEmail("New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}. Reason: ${reason || "N/A"}</p>`);
-
-    res.json({ success: true, message: "Waitlist submission successful" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to submit waitlist" });
-  }
-});
-
-app.post("/api/volunteer", async (req, res) => {
-  try {
-    const { name, email, role, availability } = req.body;
-    if (!name || !email || !role) return res.status(400).json({ success: false, message: "Missing required fields" });
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
-
-    const spreadsheetId = process.env.VOLUNTEERS_SHEET_ID;
-    const timestamp = new Date().toLocaleDateString();
-    await appendSheetValues(spreadsheetId, "Volunteers!A:E", [[timestamp, name, email.toLowerCase(), role, availability || ""]]);
-
-    await sendMailjetEmail("New Volunteer Submission", `<p>${name} (${email}) signed up as a volunteer for ${role} at ${timestamp}. Availability: ${availability || "N/A"}</p>`);
-
-    res.json({ success: true, message: "Volunteer submission successful" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to submit volunteer" });
-  }
-});
-
-app.post("/api/street-team", async (req, res) => {
-  try {
-    const { name, email, city, hoursAvailable } = req.body;
-    if (!name || !email || !city) return res.status(400).json({ success: false, message: "Missing required fields" });
-    if (!sheets) return res.status(500).json({ success: false, message: "Sheets not initialized" });
-
-    const spreadsheetId = process.env.STREET_TEAM_SHEET_ID;
-    const timestamp = new Date().toLocaleString();
-    await appendSheetValues(spreadsheetId, "StreetTeam!A:E", [[timestamp, name, email.toLowerCase(), city, hoursAvailable || ""]]);
-
-    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) signed up for the street team in ${city} at ${timestamp}. Hours: ${hoursAvailable || "N/A"}</p>`);
-
-    res.json({ success: true, message: "Street team submission successful" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to submit street team" });
-  }
-});
-
-// -------------------- ID VERIFICATION --------------------
-app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
-  try {
-    const user = req.session?.user;
-    if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
-    if (!req.file) return res.status(400).json({ success: false, message: "No ID uploaded" });
-
-    let imageUrl = "";
-    if (req.file) {
-      const uploadResult = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/ids" }, (err, result) => {
-          if (err) reject(err); else resolve(result);
-        });
-        stream.end(req.file.buffer);
-      });
-      imageUrl = uploadResult.secure_url;
-    }
-
-    const spreadsheetId = process.env.ID_VERIFICATION_SHEET_ID;
-    const timestamp = new Date().toLocaleString();
-
-    // append to ID_Verifications sheet with correct columns (A:E). We append: TimeStamp, Email, Name, Status, ID Photo URL
-    await appendSheetValues(spreadsheetId, VERIFICATIONS_RANGE, [[timestamp, user.email.toLowerCase(), user.name || "", "Pending", imageUrl]]);
-
-    await sendMailjetEmail("New ID Submission", `<p>${user.name} (${user.email}) submitted an ID at ${timestamp}. <a href="${imageUrl}">View ID</a></p>`);
-
-    res.json({ success: true, message: "ID uploaded successfully", imageUrl });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to upload ID" });
-  }
-});
-
-// -------------------- PASSWORD RESET --------------------
-app.post("/api/reset-password", async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, message: "Email required" });
-
-    const user = await getUserFromDB(email);
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
-
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    const hashedToken = await bcrypt.hash(resetToken, 10);
-
-    const spreadsheetId = process.env.USERS_SHEET_ID;
-    // Using USERS_RANGE; update or append adds token as a 5th column
-    await findRowAndUpdateOrAppend(spreadsheetId, USERS_RANGE, 2, email, [user.joinDate, user.name, user.email, user.passwordHash, hashedToken]);
-
-    const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
-
-    await sendMailjetEmail("Password Reset", `<p>Hello ${user.name},</p><p>Click here to reset your password: <a href="${resetUrl}">${resetUrl}</a></p>`);
-
-    res.json({ success: true, message: "Password reset email sent" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Failed to send password reset email" });
+    res.status(500).json({ ok: false, message: "Failed to create checkout session" });
   }
 });
 
 // -------------------- START SERVER --------------------
-app.listen(PORT, () => {
-  console.log(`JoyFund Backend running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 JoyFund backend running on port ${PORT}`));
