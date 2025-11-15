@@ -447,7 +447,7 @@ app.get("/api/public-campaigns", async (req, res) => {
     const activeCampaigns = dataRows
       .filter(r => {
         const status = (r[6] || "").toString().trim().toLowerCase();
-        return ["approved", "active"].includes(status);
+        return ["Active", "approved"].includes(status);
       })
       .map(r => ({
         campaignId: r[0],
