@@ -1,5 +1,6 @@
 // ==================== SERVER.JS - JOYFUND BACKEND ====================
 
+// -------------------- IMPORTS & CONFIG --------------------
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
@@ -17,6 +18,7 @@ const bcrypt = require("bcrypt");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 
+// -------------------- APP INIT --------------------
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -27,6 +29,7 @@ const requiredEnvs = [
   "STRIPE_SECRET_KEY",
   "FRONTEND_URL"
 ];
+
 for (const envVar of requiredEnvs) {
   if (!process.env[envVar]) {
     console.error(`Missing required environment variable: ${envVar}`);
@@ -70,7 +73,7 @@ app.use(session({
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
-    maxAge: 1000 * 60 * 60 * 24
+    maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
 
@@ -244,7 +247,6 @@ app.get("/api/check-session", (req, res) => {
 // -------------------- LOGOUT --------------------
 app.post("/api/logout", (req, res) => {
   try {
-    // Clear the JWT cookie
     res.clearCookie("session", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -252,7 +254,6 @@ app.post("/api/logout", (req, res) => {
       path: "/"
     });
 
-    // Clear the express-session cookie
     res.clearCookie("sessionId", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -260,7 +261,6 @@ app.post("/api/logout", (req, res) => {
       path: "/"
     });
 
-    // Destroy express session
     if (req.session) {
       req.session.destroy(err => {
         if (err) {
@@ -270,7 +270,6 @@ app.post("/api/logout", (req, res) => {
         return res.json({ success: true, message: "Logged out successfully" });
       });
     } else {
-      // No session? Just return success
       return res.json({ success: true, message: "Logged out successfully" });
     }
   } catch (err) {
@@ -278,7 +277,6 @@ app.post("/api/logout", (req, res) => {
     return res.status(500).json({ success: false, message: "Server error during logout" });
   }
 });
-
 
 // -------------------- CAMPAIGNS --------------------
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
@@ -295,9 +293,11 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     let imageUrl = "https://placehold.co/400x200?text=No+Image";
 
     if (req.file) {
+      // Cloudinary upload
       const uploadResult = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => {
-          if (err) reject(err); else resolve(result);
+          if (err) reject(err); 
+          else resolve(result);
         });
         stream.end(req.file.buffer);
       });
