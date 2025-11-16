@@ -17,14 +17,25 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // -------------------- CORS --------------------
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "").split(",");
+const allowedOrigins = [
+  "http://localhost:5173", // for local dev
+  "https://yourfrontend.com" // replace with your actual live frontend URL
+];
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error("CORS not allowed"));
+    // Allow requests with no origin (like Postman or server-to-server)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS not allowed"));
+    }
   },
-  credentials: true
+  credentials: true, // allow cookies/auth headers
 }));
+
 
 // -------------------- BODY PARSER --------------------
 app.use(bodyParser.json());
