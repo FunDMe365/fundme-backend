@@ -11,16 +11,16 @@ const Stripe = require("stripe");
 const { google } = require("googleapis");
 const mailjetLib = require("node-mailjet");
 const cloudinary = require("cloudinary").v2;
-require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // -------------------- CORS --------------------
-const allowedOrigins = [
-  "http://localhost:5173", // for local dev
-  "https://yourfrontend.com" // replace with your actual live frontend URL
-];
+require("dotenv").config();
+const cors = require("cors");
+
+// Get allowed origins from .env and split into an array
+const allowedOrigins = process.env.ALLOWED_ORIGINS.split(",");
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -35,6 +35,7 @@ app.use(cors({
   },
   credentials: true, // allow cookies/auth headers
 }));
+
 
 
 // -------------------- BODY PARSER --------------------
