@@ -404,25 +404,27 @@ app.get("/api/donations", async (req, res) => {
 app.get("/api/my-verifications", async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user || !user.email) 
-      return res.status(401).json({ success: false, message: "Sign in required" });
+    if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
 
-    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:C") || [];
-    
+    // Make sure to include the tab name in the range
+    const rows = await getSheetValues(
+      process.env.ID_VERIFICATION_SHEET_ID, // Spreadsheet ID
+      "ID Verifications!A:C"                 // Tab name + columns range
+    );
+
     const myVerifications = rows
-      .filter(r => r[1] && user.email && r[1].toLowerCase() === user.email.toLowerCase())
+      .filter(r => r[1] && r[1].toLowerCase() === user.email.toLowerCase())
       .map(r => ({
-        submittedAt: r[0] || null,
-        email: r[1] || null,
-        idImageUrl: r[2] || null,
-        status: r[3] || "Pending"  // optional column if you track status separately
+        submittedAt: r[0],
+        email: r[1],
+        idImageUrl: r[2],
+        status: r[3] || "Pending" // if you have a status column
       }));
 
     res.json({ success: true, verifications: myVerifications });
-
   } catch (err) {
     console.error("Error fetching verifications:", err);
-    res.status(500).json({ success: false, message: "Internal server error" });
+    res.status(500).json({ success: false });
   }
 });
 
