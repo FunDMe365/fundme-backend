@@ -406,32 +406,25 @@ app.get("/api/my-verifications", async (req, res) => {
     const user = req.session.user;
     if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
 
-    const spreadsheetId = process.env.ID_VERIFICATION_SHEET_ID;
-    if (!spreadsheetId) {
-      console.error("Missing environment variable: ID_VERIFICATION_SHEET_ID");
-      return res.status(500).json({ success: false, message: "Server misconfiguration" });
-    }
+    // Use the correct tab name without quotes
+    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "ID_Verifications!A:C");
 
-    // Assuming your tab name is exactly "ID Verifications"
-    const rows = await getSheetValues(spreadsheetId, "'ID Verifications'!A:C");
-
-    // Map rows to your structure
     const myVerifications = rows
       .filter(r => r[1] && r[1].toLowerCase() === user.email.toLowerCase())
       .map(r => ({
         submittedAt: r[0],
         email: r[1],
-        idImageUrl: r[2],
-        status: r[3] || "Pending" // if you have a status column D
+        imageUrl: r[2],
+        status: r[3] || "Pending"  // If you have a status column in D
       }));
 
     res.json({ success: true, verifications: myVerifications });
-
   } catch (err) {
     console.error("Error fetching verifications:", err);
     res.status(500).json({ success: false });
   }
 });
+
 
 
 // ==================== START SERVER ====================
