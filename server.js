@@ -406,16 +406,17 @@ app.get("/api/my-verifications", async (req, res) => {
     const user = req.session.user;
     if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
 
-    // Use the correct tab name without quotes
-    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "ID_Verifications!A:C");
+    // Pull all columns including Status and ID Photo URL
+    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "ID_Verifications!A:E");
 
     const myVerifications = rows
       .filter(r => r[1] && r[1].toLowerCase() === user.email.toLowerCase())
       .map(r => ({
         submittedAt: r[0],
         email: r[1],
-        imageUrl: r[2],
-        status: r[3] || "Pending"  // If you have a status column in D
+        name: r[2],
+        status: r[3] || "Pending",       // Column D
+        idImageUrl: r[4] || null         // Column E
       }));
 
     res.json({ success: true, verifications: myVerifications });
