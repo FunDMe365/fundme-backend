@@ -1,7 +1,7 @@
 // ==================== SERVER.JS - JOYFUND FULL FEATURE ====================
 
+// -------------------- ENV & MODULES --------------------
 require("dotenv").config();
-
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -18,19 +18,12 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // -------------------- CORS --------------------
-// Get allowed origins from .env and split into an array
-const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : [];
-
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "").split(",");
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like Postman or server-to-server)
     if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("CORS not allowed"));
-    }
+    if (allowedOrigins.includes(origin)) callback(null, true);
+    else callback(new Error("CORS not allowed"));
   },
   credentials: true,
 }));
@@ -88,26 +81,33 @@ try {
     });
     sheets = google.sheets({ version: "v4", auth });
   }
-} catch (err) { console.error("Google Sheets init failed", err.message); }
+} catch (err) { console.error("Google Sheets init failed:", err.message); }
 
 async function getSheetValues(spreadsheetId, range) {
-  if (!sheets) return [];
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  return res.data.values || [];
+  if (!sheets || !spreadsheetId) return [];
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    return res.data.values || [];
+  } catch (err) {
+    console.error("getSheetValues error:", err.message);
+    return [];
+  }
 }
 
 async function appendSheetValues(spreadsheetId, range, values) {
-  if (!sheets) throw new Error("Sheets not initialized");
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range,
-    valueInputOption: "USER_ENTERED",
-    resource: { values }
-  });
+  if (!sheets || !spreadsheetId) return;
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range,
+      valueInputOption: "USER_ENTERED",
+      resource: { values }
+    });
+  } catch (err) { console.error("appendSheetValues error:", err.message); }
 }
 
 async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex, matchValue, updatedValues) {
-  if (!sheets) throw new Error("Sheets not initialized");
+  if (!sheets || !spreadsheetId) return;
   const rows = await getSheetValues(spreadsheetId, rangeCols);
   const rowIndex = rows.findIndex(r => (r[matchColIndex] || "").toString().trim().toLowerCase() === (matchValue || "").toString().trim().toLowerCase());
 
@@ -116,9 +116,9 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
     return { action: "appended", row: rows.length + 1 };
   } else {
     const rowNumber = rowIndex + 1;
-    const startCol = rangeCols.split("!")[1].charAt(0);
-    const endCol = String.fromCharCode(startCol.charCodeAt(0) + updatedValues.length - 1);
-    const updateRange = `${rangeCols.split("!")[0]}!${startCol}${rowNumber}:${endCol}${rowNumber}`;
+    const startColLetter = rangeCols.split("!")[1].charAt(0);
+    const endColLetter = String.fromCharCode(startColLetter.charCodeAt(0) + updatedValues.length - 1);
+    const updateRange = `${rangeCols.split("!")[0]}!${startColLetter}${rowNumber}:${endColLetter}${rowNumber}`;
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: updateRange,
@@ -185,7 +185,7 @@ app.post("/api/request-reset", async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "Missing email" });
     const token = crypto.randomBytes(20).toString("hex");
-    const expiry = Date.now() + 3600000; // 1 hour
+    const expiry = Date.now() + 3600000;
     await appendSheetValues(process.env.USERS_SHEET_ID, "E:G", [[email.toLowerCase(), token, expiry]]);
     await sendMailjetEmail(
       "Password Reset",
@@ -200,7 +200,7 @@ app.post("/api/reset-password", async (req, res) => {
   try {
     const { token, newPassword } = req.body;
     if (!token || !newPassword) return res.status(400).json({ error: "Missing fields" });
-    const rows = await getSheetValues(process.env.USERS_SHEET_ID, "E:G"); // E=email, F=token, G=expiry
+    const rows = await getSheetValues(process.env.USERS_SHEET_ID, "E:G");
     const row = rows.find(r => r[1] === token && r[2] && parseInt(r[2], 10) > Date.now());
     if (!row) return res.status(400).json({ error: "Invalid or expired token" });
 
@@ -263,7 +263,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
         const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => err ? reject(err) : resolve(result));
         stream.end(req.file.buffer);
       });
-      imageUrl = uploadResult.secure_url;
+      if (uploadResult?.secure_url) imageUrl = uploadResult.secure_url;
     }
 
     const createdAt = new Date().toISOString();
@@ -286,7 +286,7 @@ app.get("/api/public-campaigns", async (req, res) => {
         campaignId: r[0],
         title: r[1],
         creator: r[2],
-        goal: parseFloat(r[3]),
+        goal: parseFloat(r[3]) || 0,
         description: r[4],
         category: r[5],
         status: r[6],
@@ -297,7 +297,6 @@ app.get("/api/public-campaigns", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
 
-// -------------------- CAMPAIGN SEARCH --------------------
 app.get("/api/search-campaigns", async (req, res) => {
   try {
     const { category, minGoal, maxGoal } = req.query;
@@ -307,7 +306,7 @@ app.get("/api/search-campaigns", async (req, res) => {
         campaignId: r[0],
         title: r[1],
         creator: r[2],
-        goal: parseFloat(r[3]),
+        goal: parseFloat(r[3]) || 0,
         description: r[4],
         category: r[5],
         status: r[6],
@@ -355,7 +354,6 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
     const user = req.session.user;
     if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
-
     if (!req.file) return res.status(400).json({ success: false, message: "ID image required" });
 
     const uploadResult = await new Promise((resolve, reject) => {
@@ -363,7 +361,8 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
       stream.end(req.file.buffer);
     });
 
-    await appendSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:C", [[new Date().toISOString(), user.email, uploadResult.secure_url]]);
+    const url = uploadResult?.secure_url || "";
+    await appendSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:C", [[new Date().toISOString(), user.email, url]]);
     await sendMailjetEmail("New ID Verification", `<p>${user.name} (${user.email}) submitted an ID for verification.</p>`);
 
     res.json({ success: true, message: "ID uploaded for verification" });
