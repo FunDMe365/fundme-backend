@@ -15,11 +15,12 @@ require("dotenv").config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ==================== CORS FIX ====================
+// ==================== CORS SETUP ====================
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "").split(",");
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+
   if (allowedOrigins.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -32,12 +33,14 @@ app.use((req, res, next) => {
       "GET, POST, PUT, DELETE, OPTIONS"
     );
   }
+
+  // Handle preflight OPTIONS request
   if (req.method === "OPTIONS") {
     return res.sendStatus(200);
   }
+
   next();
 });
-
 // ==================== BODY PARSER ====================
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
