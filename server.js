@@ -413,7 +413,7 @@ app.get("/api/my-verifications", async (req, res) => {
     }
 
     // Assuming your tab name is exactly "ID Verifications"
-    const rows = await getSheetValues(spreadsheetId, "ID Verifications!A:C");
+    const rows = await getSheetValues(spreadsheetId, "'ID Verifications'!A:C");
 
     // Map rows to your structure
     const myVerifications = rows
