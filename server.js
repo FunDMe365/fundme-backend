@@ -1,5 +1,7 @@
 // ==================== SERVER.JS - JOYFUND FULL FEATURE ====================
 
+require("dotenv").config();
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -16,11 +18,8 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // -------------------- CORS --------------------
-require("dotenv").config();
-const cors = require("cors");
-
 // Get allowed origins from .env and split into an array
-const allowedOrigins = process.env.ALLOWED_ORIGINS.split(",");
+const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(",") : [];
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -33,10 +32,8 @@ app.use(cors({
       callback(new Error("CORS not allowed"));
     }
   },
-  credentials: true, // allow cookies/auth headers
+  credentials: true,
 }));
-
-
 
 // -------------------- BODY PARSER --------------------
 app.use(bodyParser.json());
