@@ -311,6 +311,71 @@ app.get("/api/public-campaigns", async (req, res) => {
     res.json({ success: true, campaigns: activeCampaigns });
   } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
+// -------------------- DASHBOARD / USER ROUTES --------------------
+
+// GET /api/donations
+// Returns donations from Stripe (primary) and optionally from a DONATIONS_SHEET_ID.
+// Accessible to admin OR signed-in users. If user is signed-in and not admin, returns donations for campaigns they created.
+app.get("/api/donations", async (req, res) => {
+  try {
+    // allow admin to see all; normal user sees donations related to their campaigns only
+    const isAdmin = !!req.session?.admin;
+    const userEmail = req.session?.user?.email?.toLowerCase();
+
+    // fetch stripe historical donations (similar to admin dashboard logic)
+    let stripeDonations = [];
+    if (stripe) {
+      const list = await stripe.paymentIntents.list({ limit: 100 });
+      stripeDonations = list.data.map(d => ({
+        id: d.id,
+        amount: (d.amount || 0) / 100,
+        currency: d.currency,
+        status: d.status,
+        customer_email: d.customer_email || "N/A",
+        campaignId: d.metadata?.campaignId || "Mission",
+        created: new Date((d.created || 0) * 1000).toISOString()
+      }));
+    }
+
+    // optionally include donations stored in a Google Sheet
+    let sheetDonations = [];
+    if (process.env.DONATIONS_SHEET_ID && sheets) {
+      const rows = await getSheetValues(process.env.DONATIONS_SHEET_ID, "A:Z");
+      // assume columns: timestamp, donorName, donorEmail, amount, currency, campaignId, note...
+      sheetDonations = rows.map(r => ({
+        timestamp: r[0],
+        donorName: r[1],
+        donorEmail: r[2],
+        amount: parseFloat(r[3]) || 0,
+        currency: r[4] || "USD",
+        campaignId: r[5] || "Mission",
+        note: r[6] || ""
+      }));
+    }
+
+    // if not admin, filter donations to only those linked to campaigns created by the user
+    if (!isAdmin && userEmail) {
+      // get user's campaigns
+      const campaignRows = process.env.CAMPAIGNS_SHEET_ID && sheets ? await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I") : [];
+      const userCampaignIds = campaignRows
+        .filter(r => (r[2] || "").toLowerCase() === userEmail)
+        .map(r => r[0]); // campaignId is column A
+
+      stripeDonations = stripeDonations.filter(d => !d.campaignId || userCampaignIds.includes(String(d.campaignId)));
+      sheetDonations = sheetDonations.filter(d => !d.campaignId || userCampaignIds.includes(String(d.campaignId)));
+    }
+
+    res.json({ success: true, stripe: stripeDonations, sheet: sheetDonations });
+  } catch (err) {
+    console.error("GET /api/donations error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch donations" });
+  }
+});
+
+// GET /api/my-verifications
+// Returns ID verification rows for the currently signed-in user (by email).
+app.get("/api/my-verifications", async (req, res) => {
+
 
 // ==================== ADMIN ROUTES ====================
 function requireAdmin(req, res, next) {
