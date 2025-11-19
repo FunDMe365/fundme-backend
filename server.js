@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - JOYFUND FULL FEATURE FIXED ====================
+// ==================== SERVER.JS - JOYFUND FULL FEATURE FIXED + LIVE VISITOR TRACKING ====================
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -23,16 +23,13 @@ const cors = require("cors");
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "").split(",").map(o => o.trim());
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true); // allow non-browser requests
     if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error("CORS not allowed"));
   },
   credentials: true
 }));
 app.options("*", cors({ origin: allowedOrigins, credentials: true }));
-
-// -------------------- STATIC FILES --------------------
-app.use(express.static("public")); // CSS, JS, images, etc.
 
 // -------------------- BODY PARSER --------------------
 app.use(bodyParser.json());
@@ -143,12 +140,19 @@ async function logVisitor(page) {
   }
 }
 
-// Middleware to log all page visits
+// Middleware to log public page visits only
 app.use(async (req, res, next) => {
   const page = req.path;
-  if (!page.startsWith("/api") && !page.startsWith("/admin")) {
-    await logVisitor(page);
+
+  // Only log real public pages, skip admin, api, and static files
+  if (!page.startsWith("/api") && !page.startsWith("/admin") && !page.startsWith("/public")) {
+    try {
+      await logVisitor(page);
+    } catch (err) {
+      console.error("Visitor logging failed:", err.message);
+    }
   }
+
   next();
 });
 
@@ -314,6 +318,7 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ success: false, message: "Admin access required" });
 }
 
+// ADMIN LOGIN / SESSION / LOGOUT
 app.post("/admin-login", (req, res) => {
   const { username, password } = req.body;
   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
@@ -332,7 +337,7 @@ app.post("/admin-logout", (req, res) => {
   res.json({ success: true });
 });
 
-// -------------------- ADMIN DASHBOARD --------------------
+// ADMIN DASHBOARD
 app.get("/admin/dashboard", requireAdmin, async (req, res) => {
   try {
     const users = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
@@ -353,25 +358,11 @@ app.get("/admin/dashboard", requireAdmin, async (req, res) => {
       created: new Date(d.created * 1000).toISOString()
     }));
 
-    res.json({ users, campaigns, waitlist, volunteers, streetTeam, verifications, historicalDonations });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
-});
-
-// -------------------- STRIPE DONATIONS FOR ADMIN --------------------
-app.get("/admin/stripe-donations", requireAdmin, async (req, res) => {
-  try {
-    const stripePayments = await stripe.paymentIntents.list({ limit: 100 });
-    const historicalDonations = stripePayments.data.map(d => ({
-      id: d.id,
-      amount: d.amount / 100,
-      currency: d.currency,
-      status: d.status,
-      customer_email: d.customer_email || "N/A",
-      campaignId: d.metadata?.campaignId || "Mission",
-      created: new Date(d.created * 1000).toISOString()
-    }));
-    res.json({ success: true, donations: historicalDonations });
-  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to fetch donations" }); }
+    res.json({ success: true, users, campaigns, waitlist, volunteers, streetTeam, verifications, historicalDonations });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
 });
 
 // ==================== START SERVER ====================
