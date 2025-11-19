@@ -126,6 +126,30 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
   }
 }
 
+// ==================== USER VERIFICATIONS ====================
+app.get("/api/my-verifications", async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
+
+    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:C");
+
+    const myRows = rows.filter(r => (r[0] || "").trim().toLowerCase() === user.email.toLowerCase());
+
+    const formatted = myRows.map(r => ({
+      email: r[0],
+      status: r[1],
+      photoUrl: r[2] || null
+    }));
+
+    res.json({ success: true, verifications: formatted });
+  } catch (err) {
+    console.error("Error loading verifications:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+
 // -------------------- MULTER --------------------
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
