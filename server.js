@@ -372,6 +372,7 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ success: false, message: "Admin access required" });
 }
 
+// Admin login
 app.post("/admin-login", (req, res) => {
   const { username, password } = req.body;
   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
@@ -381,16 +382,18 @@ app.post("/admin-login", (req, res) => {
   res.status(401).json({ success: false, message: "Invalid credentials" });
 });
 
+// Check if admin session exists
 app.get("/admin-session", (req, res) => {
   res.json({ isAdmin: !!req.session.admin });
 });
 
+// Admin logout
 app.post("/admin-logout", (req, res) => {
   req.session.admin = null;
   res.json({ success: true });
 });
 
-// -------------------- ADMIN DASHBOARD --------------------
+// Admin dashboard (pulls live Google Sheet data)
 app.get("/admin/dashboard", requireAdmin, async (req, res) => {
   try {
     const users = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
@@ -409,7 +412,10 @@ app.get("/admin/dashboard", requireAdmin, async (req, res) => {
       streetTeam,
       verifications
     });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
 });
 
 // ==================== START SERVER ====================
