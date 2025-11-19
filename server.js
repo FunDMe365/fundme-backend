@@ -11,9 +11,10 @@ const { google } = require("googleapis");
 const mailjetLib = require("node-mailjet");
 const cloudinary = require("cloudinary").v2;
 
+require("dotenv").config();
+
 const ADMIN_USERNAME = "admin";
 const ADMIN_PASSWORD = "FunDMe$123";
-require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -141,22 +142,19 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// ==================== LIVE VISITOR TRACKING ====================
+// ==================== VISITOR TRACKING ====================
 async function logVisitor(page) {
   try {
     if (!process.env.VISITOR_SHEET_ID) return;
     const timestamp = new Date().toISOString();
     return await appendSheetValues(process.env.VISITOR_SHEET_ID, "A:D", [[timestamp, page || "/", "visitor", ""]]);
-  } catch (err) {
-    console.error("Visitor logging failed:", err.message);
-  }
+  } catch (err) { console.error("Visitor logging failed:", err.message); }
 }
 
 app.use(async (req, res, next) => {
   const page = req.path;
   if (!page.startsWith("/api") && !page.startsWith("/admin") && !page.startsWith("/public")) {
-    try { await logVisitor(page); } 
-    catch (err) { console.error("Visitor logging failed:", err.message); }
+    try { await logVisitor(page); } catch (err) { console.error(err.message); }
   }
   next();
 });
@@ -164,7 +162,13 @@ app.use(async (req, res, next) => {
 // ==================== USERS & AUTH ====================
 async function getUsers() {
   if (!process.env.USERS_SHEET_ID) return [];
-  return getSheetValues(process.env.USERS_SHEET_ID, "A:D");
+  const rows = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
+  return rows.map(r => ({
+    joinDate: r[0],
+    name: r[1],
+    email: r[2],
+    password: r[3]
+  }));
 }
 
 app.post("/api/signup", async (req, res) => {
@@ -173,7 +177,7 @@ app.post("/api/signup", async (req, res) => {
     if (!name || !email || !password) return res.status(400).json({ error: "Missing fields" });
     const users = await getUsers();
     const emailLower = email.trim().toLowerCase();
-    if (users.some(u => u[2] && u[2].trim().toLowerCase() === emailLower)) return res.status(409).json({ error: "Email already exists" });
+    if (users.some(u => u.email.toLowerCase() === emailLower)) return res.status(409).json({ error: "Email already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
     const timestamp = new Date().toISOString();
     await appendSheetValues(process.env.USERS_SHEET_ID, "A:D", [[timestamp, name, emailLower, hashedPassword]]);
@@ -188,94 +192,17 @@ app.post("/api/signin", async (req, res) => {
     if (!email || !password) return res.status(400).json({ error: "Missing fields" });
     const users = await getUsers();
     const inputEmail = email.trim().toLowerCase();
-    const userRow = users.find(u => u[2] && u[2].trim().toLowerCase() === inputEmail);
-    if (!userRow) return res.status(401).json({ error: "Invalid credentials" });
-    const match = await bcrypt.compare(password, (userRow[3] || "").trim());
+    const user = users.find(u => u.email.toLowerCase() === inputEmail);
+    if (!user) return res.status(401).json({ error: "Invalid credentials" });
+    const match = await bcrypt.compare(password, user.password || "");
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
-    req.session.user = { name: userRow[1], email: userRow[2], joinDate: userRow[0] };
+    req.session.user = { name: user.name, email: user.email, joinDate: user.joinDate };
     res.json({ ok: true, loggedIn: true, user: req.session.user });
   } catch (err) { console.error(err); res.status(500).json({ error: "Signin failed" }); }
 });
 
-app.get("/api/check-session", (req, res) => res.json({ loggedIn: !!req.session.user, user: req.session.user || null }));
+app.get("/api/check-session", (req, res) => res.json({ loggedIn: !!req.session.user, ...req.session.user }));
 app.post("/api/logout", (req, res) => req.session.destroy(err => err ? res.status(500).json({ error: "Logout failed" }) : res.json({ ok: true })));
-
-// ==================== ACCOUNT OVERVIEW ====================
-app.get("/api/account-overview", async (req, res) => {
-  try {
-    const userEmail = req.session?.user?.email?.toLowerCase();
-    if (!userEmail) return res.json({ loggedIn: false });
-
-    // ----- User info -----
-    const users = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
-    const userRow = users.find(u => (u[2] || "").toLowerCase() === userEmail);
-    const profileData = userRow ? {
-      name: userRow[1],
-      email: userRow[2],
-      joinDate: userRow[0]
-    } : null;
-
-    // ----- Campaigns -----
-    let myCampaigns = [];
-    if (process.env.CAMPAIGNS_SHEET_ID) {
-      const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-      myCampaigns = rows
-        .filter(r => (r[2] || "").toLowerCase() === userEmail)
-        .map(r => ({
-          campaignId: r[0],
-          title: r[1],
-          goal: r[3],
-          description: r[4],
-          category: r[5],
-          status: r[6],
-          createdAt: r[7],
-          imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
-        }));
-    }
-
-    // ----- Donations -----
-    let myDonations = [];
-    if (stripe) {
-      const payments = await stripe.paymentIntents.list({ limit: 100 });
-      myDonations = payments.data
-        .filter(d => (d.customer_email || "").toLowerCase() === userEmail)
-        .map(d => ({
-          id: d.id,
-          amount: d.amount / 100,
-          currency: d.currency,
-          status: d.status,
-          date: new Date(d.created * 1000).toLocaleDateString(),
-          campaignId: d.metadata?.campaignId || "Mission"
-        }));
-    }
-
-    // ----- ID Verifications -----
-    let myVerifications = [];
-    if (process.env.ID_VERIFICATION_SHEET_ID && sheets) {
-      const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:D");
-      myVerifications = rows
-        .filter(r => (r[1] || "").toLowerCase() === userEmail)
-        .map(r => ({
-          timestamp: r[0],
-          email: r[1],
-          status: r[2] || "Pending",
-          idImageUrl: r[3] || ""
-        }));
-    }
-
-    res.json({
-      loggedIn: true,
-      user: profileData,
-      campaigns: myCampaigns,
-      donations: myDonations,
-      verifications: myVerifications
-    });
-
-  } catch (err) {
-    console.error("Error in /api/account-overview:", err);
-    res.status(500).json({ loggedIn: false, error: "Failed to load account data" });
-  }
-});
 
 // ==================== PASSWORD RESET ====================
 app.post("/api/request-reset", async (req, res) => {
@@ -312,12 +239,12 @@ app.post("/api/reset-password", async (req, res) => {
 app.post("/api/waitlist", async (req, res) => {
   try {
     const { name, email, reason } = req.body;
-    if (!name || !email) return res.status(400).json({ success: false, message: "Missing name or email" });
+    if (!name || !email) return res.status(400).json({ success: false });
     const timestamp = new Date().toLocaleString();
     await appendSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:D", [[timestamp, name, email.toLowerCase(), reason || ""]]);
     await sendMailjetEmail("New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}. Reason: ${reason || "N/A"}</p>`);
     res.json({ success: true });
-  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to submit waitlist" }); }
+  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
 
 app.post("/api/volunteer", async (req, res) => {
@@ -346,8 +273,7 @@ app.post("/api/street-team", async (req, res) => {
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user) return res.status(401).json({ success: false, message: "Sign in required" });
-
+    if (!user) return res.status(401).json({ success: false });
     const { title, goal, description, category } = req.body;
     if (!title || !goal || !description || !category) return res.status(400).json({ success: false });
 
@@ -370,135 +296,100 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
     await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
     res.json({ success: true, message: "Campaign submitted", campaignId });
-  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to create campaign" }); }
+  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
 
-app.get("/api/public-campaigns", async (req, res) => {
+app.get("/api/my-campaigns", async (req, res) => {
   try {
-    if (!sheets) return res.status(500).json({ success: false });
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, "A:I");
-    const activeCampaigns = rows.filter(r => r[6] && ["Approved", "active"].includes(r[6]))
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ campaigns: [] });
+
+    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
+    const campaigns = rows.filter(r => (r[2]||"").toLowerCase() === user.email.toLowerCase())
       .map(r => ({
         campaignId: r[0],
         title: r[1],
         creator: r[2],
-        goal: parseFloat(r[3]),
+        goal: r[3],
         description: r[4],
         category: r[5],
         status: r[6],
         createdAt: r[7],
         imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
       }));
-    res.json({ success: true, campaigns: activeCampaigns });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+    res.json({ success: true, campaigns });
+  } catch(err){ console.error(err); res.status(500).json({ campaigns: [] }); }
 });
 
-// ==================== MY CAMPAIGNS ====================
-app.get("/api/my-campaigns", async (req, res) => {
+app.get("/api/public-campaigns", async (req,res)=>{
   try {
-    const userEmail = req.session?.user?.email?.toLowerCase();
-    if (!userEmail) return res.status(401).json({ success: false, message: "Sign in required" });
-
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    if (!spreadsheetId || !sheets) return res.status(500).json({ success: false, message: "Sheet not configured" });
-
-    const rows = await getSheetValues(spreadsheetId, "A:I");
-    const myCampaigns = rows
-      .filter(r => (r[2] || "").toLowerCase() === userEmail)
-      .map(r => ({
-        campaignId: r[0] || "",
-        title: r[1] || "",
-        creator: r[2] || "",
-        goal: parseFloat(r[3]) || 0,
-        description: r[4] || "",
-        category: r[5] || "",
-        status: r[6] || "Pending",
-        createdAt: r[7] || "",
-        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
-      }));
-
-    res.json({ success: true, campaigns: myCampaigns });
-  } catch (err) {
-    console.error("GET /api/my-campaigns error:", err);
-    res.status(500).json({ success: false, message: "Failed to fetch campaigns" });
-  }
+    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID,"A:I");
+    const campaigns = rows.filter(r=>["Approved","active"].includes(r[6])).map(r=>({
+      campaignId:r[0],title:r[1],creator:r[2],goal:r[3],description:r[4],category:r[5],status:r[6],createdAt:r[7],imageUrl:r[8]||"https://placehold.co/400x200?text=No+Image"
+    }));
+    res.json({success:true,campaigns});
+  } catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
 
 // ==================== USER VERIFICATIONS ====================
-app.get("/api/my-verifications", async (req, res) => {
+app.get("/api/my-verifications", async (req,res)=>{
   try {
     const userEmail = req.session?.user?.email?.toLowerCase();
-    if (!userEmail) return res.status(401).json({ success: false, message: "Sign in required" });
-    if (!process.env.ID_VERIFICATION_SHEET_ID || !sheets) return res.status(500).json({ success: false, message: "Sheet not configured" });
-
-    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:D");
-    const userRows = rows.filter(r => (r[1] || "").toLowerCase() === userEmail)
+    if(!userEmail) return res.status(401).json({success:false, verifications:[]});
+    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID,"A:E");
+    // Map sheet correctly to frontend
+    const verifications = rows
+      .filter(r => (r[1]||"").toLowerCase() === userEmail)
       .map(r => ({
         timestamp: r[0],
         email: r[1],
-        status: r[2] || "Pending",
-        idPhotoUrl: r[3] || ""
+        status: r[3] || "Pending",
+        idImageUrl: r[4] || ""
       }));
-    res.json({ success: true, verifications: userRows });
-  } catch (err) {
-    console.error("GET /api/my-verifications error:", err);
-    res.status(500).json({ success: false, message: "Failed to fetch verifications" });
-  }
+    res.json({success:true, verifications});
+  } catch(err){ console.error(err); res.status(500).json({success:false, verifications:[]}); }
 });
 
 // ==================== ADMIN ROUTES ====================
-function requireAdmin(req, res, next) {
-  if (req.session.admin) return next();
-  res.status(403).json({ success: false, message: "Admin access required" });
-}
+function requireAdmin(req,res,next){ if(req.session.admin) return next(); res.status(403).json({success:false}); }
 
-// ADMIN LOGIN / SESSION / LOGOUT
-app.post("/admin-login", (req, res) => {
-  const { username, password } = req.body;
-  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-    req.session.admin = { username };
-    return res.json({ success: true });
-  }
-  res.status(401).json({ success: false, message: "Invalid credentials" });
+app.post("/admin-login",(req,res)=>{
+  const {username,password}=req.body;
+  if(username===ADMIN_USERNAME && password===ADMIN_PASSWORD){ req.session.admin={username}; return res.json({success:true}); }
+  res.status(401).json({success:false});
 });
 
-app.get("/admin-session", (req, res) => {
-  res.json({ isAdmin: !!req.session.admin, admin: req.session.admin || null });
+app.get("/admin/logout",(req,res)=>{ req.session.admin=null; res.json({success:true}); });
+
+// ==================== PROFILE UPDATE ====================
+app.post("/api/profile/update", async (req,res)=>{
+  try{
+    const user=req.session.user;
+    if(!user) return res.status(401).json({success:false});
+    const {name,email,password} = req.body;
+    const hashedPassword = password ? await bcrypt.hash(password,10) : undefined;
+    const updated = [];
+    if(name) updated.push(name); else updated.push(user.name);
+    if(email) updated.push(email); else updated.push(user.email);
+    if(hashedPassword) updated.push(hashedPassword); else updated.push(undefined);
+    await findRowAndUpdateOrAppend(process.env.USERS_SHEET_ID,"A:D",2,user.email,[user.joinDate, name||user.name, email||user.email, hashedPassword||user.password]);
+    req.session.user.name = name || user.name;
+    req.session.user.email = email || user.email;
+    res.json({success:true});
+  }catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
 
-app.post("/admin-logout", (req, res) => {
-  req.session.admin = null;
-  res.json({ success: true });
-});
-
-// ADMIN DASHBOARD
-app.get("/admin/dashboard", requireAdmin, async (req, res) => {
-  try {
-    const users = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
-    const campaigns = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const waitlist = await getSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:D");
-    const volunteers = await getSheetValues(process.env.VOLUNTEERS_SHEET_ID, "Volunteers!A:E");
-    const streetTeam = await getSheetValues(process.env.STREETTEAM_SHEET_ID, "StreetTeam!A:E");
-    const verifications = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:D");
-
-    const stripePayments = await stripe.paymentIntents.list({ limit: 100 });
-    const historicalDonations = stripePayments.data.map(d => ({
-      id: d.id,
-      amount: d.amount / 100,
-      currency: d.currency,
-      status: d.status,
-      customer_email: d.customer_email || "N/A",
-      campaignId: d.metadata?.campaignId || "Mission",
-      created: new Date(d.created * 1000).toISOString()
-    }));
-
-    res.json({ success: true, users, campaigns, waitlist, volunteers, streetTeam, verifications, historicalDonations });
-  } catch (err) {
-    console.error("Admin dashboard error:", err);
-    res.status(500).json({ success: false, message: "Failed to load dashboard" });
-  }
+// ==================== DONATIONS ====================
+app.get("/api/donations", async (req,res)=>{
+  try{
+    const user = req.session.user;
+    if(!user) return res.status(401).json({donations:[]});
+    const rows = await getSheetValues(process.env.DONATIONS_SHEET_ID,"A:D");
+    const donations = rows.filter(r => (r[1]||"").toLowerCase() === user.email.toLowerCase())
+      .map(r=>({amount:parseFloat(r[2]||0),date:r[0]}));
+    res.json({success:true,donations});
+  }catch(err){ console.error(err); res.status(500).json({donations:[]}); }
 });
 
 // ==================== START SERVER ====================
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT,()=>console.log(`Server running on port ${PORT}`));
