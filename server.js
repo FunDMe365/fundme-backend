@@ -123,6 +123,30 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
   }
 }
 
+// ==================== LIVE VISITOR TRACKING ====================
+async function logVisitor(page) {
+  try {
+    if (!process.env.VISITOR_SHEET_ID) return;
+    const timestamp = new Date().toISOString();
+    return await appendSheetValues(process.env.VISITOR_SHEET_ID, "A:D", [
+      [timestamp, page || "/", "visitor", ""]
+    ]);
+  } catch (err) {
+    console.error("Visitor logging failed:", err.message);
+  }
+}
+
+// Middleware to log all page visits
+app.use(async (req, res, next) => {
+  const page = req.path;
+  // Optional: skip static files or API endpoints if desired
+  if (!page.startsWith("/api") && !page.startsWith("/admin")) {
+    await logVisitor(page);
+  }
+  next();
+});
+
+
 // -------------------- MULTER --------------------
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
