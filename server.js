@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - JOYFUND FULL FEATURE FIXED + LIVE VISITOR TRACKING ====================
+// ==================== SERVER.JS - FULL JOYFUND BACKEND ====================
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -12,7 +12,7 @@ const mailjetLib = require("node-mailjet");
 const cloudinary = require("cloudinary").v2;
 
 const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "FunDMe$123"; // change later
+const ADMIN_PASSWORD = "FunDMe$123"; // keep as requested
 require("dotenv").config();
 
 const app = express();
@@ -39,7 +39,7 @@ app.options("*", cors({
   credentials: true
 }));
 
-// Ensure credentials and headers are always sent
+// Ensure credentials and headers
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Credentials", "true");
   res.header("Access-Control-Allow-Headers", "Content-Type");
@@ -51,7 +51,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // -------------------- SESSION --------------------
-app.set('trust proxy', 1); // behind proxies
+app.set('trust proxy', 1);
 app.use(session({
   name: 'sessionId',
   secret: process.env.SESSION_SECRET || 'supersecretkey',
@@ -147,9 +147,7 @@ async function logVisitor(page) {
   try {
     if (!process.env.VISITOR_SHEET_ID) return;
     const timestamp = new Date().toISOString();
-    return await appendSheetValues(process.env.VISITOR_SHEET_ID, "A:D", [
-      [timestamp, page || "/", "visitor", ""]
-    ]);
+    return await appendSheetValues(process.env.VISITOR_SHEET_ID, "A:D", [[timestamp, page || "/", "visitor", ""]]);
   } catch (err) {
     console.error("Visitor logging failed:", err.message);
   }
@@ -320,9 +318,6 @@ app.get("/api/public-campaigns", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
 
-// -------------------- DASHBOARD / USER ROUTES --------------------
-// GET /api/donations and other user routes remain unchanged...
-
 // ==================== USER VERIFICATIONS ====================
 app.get("/api/my-verifications", async (req, res) => {
   try {
@@ -382,6 +377,7 @@ app.get("/admin/dashboard", requireAdmin, async (req, res) => {
 
     const stripePayments = await stripe.paymentIntents.list({ limit: 100 });
     const historicalDonations = stripePayments.data.map(d => ({
+
       id: d.id,
       amount: d.amount / 100,
       currency: d.currency,
