@@ -34,9 +34,11 @@ app.use(cors({
   credentials: true
 }));
 
-app.options("*", cors({ origin: allowedOrigins, credentials: true }));
+app.options("*", cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
 
-// Ensure credentials and headers
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Credentials", "true");
   res.header("Access-Control-Allow-Headers", "Content-Type");
@@ -294,13 +296,12 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to create campaign" }); }
 });
 
-// ✅ NEW: GET campaigns for current user
-app.get("/api/my-campaigns", async (req, res) => {
+app.get("/api/public-campaigns", async (req, res) => {
   try {
-    const userEmail = req.session?.user?.email?.toLowerCase();
-    if (!userEmail) return res.status(401).json({ success: false, message: "Sign in required" });
-    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const userCampaigns = rows.filter(r => (r[2] || "").toLowerCase() === userEmail)
+    if (!sheets) return res.status(500).json({ success: false });
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    const rows = await getSheetValues(spreadsheetId, "A:I");
+    const activeCampaigns = rows.filter(r => r[6] && ["Approved", "active"].includes(r[6]))
       .map(r => ({
         campaignId: r[0],
         title: r[1],
@@ -312,25 +313,8 @@ app.get("/api/my-campaigns", async (req, res) => {
         createdAt: r[7],
         imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
       }));
-    res.json({ success: true, campaigns: userCampaigns });
-  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to fetch my campaigns" }); }
-});
-
-// ✅ NEW: Donations endpoint
-app.get("/api/donations", async (req, res) => {
-  try {
-    const stripePayments = await stripe.paymentIntents.list({ limit: 100 });
-    const donations = stripePayments.data.map(d => ({
-      id: d.id,
-      amount: d.amount / 100,
-      currency: d.currency,
-      status: d.status,
-      customer_email: d.customer_email || "N/A",
-      campaignId: d.metadata?.campaignId || "Mission",
-      created: new Date(d.created * 1000).toISOString()
-    }));
-    res.json({ success: true, donations });
-  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to fetch donations" }); }
+    res.json({ success: true, campaigns: activeCampaigns });
+  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
 
 // ==================== USER VERIFICATIONS ====================
@@ -355,41 +339,107 @@ app.get("/api/my-verifications", async (req, res) => {
   }
 });
 
-// ==================== ADMIN ROUTES ====================
+// ==================== FULL USER ACCOUNT INFO ====================
+app.get("/api/my-account", async (req, res) => {
+  try {
+    const userEmail = req.session?.user?.email?.toLowerCase();
+    if (!userEmail) return res.status(401).json({ success: false, message: "Sign in required" });
+
+    // USER INFO
+    const usersRaw = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
+    const userRow = usersRaw.find(u => (u[2] || "").toLowerCase() === userEmail);
+    const userInfo = userRow ? { joinDate: userRow[0], name: userRow[1], email: userRow[2] } : {};
+
+    // CAMPAIGNS
+    const campaignsRaw = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
+    const myCampaigns = campaignsRaw
+      .filter(c => (c[2] || "").toLowerCase() === userEmail)
+      .map(c => ({
+        campaignId: c[0],
+        title: c[1],
+        creator: c[2],
+        goal: parseFloat(c[3]) || 0,
+        description: c[4],
+        category: c[5],
+        status: c[6] || "Pending",
+        createdAt: c[7] || "",
+        imageUrl: c[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
+
+    // ID VERIFICATIONS
+    const verificationsRaw = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:D");
+    const myVerifications = verificationsRaw
+      .filter(v => (v[1] || "").toLowerCase() === userEmail)
+      .map(v => ({ timestamp: v[0], email: v[1], status: v[2] || "Pending", idPhotoUrl: v[3] || "" }));
+
+    // STRIPE DONATIONS
+    const stripePayments = await stripe.paymentIntents.list({ limit: 100 });
+    const myDonations = stripePayments.data
+      .filter(d => (d.customer_email || "").toLowerCase() === userEmail)
+      .map(d => ({
+        id: d.id,
+        amount: d.amount / 100,
+        currency: d.currency,
+        status: d.status,
+        campaignId: d.metadata?.campaignId || "Mission",
+        created: new Date(d.created * 1000).toISOString()
+      }));
+
+    res.json({ success: true, userInfo, myCampaigns, myVerifications, myDonations });
+  } catch (err) {
+    console.error("GET /api/my-account error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch account info" });
+  }
+});
+
+// ==================== ADMIN DASHBOARD ====================
 function requireAdmin(req, res, next) {
-  if (req.session.admin) return next();
-  res.status(403).json({ success: false, message: "Admin access required" });
+  const { username, password } = req.body || {};
+  if (req.session?.admin) return next();
+  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+    req.session.admin = true;
+    return next();
+  }
+  return res.status(403).json({ success: false, message: "Unauthorized" });
 }
 
-// ADMIN LOGIN / SESSION / LOGOUT
-app.post("/admin-login", (req, res) => {
-  const { username, password } = req.body;
-  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-    req.session.admin = { username };
-    return res.json({ success: true });
-  }
-  res.status(401).json({ success: false, message: "Invalid credentials" });
-});
-
-app.get("/admin-session", (req, res) => {
-  res.json({ isAdmin: !!req.session.admin, admin: req.session.admin || null });
-});
-
-app.post("/admin-logout", (req, res) => {
-  req.session.admin = null;
-  res.json({ success: true });
-});
-
-// ADMIN DASHBOARD
 app.get("/admin/dashboard", requireAdmin, async (req, res) => {
   try {
-    const users = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
-    const campaigns = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const waitlist = await getSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:D");
-    const volunteers = await getSheetValues(process.env.VOLUNTEERS_SHEET_ID, "Volunteers!A:E");
-    const streetTeam = await getSheetValues(process.env.STREETTEAM_SHEET_ID, "StreetTeam!A:E");
-    const verifications = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:D");
+    // USERS
+    const usersRaw = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
+    const users = usersRaw.map(u => ({ joinDate: u[0] || "", name: u[1] || "", email: u[2] || "", passwordHash: u[3] || "" }));
 
+    // CAMPAIGNS
+    const campaignsRaw = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
+    const campaigns = campaignsRaw.map(c => ({
+      campaignId: c[0],
+      title: c[1],
+      creator: c[2],
+      goal: parseFloat(c[3]) || 0,
+      description: c[4],
+      category: c[5],
+      status: c[6] || "Pending",
+      createdAt: c[7] || "",
+      imageUrl: c[8] || "https://placehold.co/400x200?text=No+Image"
+    }));
+
+    // ID VERIFICATIONS
+    const verificationsRaw = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:D");
+    const verifications = verificationsRaw.map(v => ({ timestamp: v[0] || "", email: v[1] || "", status: v[2] || "Pending", idPhotoUrl: v[3] || "" }));
+
+    // WAITLIST
+    const waitlistRaw = await getSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:D");
+    const waitlist = waitlistRaw.map(w => ({ timestamp: w[0] || "", name: w[1] || "", email: w[2] || "", reason: w[3] || "" }));
+
+    // VOLUNTEERS
+    const volunteersRaw = await getSheetValues(process.env.VOLUNTEERS_SHEET_ID, "Volunteers!A:E");
+    const volunteers = volunteersRaw.map(v => ({ timestamp: v[0] || "", name: v[1] || "", email: v[2] || "", role: v[3] || "", availability: v[4] || "" }));
+
+    // STREET TEAM
+    const streetTeamRaw = await getSheetValues(process.env.STREETTEAM_SHEET_ID, "StreetTeam!A:E");
+    const streetTeam = streetTeamRaw.map(s => ({ timestamp: s[0] || "", name: s[1] || "", email: s[2] || "", city: s[3] || "", hoursAvailable: s[4] || "" }));
+
+    // STRIPE DONATIONS
     const stripePayments = await stripe.paymentIntents.list({ limit: 100 });
     const historicalDonations = stripePayments.data.map(d => ({
       id: d.id,
