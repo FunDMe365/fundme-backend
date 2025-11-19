@@ -20,23 +20,24 @@ const PORT = process.env.PORT || 5000;
 
 // -------------------- CORS --------------------
 const cors = require("cors");
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "").split(",").map(o => o.trim());
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "").split(",").map(o => o.trim()).filter(Boolean);
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true); // allow non-browser requests
+    if (!origin) return callback(null, true); // allow non-browser requests like Postman/server-to-server
+    if (allowedOrigins.length === 0) return callback(null, true); // no restrictions if none set
     if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error("CORS not allowed"));
   },
   credentials: true
 }));
-app.options("*", cors({ origin: allowedOrigins, credentials: true }));
+app.options("*", cors({ origin: allowedOrigins.length ? allowedOrigins : true, credentials: true }));
 
 // -------------------- BODY PARSER --------------------
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // -------------------- SESSION --------------------
-app.set('trust proxy', 1); // behind proxies
+app.set('trust proxy', 1); // behind proxies (render, etc)
 app.use(session({
   name: 'sessionId',
   secret: process.env.SESSION_SECRET || 'supersecretkey',
@@ -110,7 +111,9 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
     return { action: "appended", row: rows.length + 1 };
   } else {
     const rowNumber = rowIndex + 1;
-    const startCol = rangeCols.split("!")[1].charAt(0);
+    // derive start column letter from rangeCols (e.g., "Sheet1!A:D")
+    const sheetPart = rangeCols.split("!")[1] || "A";
+    const startCol = sheetPart.charAt(0);
     const endCol = String.fromCharCode(startCol.charCodeAt(0) + updatedValues.length - 1);
     const updateRange = `${rangeCols.split("!")[0]}!${startCol}${rowNumber}:${endCol}${rowNumber}`;
     await sheets.spreadsheets.values.update({
@@ -296,12 +299,12 @@ app.get("/api/public-campaigns", async (req, res) => {
     if (!sheets) return res.status(500).json({ success: false });
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
     const rows = await getSheetValues(spreadsheetId, "A:I");
-    const activeCampaigns = rows.filter(r => r[6] && ["Approved", "active"].includes(r[6]))
+    const activeCampaigns = rows.filter(r => r[6] && ["Approved", "active"].includes(String(r[6]).toLowerCase() === String(r[6]) ? r[6] : r[6]))
       .map(r => ({
         campaignId: r[0],
         title: r[1],
         creator: r[2],
-        goal: parseFloat(r[3]),
+        goal: parseFloat(r[3]) || 0,
         description: r[4],
         category: r[5],
         status: r[6],
@@ -311,6 +314,7 @@ app.get("/api/public-campaigns", async (req, res) => {
     res.json({ success: true, campaigns: activeCampaigns });
   } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
+
 // -------------------- DASHBOARD / USER ROUTES --------------------
 
 // GET /api/donations
@@ -325,16 +329,20 @@ app.get("/api/donations", async (req, res) => {
     // fetch stripe historical donations (similar to admin dashboard logic)
     let stripeDonations = [];
     if (stripe) {
-      const list = await stripe.paymentIntents.list({ limit: 100 });
-      stripeDonations = list.data.map(d => ({
-        id: d.id,
-        amount: (d.amount || 0) / 100,
-        currency: d.currency,
-        status: d.status,
-        customer_email: d.customer_email || "N/A",
-        campaignId: d.metadata?.campaignId || "Mission",
-        created: new Date((d.created || 0) * 1000).toISOString()
-      }));
+      try {
+        const list = await stripe.paymentIntents.list({ limit: 100 });
+        stripeDonations = list.data.map(d => ({
+          id: d.id,
+          amount: (d.amount || 0) / 100,
+          currency: d.currency,
+          status: d.status,
+          customer_email: d.customer_email || "N/A",
+          campaignId: d.metadata?.campaignId || "Mission",
+          created: new Date((d.created || 0) * 1000).toISOString()
+        }));
+      } catch (sErr) {
+        console.error("Stripe fetch failed:", sErr.message);
+      }
     }
 
     // optionally include donations stored in a Google Sheet
@@ -359,7 +367,7 @@ app.get("/api/donations", async (req, res) => {
       const campaignRows = process.env.CAMPAIGNS_SHEET_ID && sheets ? await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I") : [];
       const userCampaignIds = campaignRows
         .filter(r => (r[2] || "").toLowerCase() === userEmail)
-        .map(r => r[0]); // campaignId is column A
+        .map(r => String(r[0])); // campaignId is column A
 
       stripeDonations = stripeDonations.filter(d => !d.campaignId || userCampaignIds.includes(String(d.campaignId)));
       sheetDonations = sheetDonations.filter(d => !d.campaignId || userCampaignIds.includes(String(d.campaignId)));
@@ -375,7 +383,65 @@ app.get("/api/donations", async (req, res) => {
 // GET /api/my-verifications
 // Returns ID verification rows for the currently signed-in user (by email).
 app.get("/api/my-verifications", async (req, res) => {
+  try {
+    const userEmail = req.session?.user?.email?.toLowerCase();
+    if (!userEmail) return res.status(401).json({ success: false, message: "Sign in required" });
 
+    if (!process.env.ID_VERIFICATION_SHEET_ID || !sheets) {
+      return res.json({ success: true, verifications: [] });
+    }
+
+    // read the ID verification sheet (assumed columns: Email, Status, ID Photo URL, ...)
+    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:Z");
+    const userRows = rows
+      .map((r, idx) => ({ rowIndex: idx + 1, row: r }))
+      .filter(rObj => (rObj.row[0] || "").toLowerCase() === userEmail)
+      .map(rObj => ({
+        rowIndex: rObj.rowIndex,
+        email: rObj.row[0],
+        status: rObj.row[1] || "",
+        idPhotoUrl: rObj.row[2] || ""
+      }));
+
+    res.json({ success: true, verifications: userRows });
+  } catch (err) {
+    console.error("GET /api/my-verifications error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch verifications" });
+  }
+});
+
+// GET /api/my-campaigns
+// Returns campaigns created by the signed-in user
+app.get("/api/my-campaigns", async (req, res) => {
+  try {
+    const userEmail = req.session?.user?.email?.toLowerCase();
+    if (!userEmail) return res.status(401).json({ success: false, message: "Sign in required" });
+
+    if (!process.env.CAMPAIGNS_SHEET_ID || !sheets) {
+      return res.json({ success: true, campaigns: [] });
+    }
+
+    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
+    const myCampaigns = rows
+      .filter(r => (r[2] || "").toLowerCase() === userEmail)
+      .map(r => ({
+        campaignId: r[0],
+        title: r[1],
+        creator: r[2],
+        goal: parseFloat(r[3]) || 0,
+        description: r[4],
+        category: r[5],
+        status: r[6],
+        createdAt: r[7],
+        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
+
+    res.json({ success: true, campaigns: myCampaigns });
+  } catch (err) {
+    console.error("GET /api/my-campaigns error:", err);
+    res.status(500).json({ success: false, error: "Failed to fetch campaigns" });
+  }
+});
 
 // ==================== ADMIN ROUTES ====================
 function requireAdmin(req, res, next) {
@@ -412,8 +478,14 @@ app.get("/admin/dashboard", requireAdmin, async (req, res) => {
     const streetTeam = await getSheetValues(process.env.STREETTEAM_SHEET_ID, "StreetTeam!A:E");
     const verifications = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:C");
 
-    const stripePayments = await stripe.paymentIntents.list({ limit: 100 });
-    const historicalDonations = stripePayments.data.map(d => ({
+    let stripePayments = { data: [] };
+    try {
+      stripePayments = await stripe.paymentIntents.list({ limit: 100 });
+    } catch (sErr) {
+      console.error("Stripe list error:", sErr.message);
+    }
+
+    const historicalDonations = (stripePayments.data || []).map(d => ({
       id: d.id,
       amount: d.amount / 100,
       currency: d.currency,
