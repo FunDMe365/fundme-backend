@@ -20,12 +20,13 @@ const PORT = process.env.PORT || 5000;
 // -------------------- CORS --------------------
 const cors = require("cors");
 
-const allowedOrigins = process.env.ALLOWED_ORIGINS.split(",");
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "").split(",").map(o => o.trim());
+
 app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) callback(null, true);
-    else callback(new Error("CORS not allowed"));
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true); // allow non-browser requests like Postman
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("CORS not allowed"));
   },
   credentials: true
 }));
@@ -38,7 +39,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // -------------------- SESSION --------------------
-app.set('trust proxy', 1);
+app.set('trust proxy', 1); // needed for secure cookies behind proxies
 app.use(session({
   name: 'sessionId',
   secret: process.env.SESSION_SECRET || 'supersecretkey',
@@ -46,8 +47,8 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: false,       // <- false for local / Render testing
-    sameSite: 'lax',     // <- easier for local testing
+    secure: process.env.NODE_ENV === "production", // secure cookies in production
+    sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
     maxAge: 1000 * 60 * 60 * 24
   }
 }));
