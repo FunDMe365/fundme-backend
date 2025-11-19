@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - JOYFUND FULL FEATURE ====================
+// ==================== SERVER.JS - JOYFUND FULL FEATURE FIXED ====================
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -394,7 +394,7 @@ app.post("/admin-logout", (req, res) => {
   res.json({ success: true });
 });
 
-// Admin dashboard (pulls live Google Sheet data)
+// -------------------- ADMIN DASHBOARD --------------------
 app.get("/admin/dashboard", requireAdmin, async (req, res) => {
   try {
     const users = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
@@ -404,6 +404,18 @@ app.get("/admin/dashboard", requireAdmin, async (req, res) => {
     const streetTeam = await getSheetValues(process.env.STREET_TEAM_SHEET_ID, "StreetTeam!A:E");
     const verifications = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:C");
 
+    // ----------------- HISTORICAL DONATIONS -----------------
+    const stripePayments = await stripe.paymentIntents.list({ limit: 100 });
+    const historicalDonations = stripePayments.data.map(d => ({
+      id: d.id,
+      amount: d.amount / 100,
+      currency: d.currency,
+      status: d.status,
+      customer_email: d.customer_email || "N/A",
+      campaignId: d.metadata?.campaignId || "Mission",
+      created: new Date(d.created * 1000).toISOString()
+    }));
+
     res.json({
       success: true,
       users,
@@ -411,7 +423,8 @@ app.get("/admin/dashboard", requireAdmin, async (req, res) => {
       waitlist,
       volunteers,
       streetTeam,
-      verifications
+      verifications,
+      historicalDonations
     });
   } catch (err) {
     console.error(err);
