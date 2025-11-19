@@ -200,6 +200,83 @@ app.post("/api/signin", async (req, res) => {
 app.get("/api/check-session", (req, res) => res.json({ loggedIn: !!req.session.user, user: req.session.user || null }));
 app.post("/api/logout", (req, res) => req.session.destroy(err => err ? res.status(500).json({ error: "Logout failed" }) : res.json({ ok: true })));
 
+// ==================== ACCOUNT OVERVIEW ====================
+app.get("/api/account-overview", async (req, res) => {
+  try {
+    const userEmail = req.session?.user?.email?.toLowerCase();
+    if (!userEmail) return res.json({ loggedIn: false });
+
+    // ----- User info -----
+    const users = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
+    const userRow = users.find(u => (u[2] || "").toLowerCase() === userEmail);
+    const profileData = userRow ? {
+      name: userRow[1],
+      email: userRow[2],
+      joinDate: userRow[0]
+    } : null;
+
+    // ----- Campaigns -----
+    let myCampaigns = [];
+    if (process.env.CAMPAIGNS_SHEET_ID) {
+      const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
+      myCampaigns = rows
+        .filter(r => (r[2] || "").toLowerCase() === userEmail)
+        .map(r => ({
+          campaignId: r[0],
+          title: r[1],
+          goal: r[3],
+          description: r[4],
+          category: r[5],
+          status: r[6],
+          createdAt: r[7],
+          imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+        }));
+    }
+
+    // ----- Donations -----
+    let myDonations = [];
+    if (stripe) {
+      const payments = await stripe.paymentIntents.list({ limit: 100 });
+      myDonations = payments.data
+        .filter(d => (d.customer_email || "").toLowerCase() === userEmail)
+        .map(d => ({
+          id: d.id,
+          amount: d.amount / 100,
+          currency: d.currency,
+          status: d.status,
+          date: new Date(d.created * 1000).toLocaleDateString(),
+          campaignId: d.metadata?.campaignId || "Mission"
+        }));
+    }
+
+    // ----- ID Verifications -----
+    let myVerifications = [];
+    if (process.env.ID_VERIFICATION_SHEET_ID && sheets) {
+      const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:D");
+      myVerifications = rows
+        .filter(r => (r[1] || "").toLowerCase() === userEmail)
+        .map(r => ({
+          timestamp: r[0],
+          email: r[1],
+          status: r[2] || "Pending",
+          idImageUrl: r[3] || ""
+        }));
+    }
+
+    res.json({
+      loggedIn: true,
+      user: profileData,
+      campaigns: myCampaigns,
+      donations: myDonations,
+      verifications: myVerifications
+    });
+
+  } catch (err) {
+    console.error("Error in /api/account-overview:", err);
+    res.status(500).json({ loggedIn: false, error: "Failed to load account data" });
+  }
+});
+
 // ==================== PASSWORD RESET ====================
 app.post("/api/request-reset", async (req, res) => {
   try {
