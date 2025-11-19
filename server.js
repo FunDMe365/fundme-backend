@@ -363,20 +363,27 @@ app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
 });
 
 // ==================== ADMIN ====================
-app.post("/api/admin-login", (req, res) => {
+// ADMIN LOGIN
+app.post("/admin-login", (req, res) => {
   const { username, password } = req.body;
   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
     req.session.admin = { username };
-    res.json({ ok: true });
-  } else res.status(401).json({ error: "Invalid credentials" });
+    return res.json({ success: true });
+  }
+  res.status(401).json({ success: false, message: "Invalid credentials" });
 });
 
-app.get("/api/admin-session", (req, res) => res.json({ loggedIn: !!req.session.admin, admin: req.session.admin || null }));
+// CHECK ADMIN SESSION
+app.get("/admin-session", (req, res) => {
+  res.json({ isAdmin: !!req.session.admin, admin: req.session.admin || null });
+});
 
-app.post("/api/admin-logout", (req, res) => {
+// ADMIN LOGOUT
+app.post("/admin-logout", (req, res) => {
   req.session.admin = null;
-  res.json({ ok: true });
+  res.json({ success: true });
 });
+
 
 // ==================== START SERVER ====================
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
