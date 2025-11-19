@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - FULL JOYFUND BACKEND ====================
+// ==================== SERVER.JS - FULL JOYFUND BACKEND (FIXED SHEET RANGES + CORS) ====================
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -20,14 +20,18 @@ const PORT = process.env.PORT || 5000;
 
 // -------------------- CORS --------------------
 const cors = require("cors");
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+let allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map(o => o.trim())
   .filter(o => o.length > 0);
 
+// If none provided, treat as "allow all origins" (helps avoid accidental deployment blocking)
+const allowAllIfEmpty = allowedOrigins.length === 0;
+
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true); // allow non-browser requests / Postman
+    if (allowAllIfEmpty) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error("CORS not allowed: " + origin));
   },
@@ -35,7 +39,7 @@ app.use(cors({
 }));
 
 app.options("*", cors({
-  origin: allowedOrigins,
+  origin: allowAllIfEmpty ? true : allowedOrigins,
   credentials: true
 }));
 
@@ -165,7 +169,7 @@ app.use(async (req, res, next) => {
 // ==================== USERS & AUTH ====================
 async function getUsers() {
   if (!process.env.USERS_SHEET_ID) return [];
-  return getSheetValues(process.env.USERS_SHEET_ID, "A:D");
+  return getSheetValues(process.env.USERS_SHEET_ID, "Users!A:D");
 }
 
 app.post("/api/signup", async (req, res) => {
@@ -177,7 +181,7 @@ app.post("/api/signup", async (req, res) => {
     if (users.some(u => u[2] && u[2].trim().toLowerCase() === emailLower)) return res.status(409).json({ error: "Email already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
     const timestamp = new Date().toISOString();
-    await appendSheetValues(process.env.USERS_SHEET_ID, "A:D", [[timestamp, name, emailLower, hashedPassword]]);
+    await appendSheetValues(process.env.USERS_SHEET_ID, "Users!A:D", [[timestamp, name, emailLower, hashedPassword]]);
     req.session.user = { name, email: emailLower, joinDate: timestamp };
     res.json({ ok: true, loggedIn: true, user: req.session.user });
   } catch (err) { console.error(err); res.status(500).json({ error: "Signup failed" }); }
@@ -208,7 +212,7 @@ app.post("/api/request-reset", async (req, res) => {
     if (!email) return res.status(400).json({ error: "Missing email" });
     const token = crypto.randomBytes(20).toString("hex");
     const expiry = Date.now() + 3600000;
-    await appendSheetValues(process.env.USERS_SHEET_ID, "E:G", [[email.toLowerCase(), token, expiry]]);
+    await appendSheetValues(process.env.USERS_SHEET_ID, "Users!E:G", [[email.toLowerCase(), token, expiry]]);
     await sendMailjetEmail(
       "Password Reset",
       `<p>Click <a href="${process.env.FRONTEND_URL}/reset-password?token=${token}">here</a> to reset your password. Expires in 1 hour.</p>`,
@@ -222,12 +226,12 @@ app.post("/api/reset-password", async (req, res) => {
   try {
     const { token, newPassword } = req.body;
     if (!token || !newPassword) return res.status(400).json({ error: "Missing fields" });
-    const rows = await getSheetValues(process.env.USERS_SHEET_ID, "E:G");
+    const rows = await getSheetValues(process.env.USERS_SHEET_ID, "Users!E:G");
     const row = rows.find(r => r[1] === token && r[2] && parseInt(r[2], 10) > Date.now());
     if (!row) return res.status(400).json({ error: "Invalid or expired token" });
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     const email = row[0];
-    await findRowAndUpdateOrAppend(process.env.USERS_SHEET_ID, "A:D", 2, email, [row[0], row[1], row[2], hashedPassword]);
+    await findRowAndUpdateOrAppend(process.env.USERS_SHEET_ID, "Users!A:D", 2, email, [row[0], row[1], row[2], hashedPassword]);
     res.json({ ok: true, message: "Password reset successful" });
   } catch (err) { console.error(err); res.status(500).json({ error: "Failed to reset password" }); }
 });
@@ -238,7 +242,8 @@ app.post("/api/waitlist", async (req, res) => {
     const { name, email, reason } = req.body;
     if (!name || !email) return res.status(400).json({ success: false, message: "Missing name or email" });
     const timestamp = new Date().toLocaleString();
-    await appendSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:D", [[timestamp, name, email.toLowerCase(), reason || ""]]);
+    await appendSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:E", [[timestamp, name, email.toLowerCase(), "", reason || ""]]);
+    // Note: your sheet columns: Date/Time, Name, Email, Source, Reason -> we push empty source by default
     await sendMailjetEmail("New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}. Reason: ${reason || "N/A"}</p>`);
     res.json({ success: true });
   } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to submit waitlist" }); }
@@ -290,7 +295,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     const createdAt = new Date().toISOString();
     const status = "Pending";
     const newCampaignRow = [campaignId, title, user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl];
-    await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
+    await appendSheetValues(spreadsheetId, "Campaigns!A:I", [newCampaignRow]);
 
     await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
     res.json({ success: true, message: "Campaign submitted", campaignId });
@@ -301,8 +306,8 @@ app.get("/api/public-campaigns", async (req, res) => {
   try {
     if (!sheets) return res.status(500).json({ success: false });
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, "A:I");
-    const activeCampaigns = rows.filter(r => r[6] && ["Approved", "active"].includes(r[6]))
+    const rows = await getSheetValues(spreadsheetId, "Campaigns!A:I");
+    const activeCampaigns = rows.filter(r => r[6] && ["approved", "active", "Approved", "Active"].includes(r[6]))
       .map(r => ({
         campaignId: r[0],
         title: r[1],
@@ -325,13 +330,13 @@ app.get("/api/my-verifications", async (req, res) => {
     if (!userEmail) return res.status(401).json({ success: false, message: "Sign in required" });
     if (!process.env.ID_VERIFICATION_SHEET_ID || !sheets) return res.status(500).json({ success: false, message: "Sheet not configured" });
 
-    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:D");
+    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "ID_Verifications!A:E");
     const userRows = rows.filter(r => (r[1] || "").toLowerCase() === userEmail)
       .map(r => ({
         timestamp: r[0],
         email: r[1],
-        status: r[2] || "Pending",
-        idPhotoUrl: r[3] || ""
+        status: r[3] || r[2] || "Pending", // adapt if status column shifted
+        idPhotoUrl: r[4] || r[3] || ""
       }));
     res.json({ success: true, verifications: userRows });
   } catch (err) {
@@ -368,16 +373,15 @@ app.post("/admin-logout", (req, res) => {
 // ADMIN DASHBOARD
 app.get("/admin/dashboard", requireAdmin, async (req, res) => {
   try {
-    const users = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
-    const campaigns = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const waitlist = await getSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:D");
+    const users = await getSheetValues(process.env.USERS_SHEET_ID, "Users!A:D");
+    const campaigns = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "Campaigns!A:I");
+    const waitlist = await getSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:E");
     const volunteers = await getSheetValues(process.env.VOLUNTEERS_SHEET_ID, "Volunteers!A:E");
     const streetTeam = await getSheetValues(process.env.STREETTEAM_SHEET_ID, "StreetTeam!A:E");
-    const verifications = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:D");
+    const verifications = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "ID_Verifications!A:E");
 
     const stripePayments = await stripe.paymentIntents.list({ limit: 100 });
     const historicalDonations = stripePayments.data.map(d => ({
-
       id: d.id,
       amount: d.amount / 100,
       currency: d.currency,
