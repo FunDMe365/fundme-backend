@@ -46,8 +46,8 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
+    secure: false,       // <- false for local / Render testing
+    sameSite: 'lax',     // <- easier for local testing
     maxAge: 1000 * 60 * 60 * 24
   }
 }));
