@@ -201,8 +201,17 @@ app.post("/api/signin", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: "Signin failed" }); }
 });
 
-app.get("/api/check-session", (req, res) => res.json({ loggedIn: !!req.session.user, ...req.session.user }));
-app.post("/api/logout", (req, res) => req.session.destroy(err => err ? res.status(500).json({ error: "Logout failed" }) : res.json({ ok: true })));
+app.get("/api/check-session", (req, res) => {
+  if (req.session.user) {
+    res.json({ loggedIn: true, user: req.session.user });
+  } else {
+    res.json({ loggedIn: false, user: null });
+  }
+});
+
+app.post("/api/logout", (req, res) => {
+  req.session.destroy(err => err ? res.status(500).json({ error: "Logout failed" }) : res.json({ ok: true }));
+});
 
 // ==================== PASSWORD RESET ====================
 app.post("/api/request-reset", async (req, res) => {
@@ -337,7 +346,6 @@ app.get("/api/my-verifications", async (req,res)=>{
     const userEmail = req.session?.user?.email?.toLowerCase();
     if(!userEmail) return res.status(401).json({success:false, verifications:[]});
     const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID,"A:E");
-    // Map sheet correctly to frontend
     const verifications = rows
       .filter(r => (r[1]||"").toLowerCase() === userEmail)
       .map(r => ({
@@ -359,36 +367,39 @@ app.post("/admin-login",(req,res)=>{
   res.status(401).json({success:false});
 });
 
-app.get("/admin/logout",(req,res)=>{ req.session.admin=null; res.json({success:true}); });
+app.get("/admin-logout",(req,res)=>{
+  req.session.admin=null; res.json({success:true});
+});
 
-// ==================== PROFILE UPDATE ====================
-app.post("/api/profile/update", async (req,res)=>{
+app.get("/admin/campaigns",requireAdmin,async(req,res)=>{
+  try { const rows=await getSheetValues(process.env.CAMPAIGNS_SHEET_ID,"A:I"); res.json({success:true,campaigns:rows}); }
+  catch(err){ console.error(err); res.status(500).json({success:false}); }
+});
+
+app.post("/admin/campaigns/approve",requireAdmin,async(req,res)=>{
   try{
-    const user=req.session.user;
-    if(!user) return res.status(401).json({success:false});
-    const {name,email,password} = req.body;
-    const hashedPassword = password ? await bcrypt.hash(password,10) : undefined;
-    const updated = [];
-    if(name) updated.push(name); else updated.push(user.name);
-    if(email) updated.push(email); else updated.push(user.email);
-    if(hashedPassword) updated.push(hashedPassword); else updated.push(undefined);
-    await findRowAndUpdateOrAppend(process.env.USERS_SHEET_ID,"A:D",2,user.email,[user.joinDate, name||user.name, email||user.email, hashedPassword||user.password]);
-    req.session.user.name = name || user.name;
-    req.session.user.email = email || user.email;
+    const {campaignId}=req.body;
+    if(!campaignId) return res.status(400).json({success:false});
+    const rows=await getSheetValues(process.env.CAMPAIGNS_SHEET_ID,"A:I");
+    const rowIndex=rows.findIndex(r=>r[0]===campaignId);
+    if(rowIndex===-1) return res.status(404).json({success:false});
+    const rowNumber=rowIndex+1;
+    const updateRange=`${process.env.CAMPAIGNS_SHEET_ID}!G${rowNumber}`;
+    await sheets.spreadsheets.values.update({spreadsheetId:process.env.CAMPAIGNS_SHEET_ID,range:updateRange,valueInputOption:"USER_ENTERED",resource:{values:[["Approved"]]}})
     res.json({success:true});
-  }catch(err){ console.error(err); res.status(500).json({success:false}); }
+  } catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
 
 // ==================== DONATIONS ====================
-app.get("/api/donations", async (req,res)=>{
+app.post("/api/donate", async (req,res)=>{
   try{
-    const user = req.session.user;
-    if(!user) return res.status(401).json({donations:[]});
-    const rows = await getSheetValues(process.env.DONATIONS_SHEET_ID,"A:D");
-    const donations = rows.filter(r => (r[1]||"").toLowerCase() === user.email.toLowerCase())
-      .map(r=>({amount:parseFloat(r[2]||0),date:r[0]}));
-    res.json({success:true,donations});
-  }catch(err){ console.error(err); res.status(500).json({donations:[]}); }
+    const {amount,currency,campaignId,token,email}=req.body;
+    if(!amount||!currency||!campaignId||!token||!email) return res.status(400).json({success:false});
+    const charge = await stripe.charges.create({amount:parseInt(amount*100),currency,campaign:campaignId,source:token,receipt_email:email,description:`Donation to ${campaignId}`});
+    await appendSheetValues(process.env.DONATIONS_SHEET_ID,"A:E",[[new Date().toISOString(),campaignId,email,amount,currency]]);
+    await sendMailjetEmail("New Donation",`<p>${email} donated ${amount} ${currency} to campaign ${campaignId}</p>`);
+    res.json({success:true,charge});
+  } catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
 
 // ==================== START SERVER ====================
