@@ -349,28 +349,31 @@ app.get("/api/public-campaigns", async (req,res)=>{
 });
 
 // ==================== USER VERIFICATIONS ====================
-app.get("/api/my-verifications", async (req,res)=>{
+app.get("/api/my-verifications", async (req, res) => {
   try {
-    const userEmail = req.session?.user?.email?.trim().toLowerCase();
-    if(!userEmail) return res.status(401).json({success:false, verifications:[]});
+    const userEmail = req.session?.user?.email?.toLowerCase();
+    if (!userEmail) return res.status(401).json({ success: false, verifications: [] });
 
-    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID,"A:E");
+    // Make sure to use the correct sheet name
+    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "ID_Verifications!A:E");
 
-    if(!rows || rows.length < 2) return res.json({success:true, verifications:[]});
+    // Trim each cell to avoid extra spaces
+    const trimmedRows = rows.map(r => r.map(cell => (cell || "").toString().trim()));
 
-    const verifications = rows.slice(1) // skip header
-      .filter(r => ((r[1]||"").trim().toLowerCase() === userEmail))
+    // Find verifications for this user
+    const verifications = trimmedRows
+      .filter(r => (r[1] || "").toLowerCase() === userEmail)
       .map(r => ({
-        timestamp: r[0] || "",
-        email: r[1] || "",
-        status: r[3] || "Pending",
-        idImageUrl: r[4] || ""
+        timestamp: r[0],
+        email: r[1],
+        status: r[3] || "Pending",  // D column = status
+        idImageUrl: r[4] || ""      // E column = image URL
       }));
 
-    res.json({success:true, verifications});
-  } catch(err){
-    console.error("GET /api/my-verifications error:", err);
-    res.status(500).json({success:false, verifications:[]});
+    res.json({ success: true, verifications });
+  } catch (err) {
+    console.error("Error fetching verifications:", err);
+    res.status(500).json({ success: false, verifications: [] });
   }
 });
 
