@@ -64,6 +64,43 @@ app.use(session({
 // -------------------- STRIPE --------------------
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY || "");
 
+// ==================== STRIPE CHECKOUT SESSION ====================
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+  try {
+    const { campaignId } = req.params;
+    const { amount, successUrl, cancelUrl } = req.body;
+    if (!campaignId || !amount || !successUrl || !cancelUrl) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    // Convert amount to cents
+    const amountInCents = Math.round(amount * 100);
+
+    // Create Stripe Checkout session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: `Donation to campaign ${campaignId}` },
+          unit_amount: amountInCents,
+        },
+        quantity: 1
+      }],
+      mode: "payment",
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: { campaignId }
+    });
+
+    res.json({ success: true, sessionId: session.id });
+  } catch (err) {
+    console.error("Stripe checkout error:", err);
+    res.status(500).json({ success: false, message: "Failed to create checkout session" });
+  }
+});
+
+
 // -------------------- MAILJET --------------------
 let mailjetClient = null;
 if (process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET) {
