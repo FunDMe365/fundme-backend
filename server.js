@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - FULL JOYFUND BACKEND ====================
+// ==================== SERVER.JS - FULL JOYFUND BACKEND (fixed: GET /api/donations + check-session flatten) ====================
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -201,11 +201,19 @@ app.post("/api/signin", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: "Signin failed" }); }
 });
 
+// ===== UPDATED CHECK-SESSION: return flattened user fields too (fixes frontend expecting data.name) =====
 app.get("/api/check-session", (req, res) => {
   if (req.session.user) {
-    res.json({ loggedIn: true, user: req.session.user });
+    const u = req.session.user;
+    return res.json({
+      loggedIn: true,
+      user: u,
+      name: u.name || null,
+      email: u.email || null,
+      joinDate: u.joinDate || null
+    });
   } else {
-    res.json({ loggedIn: false, user: null });
+    return res.json({ loggedIn: false, user: null });
   }
 });
 
@@ -305,7 +313,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
     await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
     res.json({ success: true, message: "Campaign submitted", campaignId });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to create campaign" }); }
 });
 
 app.get("/api/my-campaigns", async (req, res) => {
@@ -391,15 +399,47 @@ app.post("/admin/campaigns/approve",requireAdmin,async(req,res)=>{
 });
 
 // ==================== DONATIONS ====================
+
+// POST donation route (existing) - left unchanged (creates a charge and appends a sheet row)
 app.post("/api/donate", async (req,res)=>{
   try{
     const {amount,currency,campaignId,token,email}=req.body;
     if(!amount||!currency||!campaignId||!token||!email) return res.status(400).json({success:false});
-    const charge = await stripe.charges.create({amount:parseInt(amount*100),currency,campaign:campaignId,source:token,receipt_email:email,description:`Donation to ${campaignId}`});
+    const charge = await stripe.charges.create({amount:parseInt(amount*100),currency,metadata:{campaign:campaignId},source:token,receipt_email:email,description:`Donation to ${campaignId}`});
     await appendSheetValues(process.env.DONATIONS_SHEET_ID,"A:E",[[new Date().toISOString(),campaignId,email,amount,currency]]);
     await sendMailjetEmail("New Donation",`<p>${email} donated ${amount} ${currency} to campaign ${campaignId}</p>`);
     res.json({success:true,charge});
   } catch(err){ console.error(err); res.status(500).json({success:false}); }
+});
+
+// NEW GET /api/donations - returns donations for signed-in user (sheet-based)
+app.get("/api/donations", async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ success: false, donations: [] });
+
+    if (!process.env.DONATIONS_SHEET_ID || !sheets) {
+      // If no sheet configured, return empty
+      return res.json({ success: true, donations: [] });
+    }
+
+    const rows = await getSheetValues(process.env.DONATIONS_SHEET_ID, "A:E");
+    // rows format (based on append in /api/donate): [timestamp, campaignId, email, amount, currency]
+    const donations = (rows || [])
+      .filter(r => ((r[2] || "").toLowerCase() === (user.email || "").toLowerCase()))
+      .map(r => ({
+        timestamp: r[0],
+        campaignId: r[1],
+        email: r[2],
+        amount: parseFloat(r[3]) || 0,
+        currency: r[4] || "USD"
+      }));
+
+    res.json({ success: true, donations });
+  } catch (err) {
+    console.error("GET /api/donations error:", err);
+    res.status(500).json({ success: false, donations: [] });
+  }
 });
 
 // ==================== START SERVER ====================
