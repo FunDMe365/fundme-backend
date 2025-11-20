@@ -351,20 +351,29 @@ app.get("/api/public-campaigns", async (req,res)=>{
 // ==================== USER VERIFICATIONS ====================
 app.get("/api/my-verifications", async (req,res)=>{
   try {
-    const userEmail = req.session?.user?.email?.toLowerCase();
+    const userEmail = req.session?.user?.email?.trim().toLowerCase();
     if(!userEmail) return res.status(401).json({success:false, verifications:[]});
+
     const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID,"A:E");
-    const verifications = rows
-      .filter(r => (r[1]||"").toLowerCase() === userEmail)
+
+    if(!rows || rows.length < 2) return res.json({success:true, verifications:[]});
+
+    const verifications = rows.slice(1) // skip header
+      .filter(r => ((r[1]||"").trim().toLowerCase() === userEmail))
       .map(r => ({
-        timestamp: r[0],
-        email: r[1],
+        timestamp: r[0] || "",
+        email: r[1] || "",
         status: r[3] || "Pending",
         idImageUrl: r[4] || ""
       }));
+
     res.json({success:true, verifications});
-  } catch(err){ console.error(err); res.status(500).json({success:false, verifications:[]}); }
+  } catch(err){
+    console.error("GET /api/my-verifications error:", err);
+    res.status(500).json({success:false, verifications:[]});
+  }
 });
+
 
 // ==================== ADMIN ROUTES ====================
 function requireAdmin(req,res,next){ if(req.session.admin) return next(); res.status(403).json({success:false}); }
