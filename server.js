@@ -399,62 +399,34 @@ app.get("/api/my-verifications", async (req, res) => {
 });
 
 // ==================== ADMIN ROUTES ====================
-function requireAdmin(req,res,next){ if(req.session.admin) return next(); res.status(403).json({success:false}); }
+function requireAdmin(req, res, next) {
+  if (req.session.admin) return next();
+  res.status(403).json({ success: false });
+}
 
-app.post("/admin-login",(req,res)=>{
-  const {username,password}=req.body;
-  if(username===ADMIN_USERNAME && password===ADMIN_PASSWORD){ req.session.admin=true; return res.json({success:true}); }
-  res.status(401).json({success:false});
+// Admin login route
+app.post("/admin-login", bodyParser.json(), (req, res) => {
+  const { username, password } = req.body;
+  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+    req.session.admin = true;
+    // Return JSON success instead of redirect
+    return res.json({ success: true });
+  }
+  res.status(401).json({ success: false, message: "Invalid credentials" });
 });
 
-app.get("/admin-check",(req,res)=>{ res.json({admin:req.session.admin||false}); });
-app.post("/admin-logout",(req,res)=>{ req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true})); });
-
-app.get("/admin/campaigns", requireAdmin, async (req,res)=>{
-  try{
-    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID,"A:I");
-    const campaigns = rows.map(r=>({
-      campaignId:r[0],title:r[1],creator:r[2],goal:r[3],description:r[4],category:r[5],status:r[6],createdAt:r[7],imageUrl:r[8]||"https://placehold.co/400x200?text=No+Image"
-    }));
-    res.json({success:true,campaigns});
-  } catch(err){ console.error(err); res.status(500).json({success:false}); }
+// Check if admin session exists
+app.get("/admin-session", (req, res) => {
+  res.json({ isAdmin: !!req.session.admin });
 });
 
-app.post("/admin/campaigns/approve", requireAdmin, async (req,res)=>{
-  try{
-    const {campaignId}=req.body;
-    if(!campaignId) return res.status(400).json({success:false});
-    await findRowAndUpdateOrAppend(process.env.CAMPAIGNS_SHEET_ID,"A:I",0,campaignId,[campaignId,"","","","","Approved"]);
-    res.json({success:true});
-  } catch(err){ console.error(err); res.status(500).json({success:false}); }
+// Admin logout
+app.post("/admin-logout", (req, res) => {
+  req.session.destroy(err =>
+    err ? res.status(500).json({ success: false }) : res.json({ success: true })
+  );
 });
 
-app.get("/admin/id-verifications", requireAdmin, async (req,res)=>{
-  try{
-    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID,"ID_Verifications!A:E");
-    const trimmedRows = rows.map(r=>r.map(c=>(c||"").toString().trim()));
-    res.json({success:true,verifications:trimmedRows});
-  } catch(err){ console.error(err); res.status(500).json({success:false}); }
-});
-
-app.post("/admin/id-verifications/update", requireAdmin, async (req,res)=>{
-  try{
-    const {email,status}=req.body;
-    if(!email||!status) return res.status(400).json({success:false});
-    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID,"ID_Verifications!A:E");
-    const rowIndex = rows.findIndex(r=>(r[1]||"").toLowerCase()===email.toLowerCase());
-    if(rowIndex>=0){
-      rows[rowIndex][3] = status;
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: process.env.ID_VERIFICATION_SHEET_ID,
-        range:`ID_Verifications!A${rowIndex+1}:E${rowIndex+1}`,
-        valueInputOption:"USER_ENTERED",
-        resource:{values:[rows[rowIndex]]}
-      });
-    }
-    res.json({success:true});
-  } catch(err){ console.error(err); res.status(500).json({success:false}); }
-});
 
 // ==================== DONATIONS / STRIPE CHECKOUT ====================
 app.post("/api/create-checkout-session/:campaignId", async (req,res)=>{
