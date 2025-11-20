@@ -404,23 +404,22 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ success: false });
 }
 
-// Admin login route
-app.post("/admin-login", bodyParser.json(), (req, res) => {
+// ------------------- ADMIN LOGIN -------------------
+app.post("/admin-login", (req, res) => {
   const { username, password } = req.body;
   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
     req.session.admin = true;
-    // Return JSON success instead of redirect
     return res.json({ success: true });
   }
-  res.status(401).json({ success: false, message: "Invalid credentials" });
+  res.status(401).json({ success: false });
 });
 
-// Check if admin session exists
-app.get("/admin-session", (req, res) => {
-  res.json({ isAdmin: !!req.session.admin });
+// ------------------- ADMIN SESSION CHECK -------------------
+app.get("/admin-check", (req, res) => {
+  res.json({ admin: !!req.session.admin });
 });
 
-// Admin logout
+// ------------------- ADMIN LOGOUT -------------------
 app.post("/admin-logout", (req, res) => {
   req.session.destroy(err =>
     err ? res.status(500).json({ success: false }) : res.json({ success: true })
