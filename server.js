@@ -313,6 +313,36 @@ app.post("/api/street-team", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
 
+// ==================== ADMIN: GET WAITLIST DATA ====================
+app.get("/api/waitlist", async (req, res) => {
+  try {
+    const auth = new google.auth.GoogleAuth({
+      keyFile: "credentials.json",
+      scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    });
+
+    const sheets = google.sheets({ version: "v4", auth });
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.WAITLIST_SHEET_ID,
+      range: "Waitlist!A:D", // adjust if needed
+    });
+
+    const rows = response.data.values || [];
+    const count = rows.length > 1 ? rows.length - 1 : 0; 
+    // subtract 1 if row 1 is headers
+
+    res.json({
+      success: true,
+      count,
+      rows,
+    });
+  } catch (err) {
+    console.error("WAITLIST GET ERROR:", err);
+    res.status(500).json({ success: false, error: "Failed to load waitlist" });
+  }
+});
+
+
 // ==================== CAMPAIGNS ====================
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
