@@ -317,19 +317,21 @@ app.post("/api/street-team", async (req, res) => {
 app.get("/api/waitlist", async (req, res) => {
   try {
     const auth = new google.auth.GoogleAuth({
-      keyFile: "credentials.json",
-      scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+      credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
     });
 
     const sheets = google.sheets({ version: "v4", auth });
+
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.WAITLIST_SHEET_ID,
-      range: "Waitlist!A:D", // adjust if needed
+      range: "Waitlist!A:D",
     });
 
     const rows = response.data.values || [];
-    const count = rows.length > 1 ? rows.length - 1 : 0; 
-    // subtract 1 if row 1 is headers
+
+    // If the sheet has headers, subtract 1
+    const count = rows.length > 1 ? rows.length - 1 : 0;
 
     res.json({
       success: true,
@@ -338,9 +340,10 @@ app.get("/api/waitlist", async (req, res) => {
     });
   } catch (err) {
     console.error("WAITLIST GET ERROR:", err);
-    res.status(500).json({ success: false, error: "Failed to load waitlist" });
+    res.status(500).json({ success: false });
   }
 });
+
 
 
 // ==================== CAMPAIGNS ====================
