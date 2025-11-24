@@ -169,6 +169,28 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
+//==================Update Profile==================
+app.post("/api/update-profile", async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    const { name, email, bio } = req.body;
+
+    if(!userId) return res.json({ success:false, error:"Not logged in" });
+
+    // Update database (example using PostgreSQL)
+    await db.query(
+      "UPDATE users SET name=$1, email=$2, bio=$3 WHERE id=$4",
+      [name, email, bio, userId]
+    );
+
+    res.json({ success:true });
+  } catch(err) {
+    console.error(err);
+    res.json({ success:false, error:"Server error" });
+  }
+});
+
+
 // ==================== VISITOR TRACKING ====================
 async function logVisitor(page) {
   try {
