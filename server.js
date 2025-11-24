@@ -18,19 +18,6 @@ const ADMIN_PASSWORD = "FunDMe$123";
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ==================== LIVE VISITOR TRACKING ====================
-const liveVisitors = {}; // { pagePath: count }
-
-function addVisitor(page) {
-  if (!liveVisitors[page]) liveVisitors[page] = 0;
-  liveVisitors[page]++;
-  // Automatically decrement after 1 minute
-  setTimeout(() => {
-    liveVisitors[page]--;
-    if (liveVisitors[page] <= 0) delete liveVisitors[page];
-  }, 60000);
-}
-
 // -------------------- CORS --------------------
 const cors = require("cors");
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
@@ -203,26 +190,6 @@ app.post("/api/update-profile", async (req, res) => {
   }
 });
 
-// ==================== VISITOR TRACKING ====================
-async function logVisitor(page) {
-  try {
-    if (!process.env.VISITOR_SHEET_ID) return;
-    const timestamp = new Date().toISOString();
-    return await appendSheetValues(process.env.VISITOR_SHEET_ID, "A:D", [[timestamp, page || "/", "visitor", ""]]);
-  } catch (err) { console.error("Visitor logging failed:", err.message); }
-}
-
-app.use(async (req, res, next) => {
-  const page = req.path;
-  if (!page.startsWith("/api") && !page.startsWith("/admin") && !page.startsWith("/public")) {
-    try { 
-      await logVisitor(page); // existing Google Sheets log
-      addVisitor(page);       // live tracking
-    } catch (err) { console.error(err.message); }
-  }
-  next();
-});
-
 // ==================== USERS & AUTH ====================
 async function getUsers() {
   if (!process.env.USERS_SHEET_ID) return [];
@@ -350,37 +317,6 @@ app.post("/api/street-team", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
 
-// ==================== ADMIN: GET WAITLIST DATA ====================
-app.get("/api/waitlist", async (req, res) => {
-  try {
-    const auth = new google.auth.GoogleAuth({
-      credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-    });
-
-    const sheets = google.sheets({ version: "v4", auth });
-
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.WAITLIST_SHEET_ID,
-      range: "Waitlist!A:D",
-    });
-
-    const rows = response.data.values || [];
-
-    // If the sheet has headers, subtract 1
-    const count = rows.length > 1 ? rows.length - 1 : 0;
-
-    res.json({
-      success: true,
-      count,
-      rows,
-    });
-  } catch (err) {
-    console.error("WAITLIST GET ERROR:", err);
-    res.status(500).json({ success: false });
-  }
-});
-
 // ==================== CAMPAIGNS ====================
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
@@ -402,62 +338,48 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     }
 
     const createdAt = new Date().toISOString();
-    await appendSheetValues(spreadsheetId, "A:H", [[campaignId, user.email, title, goal, description, category, imageUrl, createdAt]]);
-    res.json({ success: true, campaignId });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+    const status = "Pending";
+    const newCampaignRow = [campaignId, title, user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl];
+    await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
+
+    await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
+    res.json({ success: true, message: "Campaign submitted", campaignId });
+  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to create campaign" }); }
 });
 
-app.get("/api/campaigns", async (req, res) => {
+app.get("/api/my-campaigns", async (req, res) => {
   try {
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, "A:H");
-    const campaigns = rows.map(r => ({
-      id: r[0],
-      owner: r[1],
-      title: r[2],
-      goal: r[3],
-      description: r[4],
-      category: r[5],
-      image: r[6],
-      createdAt: r[7]
-    }));
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ campaigns: [] });
+
+    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
+    const campaigns = rows.filter(r => (r[2]||"").toLowerCase() === user.email.toLowerCase())
+      .map(r => ({
+        campaignId: r[0],
+        title: r[1],
+        creator: r[2],
+        goal: r[3],
+        description: r[4],
+        category: r[5],
+        status: r[6],
+        createdAt: r[7],
+        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
     res.json({ success: true, campaigns });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+  } catch(err){ console.error(err); res.status(500).json({ campaigns: [] }); }
 });
 
-// ==================== ADMIN ROUTES ====================
-function requireAdmin(req, res, next) {
-  const authHeader = req.headers.authorization || "";
-  const [user, pass] = Buffer.from(authHeader.replace("Basic ", ""), "base64").toString().split(":");
-  if (user === ADMIN_USERNAME && pass === ADMIN_PASSWORD) return next();
-  return res.status(401).json({ success: false, message: "Unauthorized" });
-}
-
-// GET ALL USERS
-app.get("/api/admin/users", requireAdmin, async (req, res) => {
+app.get("/api/public-campaigns", async (req,res)=>{
   try {
-    const users = await getUsers();
-    res.json({ success: true, users });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID,"A:I");
+    const campaigns = rows.filter(r=>["Approved","active"].includes(r[6])).map(r=>({
+      campaignId:r[0],title:r[1],creator:r[2],goal:r[3],description:r[4],category:r[5],status:r[6],createdAt:r[7],imageUrl:r[8]||"https://placehold.co/400x200?text=No+Image"
+    }));
+    res.json({success:true,campaigns});
+  } catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
 
-// GET ALL CAMPAIGNS
-app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
-  try {
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const rows = await getSheetValues(spreadsheetId, "A:H");
-    res.json({ success: true, campaigns: rows });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
-});
-
-// ==================== NEW LIVE VISITOR ROUTE ====================
-app.get("/api/live-visitors", requireAdmin, (req, res) => {
-  const live = Object.entries(liveVisitors).map(([page, count]) => ({ page, count }));
-  res.json({ success: true, live });
-});
-
-// ==================== START SERVER ====================
+// ==================== SERVER START ====================
 app.listen(PORT, () => {
   console.log(`JoyFund backend running on port ${PORT}`);
 });
-
