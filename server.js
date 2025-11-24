@@ -344,8 +344,6 @@ app.get("/api/waitlist", async (req, res) => {
   }
 });
 
-
-
 // ==================== CAMPAIGNS ====================
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
@@ -450,6 +448,53 @@ app.get("/api/admin-check", (req,res)=>{
 app.post("/api/admin-logout", (req,res)=>{
   req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true}));
 });
+
+// ==================== START OF NEW ADMIN DASHBOARD SHEETS ROUTES ====================
+
+// GET all users for admin dashboard (reads Users sheet and returns sanitized rows)
+app.get("/api/users", requireAdmin, async (req, res) => {
+  try {
+    const rows = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
+    // If sheet includes headers, you may want to remove the header row:
+    // const dataRows = rows.length > 0 && rows[0][0] && rows[0][0].toString().toLowerCase().includes('join') ? rows.slice(1) : rows;
+    const users = (rows || []).map(r => ({
+      joinDate: r[0] || "",
+      name: r[1] || "",
+      email: r[2] || "",
+      // do NOT return passwords
+      idStatus: r[4] || "Pending" // if you store status in a later column; adjust as needed
+    }));
+    res.json({ success: true, rows: users });
+  } catch (err) {
+    console.error("ADMIN GET USERS ERROR:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// GET all volunteers for admin dashboard (reads Volunteers sheet and returns rows)
+app.get("/api/volunteers", requireAdmin, async (req, res) => {
+  try {
+    const rows = await getSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:E");
+    const volunteers = (rows || []).map(r => ({
+      joinDate: r[0] || "",
+      name: r[1] || "",
+      email: r[2] || "",
+      role: r[3] || "",
+      availability: r[4] || ""
+    }));
+    res.json({ success: true, rows: volunteers });
+  } catch (err) {
+    console.error("ADMIN GET VOLUNTEERS ERROR:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ==================== END OF NEW ADMIN DASHBOARD SHEETS ROUTES ====
+
+/* 
+  NOTE: I inserted only the two admin dashboard endpoints above.
+  Everything else remains unchanged and in the exact order you provided.
+*/
 
 // ==================== START SERVER ====================
 app.listen(PORT, () => { console.log(`JoyFund backend running on port ${PORT}`); });
