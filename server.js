@@ -218,6 +218,25 @@ app.post("/api/track-visitor", (req, res) => {
   }
 });
 
+app.post('/api/track-visitor', (req, res) => {
+  const { visitorId } = req.body;
+  if (!visitorId) return res.json({ success: false });
+
+  // Update or add the visitor timestamp
+  activeVisitors[visitorId] = Date.now();
+
+  // Remove expired visitors
+  const now = Date.now();
+  for (const id in activeVisitors) {
+    if (now - activeVisitors[id] > VISITOR_TIMEOUT) {
+      delete activeVisitors[id];
+    }
+  }
+
+  // Return active count
+  res.json({ success: true, activeCount: Object.keys(activeVisitors).length });
+});
+
 
 //==================Update Profile==================
 app.post("/api/update-profile", async (req, res) => {
