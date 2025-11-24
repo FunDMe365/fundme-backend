@@ -182,39 +182,35 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// ==================== Live Visitor Tracking ====================
-const activeVisitors = {}; // { visitorId: lastPingTimestamp }
-const VISITOR_TIMEOUT = 60 * 1000; // 1 minute in ms
+// ==========================
+// LIVE VISITOR TRACKING
+// ==========================
+const activeVisitors = {}; // { visitorId: timestamp }
+const VISITOR_TIMEOUT = 60 * 1000; // 1 minute
 
-// API route to track visitor
 app.post('/api/track-visitor', (req, res) => {
-  const { visitorId, page } = req.body;
-  if (!visitorId) return res.json({ success: false, message: 'No visitorId provided' });
+  const { visitorId, page, role } = req.body;
 
-  // Update timestamp for this visitor
-  activeVisitors[visitorId] = Date.now();
+  // Only count real visitors (skip admin/dashboard pings)
+  if (role === 'admin' || page === 'admin-dashboard') {
+    return res.json({ success: true, activeCount: Object.keys(activeVisitors).length });
+  }
 
-  // Clean up expired visitors
+  if (!visitorId) return res.status(400).json({ success: false, error: 'No visitorId' });
+
   const now = Date.now();
+  activeVisitors[visitorId] = now;
+
+  // Clean up old visitors
   for (const id in activeVisitors) {
     if (now - activeVisitors[id] > VISITOR_TIMEOUT) {
       delete activeVisitors[id];
     }
   }
 
-  // Return active visitor count
   res.json({ success: true, activeCount: Object.keys(activeVisitors).length });
 });
 
-// Optional: periodic cleanup every 30 seconds to avoid memory bloat
-setInterval(() => {
-  const now = Date.now();
-  for (const id in activeVisitors) {
-    if (now - activeVisitors[id] > VISITOR_TIMEOUT) {
-      delete activeVisitors[id];
-    }
-  }
-}, 30 * 1000);
 
 
 
