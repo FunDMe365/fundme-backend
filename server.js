@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - FULL JOYFUND BACKEND (COMPLETE, FIXED VISITOR TRACKING) ====================
+// ==================== SERVER.JS - FULL JOYFUND BACKEND ====================
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -73,37 +73,6 @@ app.use(session({
 
 // -------------------- STRIPE --------------------
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY || "");
-
-// ==================== STRIPE CHECKOUT SESSION ====================
-app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
-  try {
-    const { campaignId } = req.params;
-    const { amount, successUrl, cancelUrl } = req.body;
-    if (!campaignId || !amount || !successUrl || !cancelUrl) {
-      return res.status(400).json({ success: false, message: "Missing fields" });
-    }
-    const amountInCents = Math.round(amount * 100);
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [{
-        price_data: {
-          currency: "usd",
-          product_data: { name: `Donation to campaign ${campaignId}` },
-          unit_amount: amountInCents,
-        },
-        quantity: 1
-      }],
-      mode: "payment",
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      metadata: { campaignId }
-    });
-    res.json({ success: true, sessionId: session.id });
-  } catch (err) {
-    console.error("Stripe checkout error:", err);
-    res.status(500).json({ success: false, message: "Failed to create checkout session" });
-  }
-});
 
 // -------------------- MAILJET --------------------
 let mailjetClient = null;
@@ -186,23 +155,16 @@ const activeVisitors = {}; // { visitorId: timestamp }
 const VISITOR_TIMEOUT = 60 * 1000; // 1 minute
 
 app.post('/api/track-visitor', (req, res) => {
-  const { visitorId, page, role, ignoreCount } = req.body;
-
+  const { visitorId, page, role } = req.body;
   if (!visitorId) return res.status(400).json({ success: false, error: 'No visitorId' });
 
   const now = Date.now();
+  if (role !== 'admin' && page !== 'admin-dashboard') activeVisitors[visitorId] = now;
 
-  // Only store real visitors (not ignored or admin pages)
-  if (!ignoreCount && role !== 'admin' && page !== 'admin-dashboard') {
-    activeVisitors[visitorId] = now;
-  }
-
-  // Remove visitors older than timeout
   for (const id in activeVisitors) {
     if (now - activeVisitors[id] > VISITOR_TIMEOUT) delete activeVisitors[id];
   }
 
-  // Return count of currently active visitors
   res.json({ success: true, activeCount: Object.keys(activeVisitors).length });
 });
 
@@ -218,7 +180,6 @@ async function getUsers() {
   }));
 }
 
-// ------------------- SIGNUP -------------------
 app.post("/api/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -234,7 +195,6 @@ app.post("/api/signup", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: "Signup failed" }); }
 });
 
-// ------------------- SIGNIN -------------------
 app.post("/api/signin", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -250,28 +210,20 @@ app.post("/api/signin", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: "Signin failed" }); }
 });
 
-// ------------------- CHECK SESSION -------------------
 app.get("/api/check-session", (req, res) => {
   if (req.session.user) {
     const u = req.session.user;
-    return res.json({
-      loggedIn: true,
-      user: u,
-      name: u.name || null,
-      email: u.email || null,
-      joinDate: u.joinDate || null
-    });
+    return res.json({ loggedIn: true, user: u, name: u.name || null, email: u.email || null, joinDate: u.joinDate || null });
   } else {
     return res.json({ loggedIn: false, user: null });
   }
 });
 
-// ------------------- LOGOUT -------------------
 app.post("/api/logout", (req, res) => {
   req.session.destroy(err => err ? res.status(500).json({ error: "Logout failed" }) : res.json({ ok: true }));
 });
 
-// ------------------- PASSWORD RESET -------------------
+// ==================== PASSWORD RESET ====================
 app.post("/api/request-reset", async (req, res) => {
   try {
     const { email } = req.body;
@@ -302,7 +254,7 @@ app.post("/api/reset-password", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: "Failed to reset password" }); }
 });
 
-// ==================== WAITLIST, VOLUNTEERS, STREET TEAM ====================
+// ==================== WAITLIST / VOLUNTEERS / STREET TEAM ====================
 app.post("/api/waitlist", async (req, res) => {
   try {
     const { name, email, reason } = req.body;
