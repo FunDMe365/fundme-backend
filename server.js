@@ -193,8 +193,8 @@ app.post('/api/track-visitor', (req, res) => {
 
   if (!visitorId) return res.status(400).json({ success: false, error: 'No visitorId' });
 
-  // Only skip counting admins
-  if (role === 'admin') {
+  // Only count normal users
+  if (role !== 'user') {
     return res.json({ success: true, activeCount: Object.keys(activeVisitors).length });
   }
 
@@ -210,9 +210,6 @@ app.post('/api/track-visitor', (req, res) => {
 
   res.json({ success: true, activeCount: Object.keys(activeVisitors).length });
 });
-
-
-
 
 //==================Update Profile==================
 app.post("/api/update-profile", async (req, res) => {
