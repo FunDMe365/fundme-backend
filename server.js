@@ -182,50 +182,19 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// ==================== LIVE VISITOR TRACKING ====================
-const liveVisitors = {}; // { visitorId: lastPingTimestamp }
+// ==================== Live Visitor Tracking ====================
+const activeVisitors = {}; // { visitorId: lastPingTimestamp }
+const VISITOR_TIMEOUT = 60 * 1000; // 1 minute in ms
 
-// respond to preflight for the track-visitor route explicitly
-app.options('/api/track-visitor', (req, res) => {
-  res.header("Access-Control-Allow-Origin", req.get("origin") || "*");
-  res.header("Access-Control-Allow-Methods", "POST,OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
-  res.header("Access-Control-Allow-Credentials", "true");
-  return res.sendStatus(200);
-});
-
-// Ping route to track active visitors
-app.post("/api/track-visitor", (req, res) => {
-  try {
-    const { visitorId, page } = req.body;
-    if (!visitorId) return res.status(400).json({ success: false, message: "Missing visitorId" });
-
-    const now = Date.now();
-    liveVisitors[visitorId] = now; // update last ping time
-
-    // Remove inactive visitors (no ping for 30 seconds)
-    for (const id in liveVisitors) {
-      if (now - liveVisitors[id] > 30000) delete liveVisitors[id];
-    }
-
-    // Log current count for debugging (can be removed later)
-    console.log(`[visitor-tracker] page=${page || "/"} active=${Object.keys(liveVisitors).length}`);
-
-    res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
-  } catch (err) {
-    console.error("Visitor tracking error:", err);
-    res.status(500).json({ success: false });
-  }
-});
-
+// API route to track visitor
 app.post('/api/track-visitor', (req, res) => {
-  const { visitorId } = req.body;
-  if (!visitorId) return res.json({ success: false });
+  const { visitorId, page } = req.body;
+  if (!visitorId) return res.json({ success: false, message: 'No visitorId provided' });
 
-  // Update or add the visitor timestamp
+  // Update timestamp for this visitor
   activeVisitors[visitorId] = Date.now();
 
-  // Remove expired visitors
+  // Clean up expired visitors
   const now = Date.now();
   for (const id in activeVisitors) {
     if (now - activeVisitors[id] > VISITOR_TIMEOUT) {
@@ -233,9 +202,20 @@ app.post('/api/track-visitor', (req, res) => {
     }
   }
 
-  // Return active count
+  // Return active visitor count
   res.json({ success: true, activeCount: Object.keys(activeVisitors).length });
 });
+
+// Optional: periodic cleanup every 30 seconds to avoid memory bloat
+setInterval(() => {
+  const now = Date.now();
+  for (const id in activeVisitors) {
+    if (now - activeVisitors[id] > VISITOR_TIMEOUT) {
+      delete activeVisitors[id];
+    }
+  }
+}, 30 * 1000);
+
 
 
 //==================Update Profile==================
