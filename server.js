@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - FULL JOYFUND BACKEND ====================
+// ==================== SERVER.JS - FULL JOYFUND BACKEND (UPDATED FOR visitor tracking CORS) ====================
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -25,20 +25,33 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .map(o => o.trim())
   .filter(o => o.length > 0);
 
-app.use(cors({
-  origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error("CORS not allowed: " + origin));
-  },
-  credentials: true
-}));
+// If allowedOrigins is empty, allow all origins (convenient for testing / wide frontend hosting).
+if (allowedOrigins.length === 0) {
+  app.use(cors({ origin: true, credentials: true }));
+  app.options("*", cors({ origin: true, credentials: true }));
+} else {
+  app.use(cors({
+    origin: function(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("CORS not allowed: " + origin));
+    },
+    credentials: true
+  }));
+  app.options("*", cors({ origin: allowedOrigins, credentials: true }));
+}
 
-app.options("*", cors({ origin: allowedOrigins, credentials: true }));
-
+// Ensure some headers are present on responses (helpful for preflight & fetch behavior)
 app.use((req, res, next) => {
+  // Allow all origins when allowedOrigins empty — else allow specific origin via cors above
+  if (allowedOrigins.length === 0) {
+    res.header("Access-Control-Allow-Origin", req.get("origin") || "*");
+  } else {
+    res.header("Access-Control-Allow-Origin", req.get("origin") || "");
+  }
   res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
   next();
 });
 
@@ -172,6 +185,15 @@ const upload = multer({ storage });
 // ==================== LIVE VISITOR TRACKING ====================
 const liveVisitors = {}; // { visitorId: lastPingTimestamp }
 
+// respond to preflight for the track-visitor route explicitly
+app.options('/api/track-visitor', (req, res) => {
+  res.header("Access-Control-Allow-Origin", req.get("origin") || "*");
+  res.header("Access-Control-Allow-Methods", "POST,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.header("Access-Control-Allow-Credentials", "true");
+  return res.sendStatus(200);
+});
+
 // Ping route to track active visitors
 app.post("/api/track-visitor", (req, res) => {
   try {
@@ -185,6 +207,9 @@ app.post("/api/track-visitor", (req, res) => {
     for (const id in liveVisitors) {
       if (now - liveVisitors[id] > 30000) delete liveVisitors[id];
     }
+
+    // Log current count for debugging (can be removed later)
+    console.log(`[visitor-tracker] page=${page || "/"} active=${Object.keys(liveVisitors).length}`);
 
     res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
   } catch (err) {
@@ -552,11 +577,6 @@ app.get("/api/volunteers", requireAdmin, async (req, res) => {
 });
 
 // ==================== END OF NEW ADMIN DASHBOARD SHEETS ROUTES ====
-
-/* 
-  NOTE: I inserted only the two admin dashboard endpoints above.
-  Everything else remains unchanged and in the exact order you provided.
-*/
 
 // ==================== START SERVER ====================
 app.listen(PORT, () => { console.log(`JoyFund backend running on port ${PORT}`); });
