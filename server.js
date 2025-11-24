@@ -169,32 +169,26 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// ==================== LIVE SITE VISITOR TRACKING ====================
+// ==================== LIVE VISITOR TRACKING ====================
+const liveVisitors = {}; // { visitorId: lastPingTimestamp }
 
-// Keep track of active visitors in memory
-const activeVisitors = {}; // { ipOrSessionId: lastPingTimestamp }
-
+// Ping route to track active visitors
 app.post("/api/track-visitor", (req, res) => {
   try {
-    const { ip, page } = req.body;
-    if (!ip || !page) return res.status(400).json({ success: false, message: "Missing fields" });
+    const { visitorId, page } = req.body;
+    if (!visitorId) return res.status(400).json({ success: false, message: "Missing visitorId" });
 
     const now = Date.now();
-    activeVisitors[ip] = now;
+    liveVisitors[visitorId] = now; // update last ping time
 
-    // Clean up visitors inactive for more than 60 seconds
-    for (const key in activeVisitors) {
-      if (now - activeVisitors[key] > 60000) {
-        delete activeVisitors[key];
-      }
+    // Remove inactive visitors (no ping for 30 seconds)
+    for (const id in liveVisitors) {
+      if (now - liveVisitors[id] > 30000) delete liveVisitors[id];
     }
 
-    // Count active visitors
-    const activeCount = Object.keys(activeVisitors).length;
-
-    res.json({ success: true, activeCount });
+    res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
   } catch (err) {
-    console.error("Live visitor tracking error:", err);
+    console.error("Visitor tracking error:", err);
     res.status(500).json({ success: false });
   }
 });
