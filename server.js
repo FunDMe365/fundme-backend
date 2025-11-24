@@ -233,21 +233,33 @@ app.post("/api/update-profile", async (req, res) => {
 });
 
 
-// ==================== VISITOR TRACKING ====================
-async function logVisitor(page) {
-  try {
-    if (!process.env.VISITOR_SHEET_ID) return;
-    const timestamp = new Date().toISOString();
-    return await appendSheetValues(process.env.VISITOR_SHEET_ID, "A:D", [[timestamp, page || "/", "visitor", ""]]);
-  } catch (err) { console.error("Visitor logging failed:", err.message); }
-}
+// ==========================
+// LIVE VISITOR TRACKING
+// ==========================
+const activeVisitors = {}; // { visitorId: timestamp }
+const VISITOR_TIMEOUT = 60 * 1000; // 1 minute
 
-app.use(async (req, res, next) => {
-  const page = req.path;
-  if (!page.startsWith("/api") && !page.startsWith("/admin") && !page.startsWith("/public")) {
-    try { await logVisitor(page); } catch (err) { console.error(err.message); }
+app.post('/api/track-visitor', (req, res) => {
+  const { visitorId, page, role, ignoreCount } = req.body;
+
+  if (!visitorId) return res.status(400).json({ success: false, error: 'No visitorId' });
+
+  const now = Date.now();
+
+  // Only store real visitors (not ignored or admin pages)
+  if (!ignoreCount && role !== 'admin' && page !== 'admin-dashboard') {
+    activeVisitors[visitorId] = now;
   }
-  next();
+
+  // Remove visitors older than timeout
+  for (const id in activeVisitors) {
+    if (now - activeVisitors[id] > VISITOR_TIMEOUT) delete activeVisitors[id];
+  }
+
+  // Return count of currently active visitors
+  res.json({ success: true, activeCount: Object.keys(activeVisitors).length });
+});
+);
 });
 
 // ==================== USERS & AUTH ====================
