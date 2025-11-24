@@ -191,12 +191,12 @@ const VISITOR_TIMEOUT = 60 * 1000; // 1 minute
 app.post('/api/track-visitor', (req, res) => {
   const { visitorId, page, role } = req.body;
 
-  // Only count real visitors (skip admin/dashboard pings)
-  if (role === 'admin' || page === 'admin-dashboard') {
+  if (!visitorId) return res.status(400).json({ success: false, error: 'No visitorId' });
+
+  // Only skip counting admins
+  if (role === 'admin') {
     return res.json({ success: true, activeCount: Object.keys(activeVisitors).length });
   }
-
-  if (!visitorId) return res.status(400).json({ success: false, error: 'No visitorId' });
 
   const now = Date.now();
   activeVisitors[visitorId] = now;
