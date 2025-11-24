@@ -25,6 +25,20 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .map(o => o.trim())
   .filter(o => o.length > 0);
 
+if (allowedOrigins.length === 0) {
+  app.use(cors({ origin: true, credentials: true }));
+  app.options("*", cors({ origin: true, credentials: true }));
+} else {
+  app.use(cors({
+    origin: function(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("CORS not allowed: " + origin));
+    },
+    credentials: true
+  }));
+  app.options("*", cors({ origin: allowedOrigins, credentials: true }));
+}
 app.use(cors({
   origin: function(origin, callback) {
     if (!origin) return callback(null, true);
@@ -37,7 +51,14 @@ app.use(cors({
 app.options("*", cors({ origin: allowedOrigins, credentials: true }));
 
 app.use((req, res, next) => {
+  if (allowedOrigins.length === 0) {
+    res.header("Access-Control-Allow-Origin", req.get("origin") || "*");
+  } else {
+    res.header("Access-Control-Allow-Origin", req.get("origin") || "");
+  }
   res.header("Access-Control-Allow-Credentials", "true");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type");
   next();
 });
@@ -169,6 +190,11 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
+// ==========================
+// LIVE VISITOR TRACKING
+// ==========================
+const activeVisitors = {}; // { visitorId: timestamp }
+const VISITOR_TIMEOUT = 60 * 1000; // 1 minute
 // ==================== LIVE SITE VISITOR TRACKING ====================
 
 // Keep track of active visitors in memory
@@ -210,13 +236,20 @@ app.post("/api/track-visitor", (req, res) => {
   }
 });
 
+app.post('/api/track-visitor', (req, res) => {
+  const { visitorId, page, role } = req.body;
+  if (!visitorId) return res.status(400).json({ success: false, error: 'No visitorId' });
 
+  const now = Date.now();
+  if (role !== 'admin' && page !== 'admin-dashboard') activeVisitors[visitorId] = now;
 //==================Update Profile==================
 app.post("/api/update-profile", async (req, res) => {
   try {
     const userId = req.session.userId;
     const { name, email, bio } = req.body;
 
+  for (const id in activeVisitors) {
+    if (now - activeVisitors[id] > VISITOR_TIMEOUT) delete activeVisitors[id];
     if(!userId) return res.json({ success:false, error:"Not logged in" });
 
     // Update database (example using PostgreSQL)
@@ -242,6 +275,7 @@ async function logVisitor(page) {
   } catch (err) { console.error("Visitor logging failed:", err.message); }
 }
 
+  res.json({ success: true, activeCount: Object.keys(activeVisitors).length });
 app.use(async (req, res, next) => {
   const page = req.path;
   if (!page.startsWith("/api") && !page.startsWith("/admin") && !page.startsWith("/public")) {
@@ -296,6 +330,7 @@ app.post("/api/signin", async (req, res) => {
 app.get("/api/check-session", (req, res) => {
   if (req.session.user) {
     const u = req.session.user;
+    return res.json({ loggedIn: true, user: u, name: u.name || null, email: u.email || null, joinDate: u.joinDate || null });
     return res.json({
       loggedIn: true,
       user: u,
@@ -513,6 +548,8 @@ app.post("/api/admin-logout", (req,res)=>{
   req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true}));
 });
 
+// ==================== START SERVER ====================
+app.listen(PORT, () => { console.log(`JoyFund backend running on port ${PORT}`); });
 // ==================== START OF NEW ADMIN DASHBOARD SHEETS ROUTES ====================
 
 // GET all users for admin dashboard (reads Users sheet and returns sanitized rows)
