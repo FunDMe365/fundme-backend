@@ -169,6 +169,28 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
+// ==================== LIVE VISITOR TRACKING ====================
+app.post("/api/track-visitor", async (req, res) => {
+  try {
+    const { ip, page, timestamp } = req.body;
+
+    if (!ip || !page || !timestamp) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    // Append to Google Sheet
+    await appendSheetValues(process.env.VISITOR_SHEET_ID, "Visitors!A:C", [
+      [timestamp, ip, page]
+    ]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Visitor tracking error:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+
 //==================Update Profile==================
 app.post("/api/update-profile", async (req, res) => {
   try {
