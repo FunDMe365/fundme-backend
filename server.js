@@ -455,16 +455,22 @@ app.post("/api/admin-logout", (req,res)=>{
 app.get("/api/users", requireAdmin, async (req, res) => {
   try {
     const rows = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
-    // If sheet includes headers, you may want to remove the header row:
-    // const dataRows = rows.length > 0 && rows[0][0] && rows[0][0].toString().toLowerCase().includes('join') ? rows.slice(1) : rows;
-    const users = (rows || []).map(r => ({
-      joinDate: r[0] || "",
-      name: r[1] || "",
-      email: r[2] || "",
-      // do NOT return passwords
-      idStatus: r[4] || "Pending" // if you store status in a later column; adjust as needed
-    }));
-    res.json({ success: true, rows: users });
+    // strip header row if present (header includes "Join" or "JoinDate")
+    let dataRows = rows || [];
+    if (dataRows.length > 0) {
+      const firstRowJoined = (dataRows[0] || []).join(" ").toLowerCase();
+      if (firstRowJoined.includes("joindate") || firstRowJoined.includes("join date") || firstRowJoined.includes("join")) {
+        dataRows = dataRows.slice(1);
+      }
+    }
+    // map to arrays expected by frontend: [JoinDate, Name, Email, IDStatus]
+    const mapped = (dataRows || []).map(r => [
+      r[0] || "", // JoinDate
+      r[1] || "", // Name
+      r[2] || "", // Email
+      r[4] || ""  // ID Status if present in column E, otherwise empty
+    ]);
+    res.json({ success: true, rows: mapped });
   } catch (err) {
     console.error("ADMIN GET USERS ERROR:", err);
     res.status(500).json({ success: false });
@@ -472,17 +478,26 @@ app.get("/api/users", requireAdmin, async (req, res) => {
 });
 
 // GET all volunteers for admin dashboard (reads Volunteers sheet and returns rows)
+// Will return arrays: [Timestamp, Name, Email, Message, Date Submitted]
 app.get("/api/volunteers", requireAdmin, async (req, res) => {
   try {
     const rows = await getSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:E");
-    const volunteers = (rows || []).map(r => ({
-      joinDate: r[0] || "",
-      name: r[1] || "",
-      email: r[2] || "",
-      role: r[3] || "",
-      availability: r[4] || ""
-    }));
-    res.json({ success: true, rows: volunteers });
+    // strip header row if present (header includes "Timestamp" or "Name")
+    let dataRows = rows || [];
+    if (dataRows.length > 0) {
+      const firstRowJoined = (dataRows[0] || []).join(" ").toLowerCase();
+      if (firstRowJoined.includes("timestamp") || firstRowJoined.includes("name")) {
+        dataRows = dataRows.slice(1);
+      }
+    }
+    const mapped = (dataRows || []).map(r => [
+      r[0] || "", // Timestamp
+      r[1] || "", // Name
+      r[2] || "", // Email
+      r[3] || "", // Message (mapped to role per your choice B)
+      r[4] || ""  // Date Submitted (mapped to availability per your choice B)
+    ]);
+    res.json({ success: true, rows: mapped });
   } catch (err) {
     console.error("ADMIN GET VOLUNTEERS ERROR:", err);
     res.status(500).json({ success: false });
