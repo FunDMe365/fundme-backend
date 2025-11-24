@@ -169,23 +169,32 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// ==================== LIVE VISITOR TRACKING ====================
-app.post("/api/track-visitor", async (req, res) => {
-  try {
-    const { ip, page, timestamp } = req.body;
+// ==================== LIVE SITE VISITOR TRACKING ====================
 
-    if (!ip || !page || !timestamp) {
-      return res.status(400).json({ success: false, message: "Missing fields" });
+// Keep track of active visitors in memory
+const activeVisitors = {}; // { ipOrSessionId: lastPingTimestamp }
+
+app.post("/api/track-visitor", (req, res) => {
+  try {
+    const { ip, page } = req.body;
+    if (!ip || !page) return res.status(400).json({ success: false, message: "Missing fields" });
+
+    const now = Date.now();
+    activeVisitors[ip] = now;
+
+    // Clean up visitors inactive for more than 60 seconds
+    for (const key in activeVisitors) {
+      if (now - activeVisitors[key] > 60000) {
+        delete activeVisitors[key];
+      }
     }
 
-    // Append to Google Sheet
-    await appendSheetValues(process.env.VISITOR_SHEET_ID, "Visitors!A:C", [
-      [timestamp, ip, page]
-    ]);
+    // Count active visitors
+    const activeCount = Object.keys(activeVisitors).length;
 
-    res.json({ success: true });
+    res.json({ success: true, activeCount });
   } catch (err) {
-    console.error("Visitor tracking error:", err);
+    console.error("Live visitor tracking error:", err);
     res.status(500).json({ success: false });
   }
 });
