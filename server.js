@@ -611,54 +611,51 @@ app.get("/api/volunteers", requireAdmin, async (req, res) => {
 */
 
 // -------------------- DELETE CAMPAIGN --------------------
-const { google } = require('googleapis'); // if not already imported
-const sheets = google.sheets('v4');       // assumes auth already setup
-const SHEET_ID = process.env.GOOGLE_SHEET_ID; // your sheet ID
-
 app.delete('/api/campaign/:campaignId', async (req, res) => {
   try {
     const { campaignId } = req.params;
     if (!campaignId) return res.status(400).json({ success: false, error: 'Missing campaign ID' });
 
     // 1️⃣ Delete campaign from database
-    // Replace with your DB code
     const dbResult = await db.collection('campaigns').deleteOne({ campaignId });
     if (!dbResult.deletedCount) {
       return res.status(404).json({ success: false, error: 'Campaign not found' });
     }
 
-    // 2️⃣ Remove associated donations from DB if needed
+    // 2️⃣ Remove associated donations from DB
     await db.collection('donations').deleteMany({ campaignId });
 
-    // 3️⃣ Remove campaign from Google Sheet
-    // First, read all rows to find matching campaign
+    // 3️⃣ Remove all rows in Google Sheet associated with this campaign
     const sheetRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: 'Donations!A2:Z', // adjust range to match your sheet
+      spreadsheetId: process.env.CAMPAIGNS_SHEET_ID,
+      range: 'A:I', // adjust range if your sheet has more columns
     });
     const rows = sheetRes.data.values || [];
 
-    const rowIndex = rows.findIndex(row => row[0] === campaignId); // assuming first column = campaignId
-    if (rowIndex !== -1) {
-      // Delete the row (rowIndex + 2 because sheet starts at 1 and we used A2)
-      await sheets.spreadsheets.batchUpdate({
-        spreadsheetId: SHEET_ID,
-        requestBody: {
-          requests: [{
-            deleteDimension: {
-              range: {
-                sheetId: 0,       // usually 0 for first sheet, adjust if needed
-                dimension: 'ROWS',
-                startIndex: rowIndex + 1, // zero-based index
-                endIndex: rowIndex + 2
-              }
-            }
-          }]
+    // Find all rows matching campaignId (assuming first column = campaignId)
+    const rowsToDelete = [];
+    rows.forEach((row, index) => { if (row[0] === campaignId) rowsToDelete.push(index); });
+
+    if (rowsToDelete.length > 0) {
+      // Batch deletion must be done from bottom to top to avoid shifting issues
+      const requests = rowsToDelete.reverse().map(rowIndex => ({
+        deleteDimension: {
+          range: {
+            sheetId: 0, // adjust if your campaigns are on another sheet
+            dimension: 'ROWS',
+            startIndex: rowIndex,
+            endIndex: rowIndex + 1
+          }
         }
+      }));
+
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: process.env.CAMPAIGNS_SHEET_ID,
+        requestBody: { requests }
       });
     }
 
-    res.json({ success: true, message: 'Campaign deleted successfully' });
+    res.json({ success: true, message: 'Campaign and all associated data deleted successfully' });
 
   } catch (err) {
     console.error('Error deleting campaign:', err);
