@@ -525,35 +525,37 @@ app.get("/api/my-verifications", async (req, res) => {
 // ==================== ID VERIFICATION SUBMISSION ====================
 app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
+    console.log("Session user:", req.session.user);
+
     const userEmail = req.session?.user?.email?.toLowerCase();
     if (!userEmail) return res.status(401).json({ success: false, message: "Not logged in" });
 
+    console.log("Uploaded file:", req.file);
     if (!req.file) return res.status(400).json({ success: false, message: "No ID uploaded" });
 
-    // Upload image to Cloudinary
+    // Cloudinary upload
     let idImageUrl = "";
-    if (req.file) {
-      const uploadResult = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id_verifications" }, (err, result) => err ? reject(err) : resolve(result));
-        stream.end(req.file.buffer);
-      });
-      idImageUrl = uploadResult.secure_url;
-    }
+    const uploadResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id_verifications" }, (err, result) => err ? reject(err) : resolve(result));
+      stream.end(req.file.buffer);
+    });
+    idImageUrl = uploadResult.secure_url;
+    console.log("Cloudinary URL:", idImageUrl);
 
-    const timestamp = new Date().toISOString();
-    const status = "Pending";
-
-    // Save record in Google Sheet
+    // Append to Google Sheet
+    console.log("Appending to sheet ID:", process.env.ID_VERIFICATION_SHEET_ID);
     await appendSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "ID_Verifications!A:E", [
-      [timestamp, userEmail, "", status, idImageUrl]
+      [new Date().toISOString(), userEmail, "", "Pending", idImageUrl]
     ]);
 
     res.json({ success: true, message: "ID submitted successfully", idImageUrl });
+
   } catch (err) {
     console.error("ID Verification error:", err);
-    res.status(500).json({ success: false, message: "Failed to submit ID" });
+    res.status(500).json({ success: false, message: "Failed to submit ID", error: err.message });
   }
 });
+
 
 // ==================== ADMIN ROUTES ====================
 function requireAdmin(req, res, next) {
