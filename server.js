@@ -525,30 +525,37 @@ app.get("/api/my-verifications", async (req, res) => {
 // ==================== ID VERIFICATION SUBMISSION ====================
 app.post("/api/verify-id", upload.single("idImage"), async (req, res) => {
   try {
-    console.log("Session user:", req.session.user);
-
+    // 1️⃣ Check user session
     const userEmail = req.session?.user?.email?.toLowerCase();
     if (!userEmail) return res.status(401).json({ success: false, message: "Not logged in" });
 
-    console.log("Uploaded file:", req.file);
+    // 2️⃣ Check uploaded file
     if (!req.file) return res.status(400).json({ success: false, message: "No ID uploaded" });
 
-    // Cloudinary upload
+    // 3️⃣ Upload file to Cloudinary
     let idImageUrl = "";
     const uploadResult = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id_verifications" }, (err, result) => err ? reject(err) : resolve(result));
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "joyfund/id_verifications" },
+        (err, result) => err ? reject(err) : resolve(result)
+      );
       stream.end(req.file.buffer);
     });
     idImageUrl = uploadResult.secure_url;
-    console.log("Cloudinary URL:", idImageUrl);
 
-    // Append to Google Sheet
-    console.log("Appending to sheet ID:", process.env.ID_VERIFICATION_SHEET_ID);
+    // 4️⃣ Append record to Google Sheet
+    const timestamp = new Date().toISOString();
+    const status = "Pending";
     await appendSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "ID_Verifications!A:E", [
-      [new Date().toISOString(), userEmail, "", "Pending", idImageUrl]
+      [timestamp, userEmail, "", status, idImageUrl]
     ]);
 
-    res.json({ success: true, message: "ID submitted successfully", idImageUrl });
+    // 5️⃣ Return success
+    res.json({
+      success: true,
+      message: "ID submitted successfully",
+      idImageUrl
+    });
 
   } catch (err) {
     console.error("ID Verification error:", err);
