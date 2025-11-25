@@ -610,5 +610,61 @@ app.get("/api/volunteers", requireAdmin, async (req, res) => {
   Everything else remains unchanged and in the exact order you provided.
 */
 
+// -------------------- DELETE CAMPAIGN --------------------
+const { google } = require('googleapis'); // if not already imported
+const sheets = google.sheets('v4');       // assumes auth already setup
+const SHEET_ID = process.env.GOOGLE_SHEET_ID; // your sheet ID
+
+app.delete('/api/campaign/:campaignId', async (req, res) => {
+  try {
+    const { campaignId } = req.params;
+    if (!campaignId) return res.status(400).json({ success: false, error: 'Missing campaign ID' });
+
+    // 1️⃣ Delete campaign from database
+    // Replace with your DB code
+    const dbResult = await db.collection('campaigns').deleteOne({ campaignId });
+    if (!dbResult.deletedCount) {
+      return res.status(404).json({ success: false, error: 'Campaign not found' });
+    }
+
+    // 2️⃣ Remove associated donations from DB if needed
+    await db.collection('donations').deleteMany({ campaignId });
+
+    // 3️⃣ Remove campaign from Google Sheet
+    // First, read all rows to find matching campaign
+    const sheetRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: 'Donations!A2:Z', // adjust range to match your sheet
+    });
+    const rows = sheetRes.data.values || [];
+
+    const rowIndex = rows.findIndex(row => row[0] === campaignId); // assuming first column = campaignId
+    if (rowIndex !== -1) {
+      // Delete the row (rowIndex + 2 because sheet starts at 1 and we used A2)
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: SHEET_ID,
+        requestBody: {
+          requests: [{
+            deleteDimension: {
+              range: {
+                sheetId: 0,       // usually 0 for first sheet, adjust if needed
+                dimension: 'ROWS',
+                startIndex: rowIndex + 1, // zero-based index
+                endIndex: rowIndex + 2
+              }
+            }
+          }]
+        }
+      });
+    }
+
+    res.json({ success: true, message: 'Campaign deleted successfully' });
+
+  } catch (err) {
+    console.error('Error deleting campaign:', err);
+    res.status(500).json({ success: false, error: 'Failed to delete campaign' });
+  }
+});
+
 // ==================== START SERVER ====================
 app.listen(PORT, () => { console.log(`JoyFund backend running on port ${PORT}`); });
