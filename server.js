@@ -704,6 +704,24 @@ app.delete('/api/campaign/:campaignId', async (req, res) => {
     res.status(500).json({ success: false, error: 'Failed to delete campaign' });
   }
 });
+app.get("/api/get-verifications", async (req, res) => {
+  try {
+    const userEmail = req.session?.user?.email?.toLowerCase();
+    if (!userEmail) return res.status(401).json({ success: false, verifications: [] });
+
+    // Pull all verification records for this email from Google Sheets
+    const rows = await readSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "ID_Verifications!A:E");
+    const userVerifications = rows
+      .filter(row => row[1]?.toLowerCase() === userEmail)
+      .map(row => ({ timestamp: row[0], status: row[3], idImageUrl: row[4] }));
+
+    res.json({ success: true, verifications: userVerifications });
+  } catch (err) {
+    console.error("Get verifications error:", err);
+    res.status(500).json({ success: false, verifications: [] });
+  }
+});
+
 
 // ==================== START SERVER ====================
 app.listen(PORT, () => { console.log(`JoyFund backend running on port ${PORT}`); });
