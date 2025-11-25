@@ -64,15 +64,34 @@ app.use(session({
 // -------------------- STRIPE --------------------
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY || "");
 
+// ==================== HELPER FUNCTION ====================
+function calculateDonationSplit(donationAmount) {
+  const stripeFee = donationAmount * 0.027 + 0.30; // Stripe fee
+  const joyFundFee = donationAmount * 0.05;        // JoyFund fee
+  const campaignAmount = donationAmount - stripeFee - joyFundFee;
+
+  return {
+    donationAmount,
+    stripeFee,
+    joyFundFee,
+    campaignAmount,
+    timestamp: new Date(),
+  };
+}
+
 // ==================== STRIPE CHECKOUT SESSION ====================
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const { campaignId } = req.params;
     const { amount, successUrl, cancelUrl } = req.body;
+
     if (!campaignId || !amount || !successUrl || !cancelUrl) {
       return res.status(400).json({ success: false, message: "Missing fields" });
     }
+
     const amountInCents = Math.round(amount * 100);
+
+    // Create Stripe Checkout Session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [{
@@ -86,14 +105,47 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       mode: "payment",
       success_url: successUrl,
       cancel_url: cancelUrl,
-      metadata: { campaignId }
+      metadata: { campaignId, donationAmount: amount } // store amount for later use
     });
+
     res.json({ success: true, sessionId: session.id });
+
   } catch (err) {
     console.error("Stripe checkout error:", err);
     res.status(500).json({ success: false, message: "Failed to create checkout session" });
   }
 });
+
+// ==================== STRIPE WEBHOOK FOR PAYMENT SUCCESS ====================
+app.post("/webhook", express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error("Webhook signature verification failed:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const donationAmount = session.metadata.donationAmount
+      ? parseFloat(session.metadata.donationAmount)
+      : 0;
+
+    // Calculate split
+    const split = calculateDonationSplit(donationAmount);
+
+    console.log("Donation split recorded:", split);
+
+    // TODO: Save split to your database for the campaign
+    // Example: db.collection('donations').insertOne({ ...split, campaignId: session.metadata.campaignId });
+  }
+
+  res.status(200).json({ received: true });
+});
+
 
 // -------------------- MAILJET --------------------
 let mailjetClient = null;
