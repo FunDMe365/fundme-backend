@@ -169,6 +169,13 @@ async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex,
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
+// ==================== CLOUDINARY CONFIG ====================
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
 // ==================== LIVE VISITOR TRACKING ====================
 const liveVisitors = {}; // { visitorId: lastPingTimestamp }
 
@@ -243,7 +250,6 @@ async function getUsers() {
   }));
 }
 
-// ------------------- SIGNUP -------------------
 app.post("/api/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -259,7 +265,6 @@ app.post("/api/signup", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: "Signup failed" }); }
 });
 
-// ------------------- SIGNIN -------------------
 app.post("/api/signin", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -275,7 +280,7 @@ app.post("/api/signin", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: "Signin failed" }); }
 });
 
-// ------------------- CHECK SESSION -------------------
+// CHECK SESSION
 app.get("/api/check-session", (req, res) => {
   if (req.session.user) {
     const u = req.session.user;
@@ -291,12 +296,11 @@ app.get("/api/check-session", (req, res) => {
   }
 });
 
-// ------------------- LOGOUT -------------------
 app.post("/api/logout", (req, res) => {
   req.session.destroy(err => err ? res.status(500).json({ error: "Logout failed" }) : res.json({ ok: true }));
 });
 
-// ------------------- PASSWORD RESET -------------------
+// ==================== PASSWORD RESET ====================
 app.post("/api/request-reset", async (req, res) => {
   try {
     const { email } = req.body;
@@ -396,66 +400,97 @@ app.get("/api/waitlist", async (req, res) => {
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user) return res.status(401).json({ success: false });
-    const { title, goal, description, category } = req.body;
-    if (!title || !goal || !description || !category) return res.status(400).json({ success: false });
+    if (!user) return res.status(401).json({ success: false, message: "Not signed in" });
 
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    const campaignId = Date.now().toString();
-    let imageUrl = "https://placehold.co/400x200?text=No+Image";
+    const { title, description, goalAmount } = req.body;
+    if (!title || !description || !goalAmount) return res.status(400).json({ success: false, message: "Missing fields" });
 
+    let imageUrl = "";
     if (req.file) {
-      const buffer = req.file.buffer;
-      const uploaded = await cloudinary.uploader.upload_stream({ resource_type: "image", folder: "campaigns" }, (err, result) => {
-        if (err) console.error(err);
-        return result;
-      }).end(buffer);
-      if (uploaded && uploaded.secure_url) imageUrl = uploaded.secure_url;
+      const uploadResult = await cloudinary.uploader.upload_stream({ resource_type: "image" }, (err, result) => {
+        if (err) throw err;
+        imageUrl = result.secure_url;
+      }).end(req.file.buffer);
     }
 
     const timestamp = new Date().toISOString();
-    await appendSheetValues(spreadsheetId, "Campaigns!A:H", [
-      [campaignId, timestamp, user.email, title, goal, description, category, imageUrl]
+    await appendSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:G", [
+      [timestamp, user.email, title, description, goalAmount, imageUrl, "Active"]
     ]);
-    res.json({ success: true, campaignId });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+
+    res.json({ success: true, message: "Campaign created successfully" });
+  } catch (err) {
+    console.error("Create campaign error:", err);
+    res.status(500).json({ success: false, message: "Failed to create campaign" });
+  }
 });
 
-// ==================== ID VERIFICATION ROUTE ====================
-app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
+// ==================== ID VERIFICATION ====================
+app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user) return res.status(401).json({ success: false, message: "Not logged in" });
-    if (!req.file) return res.status(400).json({ success: false, message: "No ID photo uploaded" });
-
-    const spreadsheetId = process.env.ID_VERIFICATION_SHEET_ID;
-    const email = user.email.toLowerCase();
-
-    // Check if user already submitted
-    const rows = await getSheetValues(spreadsheetId, "A:B");
-    const existing = rows.find(r => (r[0] || "").toLowerCase() === email);
-    if (existing) return res.status(400).json({ success: false, message: "ID already submitted" });
+    if (!user) return res.status(401).json({ success: false, message: "Not signed in" });
+    if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
 
     // Upload to Cloudinary
-    let imageUrl = "";
-    const buffer = req.file.buffer;
     const uploaded = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream({ resource_type: "image", folder: "id_verifications" }, (err, result) => {
-        if (err) reject(err); else resolve(result);
+      const stream = cloudinary.uploader.upload_stream({ resource_type: "auto" }, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
       });
-      stream.end(buffer);
+      stream.end(req.file.buffer);
     });
-    if (uploaded && uploaded.secure_url) imageUrl = uploaded.secure_url;
 
-    // Append to Google Sheet
+    // Google Sheets: update if already exists, else append
+    const sheetId = process.env.ID_VERIFICATIONS_SHEET_ID;
+    const range = "ID_Verifications!A:E";
     const timestamp = new Date().toISOString();
-    await appendSheetValues(spreadsheetId, "A:B", [[email, imageUrl]]);
+    const record = [timestamp, user.email, uploaded.secure_url, "Pending", ""];
 
-    res.json({ success: true, message: "ID submitted successfully", imageUrl });
-  } catch (err) { console.error("ID verification error:", err); res.status(500).json({ success: false, message: err.message }); }
+    const result = await findRowAndUpdateOrAppend(sheetId, range, 1, user.email, record);
+
+    // Optional: send notification email
+    await sendMailjetEmail(
+      "New ID Verification Submitted",
+      `<p>${user.email} submitted a new ID for verification at ${timestamp}.</p>`,
+      process.env.NOTIFY_EMAIL
+    );
+
+    res.json({ success: true, message: "ID verification submitted", action: result.action });
+  } catch (err) {
+    console.error("ID verification error:", err);
+    res.status(500).json({ success: false, message: "Failed to submit ID verification" });
+  }
 });
 
-// ==================== SERVER START ====================
+// ==================== DASHBOARD DATA ====================
+app.get("/api/dashboard", async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ success: false, message: "Not signed in" });
+
+    // Pull ID verification status
+    const rows = await getSheetValues(process.env.ID_VERIFICATIONS_SHEET_ID, "ID_Verifications!A:E");
+    const record = rows.find(r => (r[1] || "").toLowerCase() === user.email.toLowerCase());
+    const idStatus = record ? record[3] : "Not Submitted";
+
+    // Pull campaigns created by user
+    const campaignRows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:G");
+    const userCampaigns = campaignRows.filter(r => (r[1] || "").toLowerCase() === user.email.toLowerCase());
+
+    res.json({
+      success: true,
+      user: { name: user.name, email: user.email },
+      idStatus,
+      campaigns: userCampaigns
+    });
+  } catch (err) {
+    console.error("Dashboard fetch error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch dashboard data" });
+  }
+});
+
+// ==================== SERVER LISTEN ====================
 app.listen(PORT, () => {
   console.log(`JoyFund backend running on port ${PORT}`);
 });
