@@ -143,28 +143,6 @@ async function appendSheetValues(spreadsheetId, range, values) {
   });
 }
 
-async function findRowAndUpdateOrAppend(spreadsheetId, rangeCols, matchColIndex, matchValue, updatedValues) {
-  if (!sheets || !spreadsheetId) throw new Error("Sheets not initialized or missing spreadsheetId");
-  const rows = await getSheetValues(spreadsheetId, rangeCols);
-  const rowIndex = rows.findIndex(r => (r[matchColIndex] || "").toString().trim().toLowerCase() === (matchValue || "").toString().trim().toLowerCase());
-  if (rowIndex === -1) {
-    await appendSheetValues(spreadsheetId, rangeCols, [updatedValues]);
-    return { action: "appended", row: rows.length + 1 };
-  } else {
-    const rowNumber = rowIndex + 1;
-    const startCol = rangeCols.split("!")[1].charAt(0);
-    const endCol = String.fromCharCode(startCol.charCodeAt(0) + updatedValues.length - 1);
-    const updateRange = `${rangeCols.split("!")[0]}!${startCol}${rowNumber}:${endCol}${rowNumber}`;
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: updateRange,
-      valueInputOption: "USER_ENTERED",
-      resource: { values: [updatedValues] }
-    });
-    return { action: "updated", row: rowNumber };
-  }
-}
-
 // -------------------- MULTER --------------------
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
@@ -176,14 +154,11 @@ app.post("/api/track-visitor", (req, res) => {
   try {
     const { visitorId, page } = req.body;
     if (!visitorId) return res.status(400).json({ success: false, message: "Missing visitorId" });
-
     const now = Date.now();
     liveVisitors[visitorId] = now;
-
     for (const id in liveVisitors) {
       if (now - liveVisitors[id] > 30000) delete liveVisitors[id];
     }
-
     res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
   } catch (err) {
     console.error("Visitor tracking error:", err);
@@ -278,7 +253,7 @@ app.post("/api/reset-password", async (req, res) => {
     if (!row) return res.status(400).json({ error: "Invalid or expired token" });
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     const email = row[0];
-    await findRowAndUpdateOrAppend(process.env.USERS_SHEET_ID, "A:D", 2, email, [row[0], row[1], row[2], hashedPassword]);
+    await appendSheetValues(process.env.USERS_SHEET_ID, "A:D", [[row[0], row[1], row[2], hashedPassword]]);
     res.json({ ok: true, message: "Password reset successful" });
   } catch (err) { console.error(err); res.status(500).json({ error: "Failed to reset password" }); }
 });
@@ -323,7 +298,6 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ success: false });
 }
 
-// ------------------- ADMIN LOGIN -------------------
 app.post("/api/admin-login", (req,res)=>{
   const {username,password}=req.body;
   if(username===ADMIN_USERNAME && password===ADMIN_PASSWORD){
@@ -333,12 +307,10 @@ app.post("/api/admin-login", (req,res)=>{
   res.status(401).json({success:false,message:"Invalid credentials"});
 });
 
-// ------------------- ADMIN SESSION CHECK -------------------
 app.get("/api/admin-check", (req,res)=>{
   res.json({admin:!!req.session.admin});
 });
 
-// ------------------- ADMIN LOGOUT -------------------
 app.post("/api/admin-logout", (req,res)=>{
   req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true}));
 });
@@ -356,9 +328,6 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     let imageUrl = "https://placehold.co/400x200?text=No+Image";
 
     if (req.file) {
-      if (!process.env.CLOUDINARY_API_KEY) {
-        return res.status(500).json({ success: false, message: "Cloudinary API key not set" });
-      }
       const uploadResult = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => err ? reject(err) : resolve(result));
         stream.end(req.file.buffer);
@@ -392,45 +361,29 @@ app.get("/api/my-campaigns", async (req, res) => {
         Category: r[5],
         Status: r[6],
         CreatedAt: r[7],
-        ImageURL: r[8]
+        ImageURL: r[8] || "https://placehold.co/400x200?text=No+Image"
       }));
-    res.json(campaigns);
-  } catch (err) { console.error(err); res.status(500).json({ campaigns: [] }); }
+    res.json({ success: true, campaigns });
+  } catch(err){ console.error(err); res.status(500).json({ campaigns: [] }); }
 });
 
-app.get("/api/campaigns", async (req, res) => {
-  try {
-    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const campaigns = rows.map(r => ({
-      Id: r[0],
-      title: r[1],
-      Email: r[2],
-      Goal: r[3],
-      Description: r[4],
-      Category: r[5],
-      Status: r[6],
-      CreatedAt: r[7],
-      ImageURL: r[8] || "https://placehold.co/400x200?text=No+Image"
-    }));
-    res.json(campaigns);
-  } catch (err) { console.error(err); res.status(500).json([]); }
-});
-
-// For old frontend route
+// ==================== PUBLIC CAMPAIGNS ====================
 app.get("/api/public-campaigns", async (req,res)=>{
   try {
     const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const campaigns = rows.map(r=>({
-      Id: r[0],
-      title: r[1],
-      Email: r[2],
-      Goal: r[3],
-      Description: r[4],
-      Category: r[5],
-      Status: r[6],
-      CreatedAt: r[7],
-      ImageURL: r[8] || "https://placehold.co/400x200?text=No+Image"
-    }));
+    const campaigns = rows
+      .filter(r => (r[6] || "").toLowerCase() === "approved")
+      .map(r=>({
+        Id: r[0],
+        title: r[1],
+        Email: r[2],
+        Goal: r[3],
+        Description: r[4],
+        Category: r[5],
+        Status: r[6],
+        CreatedAt: r[7],
+        ImageURL: r[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
     res.json(campaigns);
   } catch(err){ console.error(err); res.status(500).json([]); }
 });
@@ -438,52 +391,50 @@ app.get("/api/public-campaigns", async (req,res)=>{
 // ==================== SEARCH ====================
 app.get("/api/search", async (req,res)=>{
   try {
-    const { q } = req.query;
+    const query = (req.query.q || "").toLowerCase();
     const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const results = rows.filter(r => {
-      const query = (q || "").toLowerCase();
-      return (r[1]||"").toLowerCase().includes(query) || (r[4]||"").toLowerCase().includes(query);
-    }).map(r=>({
-      Id: r[0],
-      title: r[1],
-      Email: r[2],
-      Goal: r[3],
-      Description: r[4],
-      Category: r[5],
-      Status: r[6],
-      CreatedAt: r[7],
-      ImageURL: r[8] || "https://placehold.co/400x200?text=No+Image"
-    }));
+    const results = rows
+      .filter(r => (r[6]||"").toLowerCase() === "approved")
+      .filter(r => r[1]?.toLowerCase().includes(query) || r[4]?.toLowerCase().includes(query))
+      .map(r=>({
+        Id: r[0],
+        title: r[1],
+        Email: r[2],
+        Goal: r[3],
+        Description: r[4],
+        Category: r[5],
+        Status: r[6],
+        CreatedAt: r[7],
+        ImageURL: r[8] || "https://placehold.co/400x200?text=No+Image"
+      }));
     res.json(results);
   } catch(err){ console.error(err); res.status(500).json([]); }
 });
 
 // ==================== ID VERIFICATION ====================
-app.post("/api/verify-id", upload.single("idDocument"), async (req,res)=>{
+app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
   try {
     const user = req.session.user;
-    if(!user) return res.status(401).json({ success:false, message:"Not logged in" });
-    if(!req.file) return res.status(400).json({ success:false, message:"No file uploaded" });
-    if(!process.env.CLOUDINARY_API_KEY) return res.status(500).json({ success:false, message:"Cloudinary not configured" });
+    if (!user) return res.status(401).json({ success: false, message: "Must be signed in" });
+    if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
 
-    const uploadResult = await new Promise((resolve,reject)=>{
-      const stream = cloudinary.uploader.upload_stream({ folder:"joyfund/ids" }, (err,result)=> err ? reject(err) : resolve(result));
-      stream.end(req.file.buffer);
+    const uploadResult = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream({ folder: "joyfund/id_verifications" }, (err, result) => err ? reject(err) : resolve(result))
+        .end(req.file.buffer);
     });
-    const imageUrl = uploadResult.secure_url;
+
     const timestamp = new Date().toISOString();
+    await appendSheetValues(process.env.ID_VERIFICATIONS_SHEET_ID, "A:D", [
+      [user.email.toLowerCase(), uploadResult.secure_url, "Pending", timestamp]
+    ]);
 
-    await appendSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "A:D", [[user.email, timestamp, "Pending", imageUrl]]);
-    await sendMailjetEmail("New ID Verification", `<p>${user.name} (${user.email}) submitted ID verification at ${timestamp}</p>`);
+    await sendMailjetEmail("New ID Verification", `<p>${user.name} (${user.email}) submitted an ID for verification.</p>`);
 
-    res.json({ success:true, message:"ID submitted", imageUrl });
-  } catch(err){ console.error(err); res.status(500).json({ success:false, message:"Failed to submit ID" }); }
+    res.json({ success: true, message: "ID verification submitted" });
+  } catch(err){ console.error(err); res.status(500).json({ success: false, message: "Failed to submit ID verification" }); }
 });
 
-// ==================== STATIC FILES ====================
-app.use(express.static("public"));
-
-// ==================== SERVER LISTEN ====================
+// ==================== START SERVER ====================
 app.listen(PORT, () => {
   console.log(`JoyFund backend running on port ${PORT}`);
 });
