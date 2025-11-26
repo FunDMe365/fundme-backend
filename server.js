@@ -193,7 +193,6 @@ app.post("/api/track-visitor", (req, res) => {
   }
 });
 
-
 //==================Update Profile==================
 app.post("/api/update-profile", async (req, res) => {
   try {
@@ -214,7 +213,6 @@ app.post("/api/update-profile", async (req, res) => {
     res.json({ success:false, error:"Server error" });
   }
 });
-
 
 // ==================== VISITOR TRACKING ====================
 async function logVisitor(page) {
@@ -245,6 +243,7 @@ async function getUsers() {
   }));
 }
 
+// ------------------- SIGNUP -------------------
 app.post("/api/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -260,6 +259,7 @@ app.post("/api/signup", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: "Signup failed" }); }
 });
 
+// ------------------- SIGNIN -------------------
 app.post("/api/signin", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -275,7 +275,7 @@ app.post("/api/signin", async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: "Signin failed" }); }
 });
 
-// CHECK SESSION
+// ------------------- CHECK SESSION -------------------
 app.get("/api/check-session", (req, res) => {
   if (req.session.user) {
     const u = req.session.user;
@@ -291,11 +291,12 @@ app.get("/api/check-session", (req, res) => {
   }
 });
 
+// ------------------- LOGOUT -------------------
 app.post("/api/logout", (req, res) => {
   req.session.destroy(err => err ? res.status(500).json({ error: "Logout failed" }) : res.json({ ok: true }));
 });
 
-// ==================== PASSWORD RESET ====================
+// ------------------- PASSWORD RESET -------------------
 app.post("/api/request-reset", async (req, res) => {
   try {
     const { email } = req.body;
@@ -404,159 +405,57 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
     let imageUrl = "https://placehold.co/400x200?text=No+Image";
 
     if (req.file) {
-      const uploadResult = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => err ? reject(err) : resolve(result));
-        stream.end(req.file.buffer);
-      });
-      imageUrl = uploadResult.secure_url;
+      const buffer = req.file.buffer;
+      const uploaded = await cloudinary.uploader.upload_stream({ resource_type: "image", folder: "campaigns" }, (err, result) => {
+        if (err) console.error(err);
+        return result;
+      }).end(buffer);
+      if (uploaded && uploaded.secure_url) imageUrl = uploaded.secure_url;
     }
 
-    const createdAt = new Date().toISOString();
-    const status = "Pending";
-    const newCampaignRow = [campaignId, title, user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl];
-    await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
-
-    await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
-    res.json({ success: true, message: "Campaign submitted", campaignId });
-  } catch (err) { console.error(err); res.status(500).json({ success: false, message: "Failed to create campaign" }); }
+    const timestamp = new Date().toISOString();
+    await appendSheetValues(spreadsheetId, "Campaigns!A:H", [
+      [campaignId, timestamp, user.email, title, goal, description, category, imageUrl]
+    ]);
+    res.json({ success: true, campaignId });
+  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
 
-app.get("/api/my-campaigns", async (req, res) => {
+// ==================== ID VERIFICATION ROUTE ====================
+app.post("/api/verify-id", upload.single("idPhoto"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user) return res.status(401).json({ campaigns: [] });
+    if (!user) return res.status(401).json({ success: false, message: "Not logged in" });
+    if (!req.file) return res.status(400).json({ success: false, message: "No ID photo uploaded" });
 
-    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const campaigns = rows.filter(r => (r[2]||"").toLowerCase() === user.email.toLowerCase())
-      .map(r => ({
-        campaignId: r[0],
-        title: r[1],
-        creator: r[2],
-        goal: r[3],
-        description: r[4],
-        category: r[5],
-        status: r[6],
-        createdAt: r[7],
-        imageUrl: r[8] || "https://placehold.co/400x200?text=No+Image"
-      }));
-    res.json({ success: true, campaigns });
-  } catch(err){ console.error(err); res.status(500).json({ campaigns: [] }); }
+    const spreadsheetId = process.env.ID_VERIFICATION_SHEET_ID;
+    const email = user.email.toLowerCase();
+
+    // Check if user already submitted
+    const rows = await getSheetValues(spreadsheetId, "A:B");
+    const existing = rows.find(r => (r[0] || "").toLowerCase() === email);
+    if (existing) return res.status(400).json({ success: false, message: "ID already submitted" });
+
+    // Upload to Cloudinary
+    let imageUrl = "";
+    const buffer = req.file.buffer;
+    const uploaded = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream({ resource_type: "image", folder: "id_verifications" }, (err, result) => {
+        if (err) reject(err); else resolve(result);
+      });
+      stream.end(buffer);
+    });
+    if (uploaded && uploaded.secure_url) imageUrl = uploaded.secure_url;
+
+    // Append to Google Sheet
+    const timestamp = new Date().toISOString();
+    await appendSheetValues(spreadsheetId, "A:B", [[email, imageUrl]]);
+
+    res.json({ success: true, message: "ID submitted successfully", imageUrl });
+  } catch (err) { console.error("ID verification error:", err); res.status(500).json({ success: false, message: err.message }); }
 });
 
-app.get("/api/public-campaigns", async (req,res)=>{
-  try {
-    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID,"A:I");
-    const campaigns = rows.filter(r=>["Approved","active"].includes(r[6])).map(r=>({
-      campaignId:r[0],title:r[1],creator:r[2],goal:r[3],description:r[4],category:r[5],status:r[6],createdAt:r[7],imageUrl:r[8]||"https://placehold.co/400x200?text=No+Image"
-    }));
-    res.json({success:true,campaigns});
-  } catch(err){ console.error(err); res.status(500).json({success:false}); }
+// ==================== SERVER START ====================
+app.listen(PORT, () => {
+  console.log(`JoyFund backend running on port ${PORT}`);
 });
-
-// ==================== USER VERIFICATIONS ====================
-app.get("/api/my-verifications", async (req, res) => {
-  try {
-    const userEmail = req.session?.user?.email?.toLowerCase();
-    if (!userEmail) return res.status(401).json({ success: false, verifications: [] });
-    const rows = await getSheetValues(process.env.ID_VERIFICATION_SHEET_ID, "ID_Verifications!A:E");
-    const trimmedRows = rows.map(r => r.map(cell => (cell || "").toString().trim()));
-    const verifications = trimmedRows
-      .filter(r => (r[1] || "").toLowerCase() === userEmail)
-      .map(r => ({ timestamp: r[0], email: r[1], status: r[3] || "Pending", idImageUrl: r[4] || "" }));
-    res.json({ success: true, verifications });
-  } catch (err) {
-    console.error("Error fetching verifications:", err);
-    res.status(500).json({ success: false, verifications: [] });
-  }
-});
-
-// ==================== ADMIN ROUTES ====================
-function requireAdmin(req, res, next) {
-  if (req.session.admin) return next();
-  res.status(403).json({ success: false });
-}
-
-// ------------------- ADMIN LOGIN -------------------
-app.post("/api/admin-login", (req,res)=>{
-  const {username,password}=req.body;
-  if(username===ADMIN_USERNAME && password===ADMIN_PASSWORD){
-    req.session.admin=true;
-    return res.json({success:true});
-  }
-  res.status(401).json({success:false,message:"Invalid credentials"});
-});
-
-// ------------------- ADMIN SESSION CHECK -------------------
-app.get("/api/admin-check", (req,res)=>{
-  res.json({admin:!!req.session.admin});
-});
-
-// ------------------- ADMIN LOGOUT -------------------
-app.post("/api/admin-logout", (req,res)=>{
-  req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true}));
-});
-
-// ==================== START OF NEW ADMIN DASHBOARD SHEETS ROUTES ====================
-
-// GET all users for admin dashboard (reads Users sheet and returns sanitized rows)
-app.get("/api/users", requireAdmin, async (req, res) => {
-  try {
-    const rows = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
-    // strip header row if present (header includes "Join" or "JoinDate")
-    let dataRows = rows || [];
-    if (dataRows.length > 0) {
-      const firstRowJoined = (dataRows[0] || []).join(" ").toLowerCase();
-      if (firstRowJoined.includes("joindate") || firstRowJoined.includes("join date") || firstRowJoined.includes("join")) {
-        dataRows = dataRows.slice(1);
-      }
-    }
-    // map to arrays expected by frontend: [JoinDate, Name, Email, IDStatus]
-    const mapped = (dataRows || []).map(r => [
-      r[0] || "", // JoinDate
-      r[1] || "", // Name
-      r[2] || "", // Email
-      r[4] || ""  // ID Status if present in column E, otherwise empty
-    ]);
-    res.json({ success: true, rows: mapped });
-  } catch (err) {
-    console.error("ADMIN GET USERS ERROR:", err);
-    res.status(500).json({ success: false });
-  }
-});
-
-// GET all volunteers for admin dashboard (reads Volunteers sheet and returns rows)
-// Will return arrays: [Timestamp, Name, Email, Message, Date Submitted]
-app.get("/api/volunteers", requireAdmin, async (req, res) => {
-  try {
-    const rows = await getSheetValues(process.env.VOLUNTEERS_SHEET_ID, "A:E");
-    // strip header row if present (header includes "Timestamp" or "Name")
-    let dataRows = rows || [];
-    if (dataRows.length > 0) {
-      const firstRowJoined = (dataRows[0] || []).join(" ").toLowerCase();
-      if (firstRowJoined.includes("timestamp") || firstRowJoined.includes("name")) {
-        dataRows = dataRows.slice(1);
-      }
-    }
-    const mapped = (dataRows || []).map(r => [
-      r[0] || "", // Timestamp
-      r[1] || "", // Name
-      r[2] || "", // Email
-      r[3] || "", // Message (mapped to role per your choice B)
-      r[4] || ""  // Date Submitted (mapped to availability per your choice B)
-    ]);
-    res.json({ success: true, rows: mapped });
-  } catch (err) {
-    console.error("ADMIN GET VOLUNTEERS ERROR:", err);
-    res.status(500).json({ success: false });
-  }
-});
-
-// ==================== END OF NEW ADMIN DASHBOARD SHEETS ROUTES ====
-
-/* 
-  NOTE: I inserted only the two admin dashboard endpoints above.
-  Everything else remains unchanged and in the exact order you provided.
-*/
-
-// ==================== START SERVER ====================
-app.listen(PORT, () => { console.log(`JoyFund backend running on port ${PORT}`); });
