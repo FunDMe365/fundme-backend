@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - FULL JOYFUND BACKEND ====================
+// ==================== SERVER.JS - FULL JOYFUND BACKEND (UPDATED) ====================
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -12,8 +12,8 @@ const mailjetLib = require("node-mailjet");
 const cloudinary = require("cloudinary").v2;
 require("dotenv").config();
 
-const ADMIN_USERNAME = "admin";
-const ADMIN_PASSWORD = "FunDMe$123";
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "FunDMe$123";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -27,18 +27,22 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
 
 app.use(cors({
   origin: function(origin, callback) {
+    // allow requests with no origin (like mobile apps, curl)
     if (!origin) return callback(null, true);
+    if (allowedOrigins.length === 0) return callback(null, true); // if no config, allow all
     if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error("CORS not allowed: " + origin));
   },
-  credentials: true
+  credentials: true,
+  optionsSuccessStatus: 200
 }));
 
-app.options("*", cors({ origin: allowedOrigins, credentials: true }));
+app.options("*", cors({ origin: allowedOrigins.length ? allowedOrigins : true, credentials: true }));
 
+// small convenience headers middleware
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   next();
 });
 
@@ -62,17 +66,23 @@ app.use(session({
 }));
 
 // -------------------- STRIPE --------------------
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY || "");
+let stripe = null;
+if (process.env.STRIPE_SECRET_KEY) {
+  stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+} else {
+  console.warn("Warning: STRIPE_SECRET_KEY not set. Stripe routes will fail until provided.");
+}
 
 // ==================== STRIPE CHECKOUT SESSION ====================
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
+    if (!stripe) return res.status(500).json({ success: false, message: "Stripe not configured" });
     const { campaignId } = req.params;
     const { amount, successUrl, cancelUrl } = req.body;
     if (!campaignId || !amount || !successUrl || !cancelUrl) {
       return res.status(400).json({ success: false, message: "Missing fields" });
     }
-    const amountInCents = Math.round(amount * 100);
+    const amountInCents = Math.round(Number(amount) * 100);
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [{
@@ -101,7 +111,11 @@ if (process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET) {
   mailjetClient = mailjetLib.apiConnect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
 }
 async function sendMailjetEmail(subject, htmlContent, toEmail) {
-  if (!mailjetClient) return;
+  if (!mailjetClient) {
+    // no-op but log
+    console.warn("Mailjet not configured; email would be:", subject, toEmail);
+    return;
+  }
   try {
     await mailjetClient.post("send", { version: "v3.1" }).request({
       Messages: [{
@@ -115,7 +129,7 @@ async function sendMailjetEmail(subject, htmlContent, toEmail) {
 }
 
 // -------------------- GOOGLE SHEETS --------------------
-let sheets;
+let sheets = null;
 try {
   if (process.env.GOOGLE_CREDENTIALS_JSON) {
     const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
@@ -124,13 +138,20 @@ try {
       scopes: ["https://www.googleapis.com/auth/spreadsheets"]
     });
     sheets = google.sheets({ version: "v4", auth });
+  } else {
+    console.warn("GOOGLE_CREDENTIALS_JSON not present - Sheets disabled.");
   }
-} catch (err) { console.error("Google Sheets init failed", err.message); }
+} catch (err) { console.error("Google Sheets init failed", err && err.message); }
 
 async function getSheetValues(spreadsheetId, range) {
-  if (!sheets || !spreadsheetId) return [];
-  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  return res.data.values || [];
+  try {
+    if (!sheets || !spreadsheetId) return [];
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    return res.data.values || [];
+  } catch (err) {
+    console.error("getSheetValues error:", err && err.message);
+    return [];
+  }
 }
 
 async function appendSheetValues(spreadsheetId, range, values) {
@@ -146,6 +167,23 @@ async function appendSheetValues(spreadsheetId, range, values) {
 // -------------------- MULTER --------------------
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
+
+// -------------------- CLOUDINARY --------------------
+if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+  });
+} else {
+  console.warn("Cloudinary not fully configured. Image uploads will fail without CLOUDINARY env vars.");
+}
+
+// small helper for placeholder
+function safeImageUrl(url) {
+  if (!url || url.toString().trim() === "") return "https://placehold.co/400x200?text=No+Image";
+  return url;
+}
 
 // ==================== LIVE VISITOR TRACKING ====================
 const liveVisitors = {}; // { visitorId: lastPingTimestamp }
@@ -184,7 +222,7 @@ app.post("/api/signup", async (req, res) => {
     if (!name || !email || !password) return res.status(400).json({ error: "Missing fields" });
     const users = await getUsers();
     const emailLower = email.trim().toLowerCase();
-    if (users.some(u => u.email.toLowerCase() === emailLower)) return res.status(409).json({ error: "Email already exists" });
+    if (users.some(u => (u.email || "").toLowerCase() === emailLower)) return res.status(409).json({ error: "Email already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
     const timestamp = new Date().toISOString();
     await appendSheetValues(process.env.USERS_SHEET_ID, "A:D", [[timestamp, name, emailLower, hashedPassword]]);
@@ -199,7 +237,7 @@ app.post("/api/signin", async (req, res) => {
     if (!email || !password) return res.status(400).json({ error: "Missing fields" });
     const users = await getUsers();
     const inputEmail = email.trim().toLowerCase();
-    const user = users.find(u => u.email.toLowerCase() === inputEmail);
+    const user = users.find(u => (u.email || "").toLowerCase() === inputEmail);
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
     const match = await bcrypt.compare(password, user.password || "");
     if (!match) return res.status(401).json({ error: "Invalid credentials" });
@@ -234,6 +272,7 @@ app.post("/api/request-reset", async (req, res) => {
     if (!email) return res.status(400).json({ error: "Missing email" });
     const token = crypto.randomBytes(20).toString("hex");
     const expiry = Date.now() + 3600000;
+    // store token row; keep format E:G as your prior code
     await appendSheetValues(process.env.USERS_SHEET_ID, "E:G", [[email.toLowerCase(), token, expiry]]);
     await sendMailjetEmail(
       "Password Reset",
@@ -253,7 +292,8 @@ app.post("/api/reset-password", async (req, res) => {
     if (!row) return res.status(400).json({ error: "Invalid or expired token" });
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     const email = row[0];
-    await appendSheetValues(process.env.USERS_SHEET_ID, "A:D", [[row[0], row[1], row[2], hashedPassword]]);
+    // Append new password row to A:D (so user record is updated - adapt if you use a different method)
+    await appendSheetValues(process.env.USERS_SHEET_ID, "A:D", [[new Date().toISOString(), email, email, hashedPassword]]);
     res.json({ ok: true, message: "Password reset successful" });
   } catch (err) { console.error(err); res.status(500).json({ error: "Failed to reset password" }); }
 });
@@ -287,15 +327,15 @@ app.post("/api/street-team", async (req, res) => {
     if (!name || !email || !city) return res.status(400).json({ success: false });
     const timestamp = new Date().toLocaleString();
     await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "StreetTeam!A:E", [[timestamp, name, email.toLowerCase(), city, hoursAvailable || ""]]);
-    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined street team in ${city} at ${timestamp}. Hours: ${hoursAvailable || "N/A"}</p>`); 
+    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined street team in ${city} at ${timestamp}. Hours: ${hoursAvailable || "N/A"}</p>`);
     res.json({ success: true });
   } catch (err) { console.error(err); res.status(500).json({ success: false }); }
 });
 
 // ==================== ADMIN ROUTES ====================
 function requireAdmin(req, res, next) {
-  if (req.session.admin) return next();
-  res.status(403).json({ success: false });
+  if (req.session && req.session.admin) return next();
+  res.status(403).json({ success: false, message: "Forbidden" });
 }
 
 app.post("/api/admin-login", (req,res)=>{
@@ -308,7 +348,7 @@ app.post("/api/admin-login", (req,res)=>{
 });
 
 app.get("/api/admin-check", (req,res)=>{
-  res.json({admin:!!req.session.admin});
+  res.json({admin:!!(req.session && req.session.admin)});
 });
 
 app.post("/api/admin-logout", (req,res)=>{
@@ -319,20 +359,26 @@ app.post("/api/admin-logout", (req,res)=>{
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user) return res.status(401).json({ success: false });
+    if (!user) return res.status(401).json({ success: false, message: "Not signed in" });
     const { title, goal, description, category } = req.body;
-    if (!title || !goal || !description || !category) return res.status(400).json({ success: false });
+    if (!title || !goal || !description || !category) return res.status(400).json({ success: false, message: "Missing fields" });
 
     const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    if (!spreadsheetId) return res.status(500).json({ success: false, message: "CAMPAIGNS_SHEET_ID not configured" });
+
     const campaignId = Date.now().toString();
-    let imageUrl = "https://placehold.co/400x200?text=No+Image";
+    let imageUrl = safeImageUrl("");
 
     if (req.file) {
-      const uploadResult = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => err ? reject(err) : resolve(result));
-        stream.end(req.file.buffer);
-      });
-      imageUrl = uploadResult.secure_url;
+      if (!cloudinary.config().api_key) {
+        console.warn("Cloudinary not configured; skipping upload.");
+      } else {
+        const uploadResult = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/campaigns" }, (err, result) => err ? reject(err) : resolve(result));
+          stream.end(req.file.buffer);
+        });
+        imageUrl = uploadResult.secure_url;
+      }
     }
 
     const createdAt = new Date().toISOString();
@@ -351,7 +397,7 @@ app.get("/api/my-campaigns", async (req, res) => {
     if (!user) return res.status(401).json({ campaigns: [] });
 
     const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const campaigns = rows.filter(r => (r[2]||"").toLowerCase() === user.email.toLowerCase())
+    const campaigns = rows.filter(r => ((r[2]||"").toLowerCase() === user.email.toLowerCase()))
       .map(r => ({
         Id: r[0],
         title: r[1],
@@ -361,18 +407,21 @@ app.get("/api/my-campaigns", async (req, res) => {
         Category: r[5],
         Status: r[6],
         CreatedAt: r[7],
-        ImageURL: r[8] || "https://placehold.co/400x200?text=No+Image"
+        ImageURL: safeImageUrl(r[8])
       }));
     res.json({ success: true, campaigns });
   } catch(err){ console.error(err); res.status(500).json({ campaigns: [] }); }
 });
 
 // ==================== PUBLIC CAMPAIGNS ====================
+// Returns JSON array of approved campaigns
 app.get("/api/public-campaigns", async (req,res)=>{
   try {
+    if (!process.env.CAMPAIGNS_SHEET_ID) return res.status(500).json({ success: false, error: "CAMPAIGNS_SHEET_ID not configured" });
+
     const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const campaigns = rows
-      .filter(r => (r[6] || "").toLowerCase() === "approved")
+    const campaigns = (rows || [])
+      .filter(r => (r[6] || "").toString().trim().toLowerCase() === "approved")
       .map(r=>({
         Id: r[0],
         title: r[1],
@@ -382,20 +431,31 @@ app.get("/api/public-campaigns", async (req,res)=>{
         Category: r[5],
         Status: r[6],
         CreatedAt: r[7],
-        ImageURL: r[8] || "https://placehold.co/400x200?text=No+Image"
+        ImageURL: safeImageUrl(r[8])
       }));
-    res.json(campaigns);
-  } catch(err){ console.error(err); res.status(500).json([]); }
+    res.json({ success: true, campaigns });
+  } catch(err){
+    console.error("public-campaigns error:", err);
+    res.status(500).json({ success: false, campaigns: [], error: "Failed to load public campaigns" });
+  }
 });
 
 // ==================== SEARCH ====================
 app.get("/api/search", async (req,res)=>{
   try {
-    const query = (req.query.q || "").toLowerCase();
+    const query = (req.query.q || "").toString().trim().toLowerCase();
+    if (!process.env.CAMPAIGNS_SHEET_ID) return res.status(500).json({ success: false, error: "CAMPAIGNS_SHEET_ID not configured" });
+
     const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const results = rows
-      .filter(r => (r[6]||"").toLowerCase() === "approved")
-      .filter(r => r[1]?.toLowerCase().includes(query) || r[4]?.toLowerCase().includes(query))
+    const results = (rows || [])
+      .filter(r => (r[6]||"").toString().trim().toLowerCase() === "approved")
+      .filter(r => {
+        if (!query) return true;
+        const t = (r[1] || "").toString().toLowerCase();
+        const d = (r[4] || "").toString().toLowerCase();
+        const c = (r[5] || "").toString().toLowerCase();
+        return t.includes(query) || d.includes(query) || c.includes(query);
+      })
       .map(r=>({
         Id: r[0],
         title: r[1],
@@ -405,10 +465,10 @@ app.get("/api/search", async (req,res)=>{
         Category: r[5],
         Status: r[6],
         CreatedAt: r[7],
-        ImageURL: r[8] || "https://placehold.co/400x200?text=No+Image"
+        ImageURL: safeImageUrl(r[8])
       }));
-    res.json(results);
-  } catch(err){ console.error(err); res.status(500).json([]); }
+    res.json({ success: true, results });
+  } catch(err){ console.error("search error:", err); res.status(500).json({ success: false, results: [] }); }
 });
 
 // ==================== ID VERIFICATION ====================
@@ -418,9 +478,13 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
     if (!user) return res.status(401).json({ success: false, message: "Must be signed in" });
     if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
 
+    if (!cloudinary.config().api_key) {
+      return res.status(500).json({ success: false, message: "Cloudinary not configured" });
+    }
+
     const uploadResult = await new Promise((resolve, reject) => {
-      cloudinary.uploader.upload_stream({ folder: "joyfund/id_verifications" }, (err, result) => err ? reject(err) : resolve(result))
-        .end(req.file.buffer);
+      const stream = cloudinary.uploader.upload_stream({ folder: "joyfund/id_verifications" }, (err, result) => err ? reject(err) : resolve(result));
+      stream.end(req.file.buffer);
     });
 
     const timestamp = new Date().toISOString();
@@ -432,6 +496,26 @@ app.post("/api/verify-id", upload.single("idDocument"), async (req, res) => {
 
     res.json({ success: true, message: "ID verification submitted" });
   } catch(err){ console.error(err); res.status(500).json({ success: false, message: "Failed to submit ID verification" }); }
+});
+
+// ==================== FALLBACKS & ERROR HANDLING ====================
+
+// Return JSON 404 for unknown api routes so frontend doesn't receive HTML
+app.use("/api/*", (req, res, next) => {
+  if (!res.headersSent) {
+    return res.status(404).json({ success: false, error: "API endpoint not found" });
+  }
+  next();
+});
+
+// Generic error handler that returns JSON for /api routes
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err && err.stack ? err.stack : err);
+  if (req.path && req.path.startsWith("/api")) {
+    if (!res.headersSent) return res.status(500).json({ success: false, error: err && err.message ? err.message : "Internal server error" });
+  }
+  // for non-api paths, default behavior (you can add static file serving here if desired)
+  next(err);
 });
 
 // ==================== START SERVER ====================
