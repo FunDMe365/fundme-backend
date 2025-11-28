@@ -403,11 +403,10 @@ app.get("/api/donations", async (req, res) => {
   }
 });
 
-// ==================== MY VERIFICATIONS ROUTE ====================
+// ==================== MY VERIFICATIONS ROUTE FIXED ====================
 app.get("/api/my-verifications", async (req, res) => {
   try {
     const user = req.session.user;
-
     if (!user) {
       console.log("❌ No user session");
       return res.status(401).json([]);
@@ -420,39 +419,37 @@ app.get("/api/my-verifications", async (req, res) => {
     }
 
     // Fetch all verification rows from the sheet
-    const rows = await getSheetValues(sheetId, "A:C"); 
-    const headers = ["Email", "Status", "IDImageUrl"];
-
-    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+    const rows = await getSheetValues(sheetId, "A:E"); // Timestamp | Email | Name | Status | ID Photo URL
+    if (!rows || !Array.isArray(rows) || rows.length <= 1) {
       console.log("ℹ️ No verification rows found");
       return res.json([]);
     }
 
-    // Map rows to objects safely
-    const verifications = rows
-      .map(r => {
-        const obj = {};
-        headers.forEach((h, i) => {
-          obj[h] = r[i] || "";
-        });
-        return obj;
-      })
-      // Only include rows for the logged-in user
-      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
-      // Latest submission first
-      .reverse();
+    const headers = rows[0].map(h => h.trim()); // clean header names
+    const dataRows = rows.slice(1);
 
-    // Return empty array if user has no verifications
-    res.json(verifications.length ? verifications : []);
+    // Map column indices by header name
+    const colIndex = {};
+    headers.forEach((h, i) => { colIndex[h] = i; });
+
+    const verifications = dataRows
+      .map(r => ({
+        TimeStamp: r[colIndex["TimeStamp"]] || "",
+        Email: (r[colIndex["Email"]] || "").trim().toLowerCase(),
+        Name: r[colIndex["Name"]] || "",
+        Status: r[colIndex["Status"]] || "Pending",
+        IDImageUrl: r[colIndex["ID Photo URL"]] || ""
+      }))
+      .filter(v => v.Email === (user.email || "").trim().toLowerCase())
+      .sort((a, b) => new Date(b.TimeStamp) - new Date(a.TimeStamp));
+
+    res.json(verifications);
 
   } catch (err) {
     console.error("🔥 ERROR IN /api/my-verifications:", err);
     res.status(500).json([]);
   }
 });
-
-
-
 // ==================== START SERVER ====================
 app.listen(PORT, ()=>console.log(`JoyFund backend running on port ${PORT}`));
 
