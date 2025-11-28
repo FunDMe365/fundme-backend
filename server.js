@@ -407,38 +407,29 @@ app.get("/api/donations", async (req, res) => {
 app.get("/api/my-verifications", async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user) {
-      console.log("❌ No user session");
-      return res.status(401).json([]);
-    }
+    if (!user) return res.status(401).json([]);
 
     const sheetId = process.env.ID_VERIFICATION_SHEET_ID;
-    if (!sheetId) {
-      console.log("❌ Missing ID_VERIFICATION_SHEET_ID");
-      return res.status(500).json([]);
-    }
+    if (!sheetId) return res.status(500).json([]);
 
-    // Fetch all verification rows from the sheet
     const rows = await getSheetValues(sheetId, "A:E"); // Timestamp | Email | Name | Status | ID Photo URL
-    if (!rows || !Array.isArray(rows) || rows.length <= 1) {
-      console.log("ℹ️ No verification rows found");
-      return res.json([]);
-    }
+    if (!rows || rows.length <= 1) return res.json([]);
 
-    const headers = rows[0].map(h => h.trim()); // clean header names
+    // Normalize headers: trim + lowercase
+    const headers = rows[0].map(h => h.trim().toLowerCase());
     const dataRows = rows.slice(1);
 
-    // Map column indices by header name
+    // Map column indices
     const colIndex = {};
     headers.forEach((h, i) => { colIndex[h] = i; });
 
     const verifications = dataRows
       .map(r => ({
-        TimeStamp: r[colIndex["TimeStamp"]] || "",
-        Email: (r[colIndex["Email"]] || "").trim().toLowerCase(),
-        Name: r[colIndex["Name"]] || "",
-        Status: r[colIndex["Status"]] || "Pending",
-        IDImageUrl: r[colIndex["ID Photo URL"]] || ""
+        TimeStamp: r[colIndex["timestamp"]] || "",
+        Email: (r[colIndex["email"]] || "").trim().toLowerCase(),
+        Name: r[colIndex["name"]] || "",
+        Status: r[colIndex["status"]] || "Pending",
+        IDImageUrl: r[colIndex["id photo url"]] || ""
       }))
       .filter(v => v.Email === (user.email || "").trim().toLowerCase())
       .sort((a, b) => new Date(b.TimeStamp) - new Date(a.TimeStamp));
@@ -450,6 +441,7 @@ app.get("/api/my-verifications", async (req, res) => {
     res.status(500).json([]);
   }
 });
+
 // ==================== START SERVER ====================
 app.listen(PORT, ()=>console.log(`JoyFund backend running on port ${PORT}`));
 
