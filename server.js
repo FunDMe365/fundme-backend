@@ -407,6 +407,7 @@ app.get("/api/donations", async (req, res) => {
 app.get("/api/my-verifications", async (req, res) => {
   try {
     const user = req.session.user;
+
     if (!user) {
       console.log("❌ No user session");
       return res.status(401).json([]);
@@ -420,12 +421,17 @@ app.get("/api/my-verifications", async (req, res) => {
 
     // Fetch all verification rows from the sheet
     const rows = await getSheetValues(sheetId, "A:C"); 
-    const headers = ["Email", "Status", "IDImageUrl"]; // consistent field names
+    const headers = ["Email", "Status", "IDImageUrl"];
 
-    // Map rows to objects
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      console.log("ℹ️ No verification rows found");
+      return res.json([]);
+    }
+
+    // Map rows to objects safely
     const verifications = rows
       .map(r => {
-        let obj = {};
+        const obj = {};
         headers.forEach((h, i) => {
           obj[h] = r[i] || "";
         });
@@ -433,16 +439,18 @@ app.get("/api/my-verifications", async (req, res) => {
       })
       // Only include rows for the logged-in user
       .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
-      // Optional: reverse so latest submission is first
+      // Latest submission first
       .reverse();
 
-    res.json(verifications);
+    // Return empty array if user has no verifications
+    res.json(verifications.length ? verifications : []);
 
   } catch (err) {
     console.error("🔥 ERROR IN /api/my-verifications:", err);
     res.status(500).json([]);
   }
 });
+
 
 
 // ==================== START SERVER ====================
