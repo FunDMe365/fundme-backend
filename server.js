@@ -403,24 +403,41 @@ app.get("/api/donations", async (req, res) => {
   }
 });
 
-// ==================== MY VERIFICATIONS ROUTE (NEW FOR DASHBOARD) ====================
-app.get("/api/my-verifications", async(req,res)=>{
+// ==================== MY VERIFICATIONS ROUTE ====================
+app.get("/api/my-verifications", async (req, res) => {
   try {
     const user = req.session.user;
-    if(!user) return res.status(401).json([]);
-    if(!process.env.IDS_SHEET_ID) return res.status(500).json([]);
-    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:C");
-    const headers = ["Email","Status","SubmittedAt"];
-    const verifications = rows.map(r=>{
-      let obj={};
-      headers.forEach((h,i)=>obj[h]=r[i]||"");
+    if (!user) return res.status(401).json({ verifications: [] }); // Not logged in
+
+    const sheetId = process.env.IDS_SHEET_ID;
+    if (!sheetId) return res.status(500).json({ verifications: [] }); // Sheet not configured
+
+    // Fetch all verification rows: columns A = Email, B = Status, C = SubmittedAt, D = ID Image URL
+    const rows = await getSheetValues(sheetId, "A:D");
+
+    if (!rows || rows.length === 0) return res.json({ verifications: [] });
+
+    const headers = ["Email", "Status", "SubmittedAt", "IDImageUrl"];
+    const verifications = rows.map(r => {
+      let obj = {};
+      headers.forEach((h, i) => obj[h] = r[i] || "");
       return obj;
-    }).filter(v=>v.Email && v.Email.toLowerCase()===user.email.toLowerCase())
-      .map(v=>({...v, Status: v.Status==="Verified"?"Verified":"Pending"}));
-    res.json(verifications);
-  } catch(err) {
-    console.error(err);
-    res.status(500).json([]);
+    })
+    // Filter for current user
+    .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
+    // Optional: sort by latest submission
+    .sort((a,b) => new Date(b.SubmittedAt) - new Date(a.SubmittedAt))
+    // Map status to "Verified" or "Pending"
+    .map(v => ({
+      ...v,
+      Status: (v.Status && v.Status.toLowerCase() === "verified") ? "Verified" : "Pending"
+    }));
+
+    res.json({ verifications });
+
+  } catch (err) {
+    console.error("Error fetching verifications:", err);
+    res.status(500).json({ verifications: [] });
   }
 });
 
