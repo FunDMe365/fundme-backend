@@ -411,30 +411,29 @@ app.get("/api/my-verifications", async (req, res) => {
 
     if (!process.env.IDS_SHEET_ID) return res.status(500).json([]);
 
-    // Fetch all verification rows from the sheet
-    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:C"); 
-    const headers = ["Email", "Status", "IDImageUrl"]; // consistent field names
+    // Fetch all verification rows
+    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:C");
+    const headers = ["Email", "Status", "IDImageUrl"];
 
-    // Map rows to objects
-    const verifications = rows.map(r => {
-      let obj = {};
-      headers.forEach((h, i) => {
-        obj[h] = r[i] || "";
-      });
-      return obj;
-    })
-    // Only include rows for the logged-in user
-    .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
-    // Sort so latest submission is first
-    .sort((a, b) => new Date(b.SubmittedAt || Date.now()) - new Date(a.SubmittedAt || Date.now()));
+    const verifications = rows
+      .map(r => {
+        let obj = {};
+        headers.forEach((h, i) => {
+          obj[h] = r[i] || "";
+        });
+        return obj;
+      })
+      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
+      .reverse(); // newest entry last, then reversed to first
 
     res.json(verifications);
 
   } catch (err) {
     console.error("Error in /api/my-verifications:", err);
-    res.status(500).json([]); // always return an array, never crash
+    res.status(500).json([]);
   }
 });
+
 
 // ==================== START SERVER ====================
 app.listen(PORT, ()=>console.log(`JoyFund backend running on port ${PORT}`));
