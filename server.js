@@ -403,48 +403,39 @@ app.get("/api/donations", async (req, res) => {
   }
 });
 
-// ==================== MY VERIFICATIONS ROUTE (DIAGNOSTIC) ====================
+// ==================== MY VERIFICATIONS ROUTE ====================
 app.get("/api/my-verifications", async (req, res) => {
   try {
-    console.log("📌 /api/my-verifications called");
-
     const user = req.session.user;
-    console.log("📌 Session user:", user);
-
     if (!user) {
       console.log("❌ No user session");
       return res.status(401).json([]);
     }
 
-    if (!process.env.IDS_SHEET_ID) {
-      console.log("❌ Missing IDS_SHEET_ID");
+    const sheetId = process.env.ID_VERIFICATION_SHEET_ID;
+    if (!sheetId) {
+      console.log("❌ Missing ID_VERIFICATION_SHEET_ID");
       return res.status(500).json([]);
     }
 
-    console.log("📌 Fetching sheet:", process.env.IDS_SHEET_ID);
+    // Fetch all verification rows from the sheet
+    const rows = await getSheetValues(sheetId, "A:C"); 
+    const headers = ["Email", "Status", "IDImageUrl"]; // consistent field names
 
-    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:C")
-      .catch(err => {
-        console.error("❌ getSheetValues FAILED:", err);
-        throw err;
-      });
-
-    console.log("📌 Raw sheet rows:", rows);
-
-    const headers = ["Email", "Status", "IDImageUrl"];
-
+    // Map rows to objects
     const verifications = rows
-      .map((r, idx) => {
+      .map(r => {
         let obj = {};
-        headers.forEach((h, i) => obj[h] = r[i] || "");
-        console.log(`📌 Row ${idx} mapped:`, obj);
+        headers.forEach((h, i) => {
+          obj[h] = r[i] || "";
+        });
         return obj;
       })
-      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase());
+      // Only include rows for the logged-in user
+      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
+      // Optional: reverse so latest submission is first
+      .reverse();
 
-    console.log("📌 Filtered verifications:", verifications);
-
-    // Remove sorting to avoid crashes
     res.json(verifications);
 
   } catch (err) {
