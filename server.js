@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - COMPLETE JOYFUND BACKEND ====================
+// ==================== SERVER.JS JOYFUND BACKEND====================
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
@@ -407,37 +407,32 @@ app.get("/api/donations", async (req, res) => {
 app.get("/api/my-verifications", async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user) return res.status(401).json({ verifications: [] }); // Not logged in
+    if (!user) return res.status(401).json([]);
 
-    const sheetId = process.env.IDS_SHEET_ID;
-    if (!sheetId) return res.status(500).json({ verifications: [] }); // Sheet not configured
+    if (!process.env.IDS_SHEET_ID) return res.status(500).json([]);
 
-    // Fetch all verification rows: columns A = Email, B = Status, C = SubmittedAt, D = ID Image URL
-    const rows = await getSheetValues(sheetId, "A:D");
+    // Fetch all verification rows from the sheet
+    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:C"); 
+    const headers = ["Email", "Status", "IDImageUrl"]; // consistent field names
 
-    if (!rows || rows.length === 0) return res.json({ verifications: [] });
-
-    const headers = ["Email", "Status", "SubmittedAt", "IDImageUrl"];
+    // Map rows to objects
     const verifications = rows.map(r => {
       let obj = {};
-      headers.forEach((h, i) => obj[h] = r[i] || "");
+      headers.forEach((h, i) => {
+        obj[h] = r[i] || "";
+      });
       return obj;
     })
-    // Filter for current user
+    // Only include rows for the logged-in user
     .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
-    // Optional: sort by latest submission
-    .sort((a,b) => new Date(b.SubmittedAt) - new Date(a.SubmittedAt))
-    // Map status to "Verified" or "Pending"
-    .map(v => ({
-      ...v,
-      Status: (v.Status && v.Status.toLowerCase() === "verified") ? "Verified" : "Pending"
-    }));
+    // Sort so latest submission is first
+    .sort((a, b) => new Date(b.SubmittedAt || Date.now()) - new Date(a.SubmittedAt || Date.now()));
 
-    res.json({ verifications });
+    res.json(verifications);
 
   } catch (err) {
-    console.error("Error fetching verifications:", err);
-    res.status(500).json({ verifications: [] });
+    console.error("Error in /api/my-verifications:", err);
+    res.status(500).json([]); // always return an array, never crash
   }
 });
 
