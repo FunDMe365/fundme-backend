@@ -383,13 +383,33 @@ app.get("/api/my-campaigns", async(req,res)=>{
   }catch(err){console.error(err);res.status(500).json([]);}
 });
 
-// ==================== ID VERIFICATION ====================
-app.get("/api/id-verifications", async(req,res)=>{
-  try{
+// ==================== DONATIONS ROUTES (NEW FOR DASHBOARD) ====================
+app.get("/api/donations", async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json([]);
+    if (!process.env.DONATIONS_SHEET_ID) return res.status(500).json([]);
+    const rows = await getSheetValues(process.env.DONATIONS_SHEET_ID, "A:E");
+    const headers = ["Email","CampaignId","Amount","Date","Status"];
+    const donations = rows.map(r=>{
+      let obj={};
+      headers.forEach((h,i)=>obj[h]=r[i]||"");
+      return obj;
+    }).filter(d=>d.Email && d.Email.toLowerCase()===user.email.toLowerCase());
+    res.json(donations);
+  } catch(err) {
+    console.error(err);
+    res.status(500).json([]);
+  }
+});
+
+// ==================== MY VERIFICATIONS ROUTE (NEW FOR DASHBOARD) ====================
+app.get("/api/my-verifications", async(req,res)=>{
+  try {
     const user = req.session.user;
     if(!user) return res.status(401).json([]);
     if(!process.env.IDS_SHEET_ID) return res.status(500).json([]);
-    const rows = await getSheetValues(process.env.IDS_SHEET_ID,"A:C");
+    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:C");
     const headers = ["Email","Status","SubmittedAt"];
     const verifications = rows.map(r=>{
       let obj={};
@@ -398,8 +418,12 @@ app.get("/api/id-verifications", async(req,res)=>{
     }).filter(v=>v.Email && v.Email.toLowerCase()===user.email.toLowerCase())
       .map(v=>({...v, Status: v.Status==="Verified"?"Verified":"Pending"}));
     res.json(verifications);
-  }catch(err){console.error(err);res.status(500).json([]);}
+  } catch(err) {
+    console.error(err);
+    res.status(500).json([]);
+  }
 });
 
 // ==================== START SERVER ====================
 app.listen(PORT, ()=>console.log(`JoyFund backend running on port ${PORT}`));
+
