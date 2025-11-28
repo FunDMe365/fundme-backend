@@ -403,33 +403,52 @@ app.get("/api/donations", async (req, res) => {
   }
 });
 
-// ==================== MY VERIFICATIONS ROUTE ====================
+// ==================== MY VERIFICATIONS ROUTE (DIAGNOSTIC) ====================
 app.get("/api/my-verifications", async (req, res) => {
   try {
+    console.log("📌 /api/my-verifications called");
+
     const user = req.session.user;
-    if (!user) return res.status(401).json([]);
+    console.log("📌 Session user:", user);
 
-    if (!process.env.IDS_SHEET_ID) return res.status(500).json([]);
+    if (!user) {
+      console.log("❌ No user session");
+      return res.status(401).json([]);
+    }
 
-    // Fetch all verification rows
-    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:C");
+    if (!process.env.IDS_SHEET_ID) {
+      console.log("❌ Missing IDS_SHEET_ID");
+      return res.status(500).json([]);
+    }
+
+    console.log("📌 Fetching sheet:", process.env.IDS_SHEET_ID);
+
+    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:C")
+      .catch(err => {
+        console.error("❌ getSheetValues FAILED:", err);
+        throw err;
+      });
+
+    console.log("📌 Raw sheet rows:", rows);
+
     const headers = ["Email", "Status", "IDImageUrl"];
 
     const verifications = rows
-      .map(r => {
+      .map((r, idx) => {
         let obj = {};
-        headers.forEach((h, i) => {
-          obj[h] = r[i] || "";
-        });
+        headers.forEach((h, i) => obj[h] = r[i] || "");
+        console.log(`📌 Row ${idx} mapped:`, obj);
         return obj;
       })
-      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
-      .reverse(); // newest entry last, then reversed to first
+      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase());
 
+    console.log("📌 Filtered verifications:", verifications);
+
+    // Remove sorting to avoid crashes
     res.json(verifications);
 
   } catch (err) {
-    console.error("Error in /api/my-verifications:", err);
+    console.error("🔥 ERROR IN /api/my-verifications:", err);
     res.status(500).json([]);
   }
 });
