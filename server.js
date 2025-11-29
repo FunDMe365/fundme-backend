@@ -410,99 +410,55 @@ app.get("/api/my-verifications", async (req, res) => {
     const user = req.session.user;
     if (!user) {
       console.log("❌ No user session");
-      return res.status(401).json([
-        {
-          Status: "Pending",
-          Notes: "Not logged in",
-          PhotoURL: null
-        }
-      ]);
+      return res.status(401).json({ error: "No user session" });
     }
 
     const sheetId = process.env.ID_VERIFICATION_SHEET_ID;
-    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-    const privateKey = process.env.GOOGLE_PRIVATE_KEY;
-
-    // DEBUG logs
-    console.log("DEBUG: user.email =", user.email);
-    console.log("DEBUG: sheetId =", !!sheetId);
-    console.log("DEBUG: clientEmail =", !!clientEmail);
-    console.log("DEBUG: privateKey exists =", !!privateKey);
-
-    if (!sheetId || !clientEmail || !privateKey) {
-      console.warn("⚠️ Google Sheets credentials missing or invalid");
-      return res.status(500).json([
-        {
-          Status: "Pending",
-          Notes: "Verification sheet not configured",
-          PhotoURL: null
-        }
-      ]);
+    if (!sheetId) {
+      console.log("❌ No sheet ID provided");
+      return res.status(500).json({ error: "Sheet ID missing" });
     }
 
     const doc = new GoogleSpreadsheet(sheetId);
 
-    try {
-      await doc.useServiceAccountAuth({
-        client_email: clientEmail,
-        private_key: privateKey.replace(/\\n/g, "\n"),
-      });
-    } catch (authErr) {
-      console.error("❌ Google auth failed:", authErr);
-      return res.status(500).json([
-        {
-          Status: "Pending",
-          Notes: "Google auth failed",
-          PhotoURL: null
-        }
-      ]);
+    // Authenticate with service account
+    await doc.useServiceAccountAuth({
+      client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+    });
+
+    await doc.loadInfo();
+
+    const sheet = doc.sheetsByTitle["ID_Verifications"];
+    if (!sheet) {
+      console.log("❌ Sheet 'ID_Verifications' not found");
+      return res.status(500).json({ error: "Sheet not found" });
     }
 
-    try {
-      await doc.loadInfo();
-      const sheet = doc.sheetsByIndex[0];
-      const rows = await sheet.getRows();
+    const rows = await sheet.getRows();
 
-      const match = rows.find(r => r.Email === user.email);
+    // Debug: see what rows are coming in
+    console.log(
+      "DEBUG: Rows loaded:",
+      rows.map(r => ({ Email: r.Email, Status: r.Status }))
+    );
 
-      if (!match) {
-        console.log("⚠️ No matching verification found for:", user.email);
-        return res.json([
-          {
-            Status: "Pending",
-            Notes: "Not found in sheet yet",
-            PhotoURL: null
-          }
-        ]);
-      }
+    // Find the row for the logged-in user
+    const row = rows.find(r => r.Email?.trim().toLowerCase() === user.email.toLowerCase());
 
-      return res.json([
-        {
-          Status: match.Status || "Pending",
-          Notes: match.Notes || "",
-          PhotoURL: match.PhotoURL || null
-        }
-      ]);
-    } catch (sheetErr) {
-      console.error("❌ Error reading sheet:", sheetErr);
-      return res.status(500).json([
-        {
-          Status: "Pending",
-          Notes: "Error reading verification sheet",
-          PhotoURL: null
-        }
-      ]);
+    if (!row) {
+      console.log(`❌ No verification row found for ${user.email}`);
+      return res.json({ Status: "pending", IDPhotoURL: null });
     }
 
-  } catch (err) {
-    console.error("❌ Unexpected error in /api/my-verifications:", err);
-    return res.status(500).json([
-      {
-        Status: "Pending",
-        Notes: "Server error",
-        PhotoURL: null
-      }
-    ]);
+    // Return relevant info
+    res.json({
+      Status: row.Status || "pending",
+      IDPhotoURL: row["ID Photo URL"] || null,
+    });
+  } catch (error) {
+    console.error("❌ Error in /api/my-verifications:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
