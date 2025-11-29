@@ -404,7 +404,7 @@ app.get("/api/donations", async (req, res) => {
   }
 });
 
-// ==================== MY VERIFICATIONS ROUTE ====================
+// ==================== MY VERIFICATIONS ROUTE (v4/v5 compatible) ====================
 app.get("/api/my-verifications", async (req, res) => {
   try {
     const user = req.session.user;
@@ -419,85 +419,87 @@ app.get("/api/my-verifications", async (req, res) => {
       return res.status(500).json({ error: "Verification sheet not configured" });
     }
 
-    // create doc
-    const doc = new GoogleSpreadsheet(sheetId);
-
-    // Helper to load credentials either from GOOGLE_CREDENTIALS_JSON or the two vars
+    // Load Google credentials
     let creds = null;
     if (process.env.GOOGLE_CREDENTIALS_JSON) {
       try {
         creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
-      } catch (e) {
-        console.error("Failed to parse GOOGLE_CREDENTIALS_JSON:", e && e.message);
+      } catch (err) {
+        console.error("❌ Failed to parse GOOGLE_CREDENTIALS_JSON:", err);
       }
     } else if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
       creds = {
         client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n")
+        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
       };
     }
 
     if (!creds) {
-      console.error("✖ No Google credentials found. Set GOOGLE_CREDENTIALS_JSON or GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY");
+      console.error("❌ No Google credentials found.");
       return res.status(500).json({ error: "Google credentials not configured" });
     }
 
-    await doc.useServiceAccountAuth(creds);
+    // NEW v4/v5 AUTH METHOD
+    const doc = new GoogleSpreadsheet(sheetId, {
+      credentials: creds,
+    });
+
     await doc.loadInfo();
 
     const sheet = doc.sheetsByIndex[0];
     if (!sheet) {
-      console.error("✖ Could not open sheet index 0 for verifications");
+      console.error("✖ Could not open sheet index 0");
       return res.status(500).json({ error: "Verification sheet unavailable" });
     }
 
     const rows = await sheet.getRows();
 
-    // Normalize helper: find a row value by key ignoring case and spaces
+    // Helper to normalize column lookup
     function getRowValue(row, key) {
-      if (!row) return undefined;
-      const norm = k => k.toString().toLowerCase().replace(/\s+/g, "");
-      const want = norm(key);
-      for (const k of Object.keys(row)) {
-        if (norm(k) === want) return row[k];
+      const normalize = s => s.toLowerCase().replace(/\s+/g, "");
+      const target = normalize(key);
+
+      for (const col of Object.keys(row)) {
+        if (normalize(col) === target) return row[col];
       }
       return undefined;
     }
 
-    const emailLower = (user.email || "").trim().toLowerCase();
+    const userEmail = (user.email || "").trim().toLowerCase();
+
     const match = rows.find(r => {
       const rowEmail = (getRowValue(r, "Email") || "").toString().trim().toLowerCase();
-      return rowEmail === emailLower;
+      return rowEmail === userEmail;
     });
 
     if (!match) {
-      console.log("⚠️ No matching verification row for:", user.email);
+      console.log("⚠️ No verification row found for", user.email);
       return res.json([
         {
           Status: "Pending",
           Notes: "Not found in sheet yet",
-          PhotoURL: null
-        }
+          PhotoURL: null,
+        },
       ]);
     }
 
-    const status = getRowValue(match, "Status") || getRowValue(match, "status") || "Pending";
-    const notes = getRowValue(match, "Notes") || getRowValue(match, "Note") || "";
-    const photo = getRowValue(match, "PhotoURL") || getRowValue(match, "Photo URL") || getRowValue(match, "Photo") || null;
+    const status = getRowValue(match, "Status") || "Pending";
+    const notes  = getRowValue(match, "Notes") || "";
+    const photo  = getRowValue(match, "PhotoURL") || getRowValue(match, "Photo URL") || null;
 
     return res.json([
       {
         Status: String(status),
         Notes: String(notes),
-        PhotoURL: photo || null
-      }
+        PhotoURL: photo,
+      },
     ]);
+
   } catch (err) {
-    console.error("❌ Error in /api/my-verifications:", err && (err.stack || err.message || err));
+    console.error("❌ Error in /api/my-verifications:", err);
     return res.status(500).json({ error: "Server error" });
   }
 });
-
 
 // ==================== START SERVER ====================
 app.listen(PORT, ()=>console.log(`JoyFund backend running on port ${PORT}`));
