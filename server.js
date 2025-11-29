@@ -404,100 +404,78 @@ app.get("/api/donations", async (req, res) => {
   }
 });
 
-// ==================== MY VERIFICATIONS ROUTE (v4/v5 compatible) ====================
+// ==================== MY VERIFICATIONS ROUTE ====================
 app.get("/api/my-verifications", async (req, res) => {
   try {
     const user = req.session.user;
     if (!user) {
       console.log("❌ No user session");
-      return res.status(401).json([]);
+      return res.status(401).json([
+        {
+          Status: "Pending",
+          Notes: "Not logged in",
+          PhotoURL: null
+        }
+      ]);
     }
 
     const sheetId = process.env.ID_VERIFICATION_SHEET_ID;
-    if (!sheetId) {
-      console.error("✖ ID_VERIFICATION_SHEET_ID not set in env");
-      return res.status(500).json({ error: "Verification sheet not configured" });
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+
+    if (!sheetId || !clientEmail || !privateKey) {
+      console.warn("⚠️ Google Sheets credentials missing or invalid");
+      return res.status(500).json([
+        {
+          Status: "Pending",
+          Notes: "Verification sheet not configured",
+          PhotoURL: null
+        }
+      ]);
     }
 
-    // Load Google credentials
-    let creds = null;
-    if (process.env.GOOGLE_CREDENTIALS_JSON) {
-      try {
-        creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
-      } catch (err) {
-        console.error("❌ Failed to parse GOOGLE_CREDENTIALS_JSON:", err);
-      }
-    } else if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
-      creds = {
-        client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-      };
-    }
+    const doc = new GoogleSpreadsheet(sheetId);
 
-    if (!creds) {
-      console.error("❌ No Google credentials found.");
-      return res.status(500).json({ error: "Google credentials not configured" });
-    }
-
-    // NEW v4/v5 AUTH METHOD
-    const doc = new GoogleSpreadsheet(sheetId, {
-      credentials: creds,
+    await doc.useServiceAccountAuth({
+      client_email: clientEmail,
+      private_key: privateKey.replace(/\\n/g, "\n"),
     });
 
     await doc.loadInfo();
-
     const sheet = doc.sheetsByIndex[0];
-    if (!sheet) {
-      console.error("✖ Could not open sheet index 0");
-      return res.status(500).json({ error: "Verification sheet unavailable" });
-    }
-
     const rows = await sheet.getRows();
 
-    // Helper to normalize column lookup
-    function getRowValue(row, key) {
-      const normalize = s => s.toLowerCase().replace(/\s+/g, "");
-      const target = normalize(key);
-
-      for (const col of Object.keys(row)) {
-        if (normalize(col) === target) return row[col];
-      }
-      return undefined;
-    }
-
-    const userEmail = (user.email || "").trim().toLowerCase();
-
-    const match = rows.find(r => {
-      const rowEmail = (getRowValue(r, "Email") || "").toString().trim().toLowerCase();
-      return rowEmail === userEmail;
-    });
+    const match = rows.find(r => r.Email === user.email);
 
     if (!match) {
-      console.log("⚠️ No verification row found for", user.email);
+      console.log("⚠️ No matching verification found for:", user.email);
       return res.json([
         {
           Status: "Pending",
           Notes: "Not found in sheet yet",
-          PhotoURL: null,
-        },
+          PhotoURL: null
+        }
       ]);
     }
 
-    const status = getRowValue(match, "Status") || "Pending";
-    const notes  = getRowValue(match, "Notes") || "";
-    const photo  = getRowValue(match, "PhotoURL") || getRowValue(match, "Photo URL") || null;
-
+    // Return the exact row values
     return res.json([
       {
-        Status: String(status),
-        Notes: String(notes),
-        PhotoURL: photo,
-      },
+        Status: match.Status || "Pending",
+        Notes: match.Notes || "",
+        PhotoURL: match.PhotoURL || null
+      }
     ]);
 
   } catch (err) {
     console.error("❌ Error in /api/my-verifications:", err);
-    return res.status(500).json({ error: "Server error" });
+    return res.status(500).json([
+      {
+        Status: "Pending",
+        Notes: "Server error",
+        PhotoURL: null
+      }
+    ]);
   }
 });
 
