@@ -404,7 +404,7 @@ app.get("/api/donations", async (req, res) => {
   }
 });
 
-// ==================== MY VERIFICATIONS ROUTE ====================
+// ==================== MY VERIFICATIONS ROUTE (DEBUG SAFE) ====================
 app.get("/api/my-verifications", async (req, res) => {
   try {
     const user = req.session.user;
@@ -423,6 +423,12 @@ app.get("/api/my-verifications", async (req, res) => {
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
     const privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
+    // DEBUG logs
+    console.log("DEBUG: user.email =", user.email);
+    console.log("DEBUG: sheetId =", !!sheetId);
+    console.log("DEBUG: clientEmail =", !!clientEmail);
+    console.log("DEBUG: privateKey exists =", !!privateKey);
+
     if (!sheetId || !clientEmail || !privateKey) {
       console.warn("⚠️ Google Sheets credentials missing or invalid");
       return res.status(500).json([
@@ -436,39 +442,60 @@ app.get("/api/my-verifications", async (req, res) => {
 
     const doc = new GoogleSpreadsheet(sheetId);
 
-    await doc.useServiceAccountAuth({
-      client_email: clientEmail,
-      private_key: privateKey.replace(/\\n/g, "\n"),
-    });
-
-    await doc.loadInfo();
-    const sheet = doc.sheetsByIndex[0];
-    const rows = await sheet.getRows();
-
-    const match = rows.find(r => r.Email === user.email);
-
-    if (!match) {
-      console.log("⚠️ No matching verification found for:", user.email);
-      return res.json([
+    try {
+      await doc.useServiceAccountAuth({
+        client_email: clientEmail,
+        private_key: privateKey.replace(/\\n/g, "\n"),
+      });
+    } catch (authErr) {
+      console.error("❌ Google auth failed:", authErr);
+      return res.status(500).json([
         {
           Status: "Pending",
-          Notes: "Not found in sheet yet",
+          Notes: "Google auth failed",
           PhotoURL: null
         }
       ]);
     }
 
-    // Return the exact row values
-    return res.json([
-      {
-        Status: match.Status || "Pending",
-        Notes: match.Notes || "",
-        PhotoURL: match.PhotoURL || null
+    try {
+      await doc.loadInfo();
+      const sheet = doc.sheetsByIndex[0];
+      const rows = await sheet.getRows();
+
+      const match = rows.find(r => r.Email === user.email);
+
+      if (!match) {
+        console.log("⚠️ No matching verification found for:", user.email);
+        return res.json([
+          {
+            Status: "Pending",
+            Notes: "Not found in sheet yet",
+            PhotoURL: null
+          }
+        ]);
       }
-    ]);
+
+      return res.json([
+        {
+          Status: match.Status || "Pending",
+          Notes: match.Notes || "",
+          PhotoURL: match.PhotoURL || null
+        }
+      ]);
+    } catch (sheetErr) {
+      console.error("❌ Error reading sheet:", sheetErr);
+      return res.status(500).json([
+        {
+          Status: "Pending",
+          Notes: "Error reading verification sheet",
+          PhotoURL: null
+        }
+      ]);
+    }
 
   } catch (err) {
-    console.error("❌ Error in /api/my-verifications:", err);
+    console.error("❌ Unexpected error in /api/my-verifications:", err);
     return res.status(500).json([
       {
         Status: "Pending",
