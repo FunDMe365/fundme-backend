@@ -403,44 +403,57 @@ app.get("/api/donations", async (req, res) => {
   }
 });
 
-// ==================== MY VERIFICATIONS ROUTE FIXED ====================
+// ==================== MY VERIFICATIONS ROUTE ====================
 app.get("/api/my-verifications", async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user) return res.status(401).json([]);
+    if (!user) {
+      console.log("❌ No user session");
+      return res.status(401).json([]);
+    }
 
     const sheetId = process.env.ID_VERIFICATION_SHEET_ID;
-    if (!sheetId) return res.status(500).json([]);
+    const doc = new GoogleSpreadsheet(sheetId);
 
-    const rows = await getSheetValues(sheetId, "A:E"); // Timestamp | Email | Name | Status | ID Photo URL
-    if (!rows || rows.length <= 1) return res.json([]);
+    await doc.useServiceAccountAuth({
+      client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+    });
 
-    // Normalize headers: trim + lowercase
-    const headers = rows[0].map(h => h.trim().toLowerCase());
-    const dataRows = rows.slice(1);
+    await doc.loadInfo();
+    const sheet = doc.sheetsByIndex[0];
 
-    // Map column indices
-    const colIndex = {};
-    headers.forEach((h, i) => { colIndex[h] = i; });
+    const rows = await sheet.getRows();
 
-    const verifications = dataRows
-      .map(r => ({
-        TimeStamp: r[colIndex["timestamp"]] || "",
-        Email: (r[colIndex["email"]] || "").trim().toLowerCase(),
-        Name: r[colIndex["name"]] || "",
-        Status: r[colIndex["status"]] || "Pending",
-        IDImageUrl: r[colIndex["id photo url"]] || ""
-      }))
-      .filter(v => v.Email === (user.email || "").trim().toLowerCase())
-      .sort((a, b) => new Date(b.TimeStamp) - new Date(a.TimeStamp));
+    // 🔍 FIND THE ROW THAT MATCHES THE USER'S EMAIL
+    const match = rows.find(r => r.Email === user.email);
 
-    res.json(verifications);
+    if (!match) {
+      console.log("⚠️ No matching verification found for:", user.email);
+      return res.json([
+        {
+          Status: "Pending",
+          Notes: "Not found in sheet yet",
+          PhotoURL: null
+        }
+      ]);
+    }
+
+    // Return EXACT values from Google Sheets
+    return res.json([
+      {
+        Status: match.Status || "Pending",
+        Notes: match.Notes || "",
+        PhotoURL: match.PhotoURL || null
+      }
+    ]);
 
   } catch (err) {
-    console.error("🔥 ERROR IN /api/my-verifications:", err);
-    res.status(500).json([]);
+    console.error("❌ Error in /api/my-verifications:", err);
+    return res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // ==================== START SERVER ====================
 app.listen(PORT, ()=>console.log(`JoyFund backend running on port ${PORT}`));
