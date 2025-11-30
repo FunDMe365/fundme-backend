@@ -8,6 +8,7 @@
     "express": "^5.1.0",
     "express-session": "^1.18.2",
     "google-spreadsheet": "^5.0.2",
+    "googleapis": "^166.0.0",
     "multer": "^2.0.2",
     "stripe": "^20.0.0"
   }
