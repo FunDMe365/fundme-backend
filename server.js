@@ -1,6 +1,7 @@
-// ==================== SERVER.JS JOYFUND BACKEND (object-based responses, Mailjet enabled) ====================
+// ==================== SERVER.JS JOYFUND BACKEND ====================
+// ==================== SERVER.JS JOYFUND BACKEND (complete) ====================
 /*
-  Full backend with standardized object responses:
+  Full backend:
   - Auth (signup/signin/logout/check-session)
   - Password reset (token saved to USERS sheet)
   - Waitlist / Volunteers / Street-team submissions
@@ -18,7 +19,8 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
-const bcrypt = require("bcryptjs"); // deploy-friendly
+const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs"); // use bcryptjs for deploy-friendly hashing
 const multer = require("multer");
 const crypto = require("crypto");
 const Stripe = require("stripe");
@@ -64,7 +66,8 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // -------------------- SESSION --------------------
-// Note: MemoryStore is not for production multi-process. Consider Redis in prod.
+// Warning: MemoryStore not recommended for production multi-process setups.
+// Consider Redis / other store in production.
 app.set('trust proxy', 1);
 app.use(session({
   name: 'sessionId',
@@ -86,480 +89,6 @@ if (process.env.STRIPE_SECRET_KEY) {
 } else {
   console.warn("Warning: STRIPE_SECRET_KEY not set. Stripe routes will fail until provided.");
 }
-
-// -------------------- MAILJET --------------------
-let mailjetClient = null;
-if (process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET) {
-  // use connect() for node-mailjet API
-  mailjetClient = mailjetLib.connect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
-}
-async function sendMailjetEmail(subject, htmlContent, toEmail) {
-  if (!mailjetClient) {
-    console.warn("Mailjet not configured; would send:", subject, toEmail);
-    return;
-  }
-  try {
-    await mailjetClient.post("send", { version: "v3.1" }).request({
-      Messages: [{
-        From: { Email: process.env.MAILJET_SENDER_EMAIL || process.env.EMAIL_FROM || "admin@joyfund.net", Name: "JoyFund INC" },
-        To: [{ Email: toEmail || process.env.NOTIFY_EMAIL }],
-        Subject: subject,
-        HTMLPart: htmlContent
-      }]
-    });
-  } catch (err) {
-    console.error("Mailjet send error:", err);
-  }
-}
-
-// -------------------- GOOGLE SHEETS (googleapis) --------------------
-let sheets = null;
-try {
-  if (process.env.GOOGLE_CREDENTIALS_JSON) {
-    const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
-    const auth = new google.auth.GoogleAuth({
-      credentials: creds,
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-    });
-    sheets = google.sheets({ version: "v4", auth });
-  } else {
-    console.warn("GOOGLE_CREDENTIALS_JSON not present - Sheets disabled.");
-  }
-} catch (err) {
-  console.error("Google Sheets init failed:", err && err.message);
-}
-
-async function getSheetValues(spreadsheetId, range) {
-  try {
-    if (!sheets || !spreadsheetId) return [];
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-    return res.data.values || [];
-  } catch (err) {
-    console.error("getSheetValues error:", err && err.message);
-    return [];
-  }
-}
-async function appendSheetValues(spreadsheetId, range, values) {
-  try {
-    if (!sheets || !spreadsheetId) throw new Error("Sheets not initialized or missing spreadsheetId");
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range,
-      valueInputOption: "USER_ENTERED",
-      resource: { values }
-    });
-  } catch (err) {
-    console.error("appendSheetValues error:", err);
-    throw err;
-  }
-}
-async function updateSheetValues(spreadsheetId, range, values) {
-  try {
-    if (!sheets || !spreadsheetId) throw new Error("Sheets not initialized or missing spreadsheetId");
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range,
-      valueInputOption: "USER_ENTERED",
-      resource: { values }
-    });
-  } catch (err) {
-    console.error("updateSheetValues error:", err);
-    throw err;
-  }
-}
-
-// -------------------- MULTER (file upload memory) --------------------
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
-
-// -------------------- CLOUDINARY --------------------
-if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-  });
-} else {
-  console.warn("Cloudinary not fully configured. Image uploads will fail without CLOUDINARY env vars.");
-}
-function cloudinaryUploadFromBuffer(buffer, folder = "joyfund/campaigns") {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream({ folder }, (error, result) => {
-      if (error) return reject(error);
-      resolve(result);
-    });
-    stream.end(buffer);
-  });
-}
-function safeImageUrl(url) {
-  if (!url || url.toString().trim() === "") return "https://placehold.co/400x200?text=No+Image";
-  return url;
-}
-
-// ==================== LIVE VISITOR TRACKING ====================
-const liveVisitors = {};
-app.post("/api/track-visitor", (req, res) => {
-  try {
-    const { visitorId } = req.body;
-    if (!visitorId) return res.status(400).json({ success: false, message: "Missing visitorId" });
-    const now = Date.now();
-    liveVisitors[visitorId] = now;
-    for (const id in liveVisitors) {
-      if (now - liveVisitors[id] > 30000) delete liveVisitors[id];
-    }
-    res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
-  } catch (err) {
-    console.error("Visitor tracking error:", err);
-    res.status(500).json({ success: false });
-  }
-});
-
-// ==================== USERS & AUTH ====================
-async function getUsers() {
-  if (!process.env.USERS_SHEET_ID) return [];
-  const rows = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
-  return rows.map(r => ({ joinDate: r[0], name: r[1], email: r[2], password: r[3] }));
-}
-
-app.post("/api/signup", async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ success: false, error: "Missing fields" });
-    const users = await getUsers();
-    const emailLower = email.trim().toLowerCase();
-    if (users.some(u => (u.email || "").toLowerCase() === emailLower)) return res.status(409).json({ success: false, error: "Email already exists" });
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const timestamp = new Date().toISOString();
-    await appendSheetValues(process.env.USERS_SHEET_ID, "A:D", [[timestamp, name, emailLower, hashedPassword]]);
-    req.session.user = { name, email: emailLower, joinDate: timestamp };
-    res.json({ success: true, user: req.session.user });
-  } catch (err) {
-    console.error("Signup error:", err);
-    res.status(500).json({ success: false, error: "Signup failed" });
-  }
-});
-
-app.post("/api/signin", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ success: false, error: "Missing fields" });
-    const users = await getUsers();
-    const inputEmail = email.trim().toLowerCase();
-    const user = users.find(u => (u.email || "").toLowerCase() === inputEmail);
-    if (!user) return res.status(401).json({ success: false, error: "Invalid credentials" });
-    const match = await bcrypt.compare(password, user.password || "");
-    if (!match) return res.status(401).json({ success: false, error: "Invalid credentials" });
-    req.session.user = { name: user.name, email: user.email, joinDate: user.joinDate };
-    res.json({ success: true, user: req.session.user });
-  } catch (err) {
-    console.error("Signin error:", err);
-    res.status(500).json({ success: false, error: "Signin failed" });
-  }
-});
-
-app.get("/api/check-session", (req, res) => {
-  if (req.session.user) {
-    const u = req.session.user;
-    return res.json({ success: true, loggedIn: true, user: u });
-  } else {
-    return res.json({ success: true, loggedIn: false, user: null });
-  }
-});
-
-app.post("/api/logout", (req, res) => {
-  req.session.destroy(err => err ? res.status(500).json({ success: false, error: "Logout failed" }) : res.json({ success: true }));
-});
-
-// ==================== PASSWORD RESET ====================
-app.post("/api/request-reset", async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, error: "Missing email" });
-    const token = crypto.randomBytes(20).toString("hex");
-    const expiry = Date.now() + 3600000; // 1 hour
-    await appendSheetValues(process.env.USERS_SHEET_ID, "E:G", [[email.toLowerCase(), token, expiry]]);
-    await sendMailjetEmail("Password Reset", `<p>Click <a href="${process.env.FRONTEND_URL}/reset-password?token=${token}">here</a> to reset your password. Expires in 1 hour.</p>`, email);
-    res.json({ success: true, message: "Reset email sent" });
-  } catch (err) {
-    console.error("request-reset error:", err);
-    res.status(500).json({ success: false, error: "Failed to request reset" });
-  }
-});
-
-app.post("/api/reset-password", async (req, res) => {
-  try {
-    const { token, newPassword } = req.body;
-    if (!token || !newPassword) return res.status(400).json({ success: false, error: "Missing fields" });
-    const rows = await getSheetValues(process.env.USERS_SHEET_ID, "E:G");
-    const row = rows.find(r => r[1] === token && r[2] && parseInt(r[2], 10) > Date.now());
-    if (!row) return res.status(400).json({ success: false, error: "Invalid or expired token" });
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    const email = row[0];
-    await appendSheetValues(process.env.USERS_SHEET_ID, "A:D", [[new Date().toISOString(), email, email, hashedPassword]]);
-    res.json({ success: true, message: "Password reset successful" });
-  } catch (err) {
-    console.error("reset-password error:", err);
-    res.status(500).json({ success: false, error: "Failed to reset password" });
-  }
-});
-
-// ==================== WAITLIST / VOLUNTEERS / STREET TEAM ====================
-app.post("/api/waitlist", async (req, res) => {
-  try {
-    const { name, email, reason } = req.body;
-    if (!name || !email) return res.status(400).json({ success: false, error: "Missing fields" });
-    const timestamp = new Date().toLocaleString();
-    await appendSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:D", [[timestamp, name, email.toLowerCase(), reason || ""]]);
-    await sendMailjetEmail("New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}. Reason: ${reason || "N/A"}</p>`);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("waitlist error:", err);
-    res.status(500).json({ success: false, error: "Failed to submit waitlist" });
-  }
-});
-
-app.post("/api/volunteer", async (req, res) => {
-  try {
-    const { name, email, role, availability } = req.body;
-    if (!name || !email || !role) return res.status(400).json({ success: false, error: "Missing fields" });
-    const timestamp = new Date().toLocaleString();
-    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "Volunteers!A:E", [[timestamp, name, email.toLowerCase(), role, availability || ""]]);
-    await sendMailjetEmail("New Volunteer Submission", `<p>${name} (${email}) signed up as volunteer for ${role} at ${timestamp}. Availability: ${availability || "N/A"}</p>`);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("volunteer error:", err);
-    res.status(500).json({ success: false, error: "Failed to submit volunteer" });
-  }
-});
-
-app.post("/api/street-team", async (req, res) => {
-  try {
-    const { name, email, city, hoursAvailable } = req.body;
-    if (!name || !email || !city) return res.status(400).json({ success: false, error: "Missing fields" });
-    const timestamp = new Date().toLocaleString();
-    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "StreetTeam!A:E", [[timestamp, name, email.toLowerCase(), city, hoursAvailable || ""]]);
-    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined street team in ${city} at ${timestamp}. Hours: ${hoursAvailable || "N/A"}</p>`);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("street-team error:", err);
-    res.status(500).json({ success: false, error: "Failed to submit street team" });
-  }
-});
-
-// ==================== ADMIN ROUTES ====================
-function requireAdmin(req, res, next) {
-  if (req.session && req.session.admin) return next();
-  res.status(403).json({ success: false, message: "Forbidden" });
-}
-
-app.post("/api/admin-login", (req, res) => {
-  const { username, password } = req.body;
-  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-    req.session.admin = true;
-    return res.json({ success: true });
-  }
-  res.status(401).json({ success: false, message: "Invalid credentials" });
-});
-
-app.get("/api/admin-check", (req, res) => { res.json({ success: true, admin: !!(req.session && req.session.admin) }); });
-
-app.post("/api/admin-logout", (req, res) => { req.session.destroy(err => err ? res.status(500).json({ success: false }) : res.json({ success: true })); });
-
-// ==================== CAMPAIGNS ROUTES ====================
-// Assumed columns: [Id, Title, Email, Goal, Description, Category, Status, CreatedAt, ImageURL] (A:I)
-
-// Create Campaign
-app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
-  try {
-    const user = req.session.user;
-    if (!user) return res.status(401).json({ success: false, error: "Not signed in" });
-
-    const { title, goal, description, category } = req.body;
-    if (!title || !goal || !description || !category) return res.status(400).json({ success: false, error: "Missing fields" });
-
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    if (!spreadsheetId) return res.status(500).json({ success: false, error: "CAMPAIGNS_SHEET_ID not configured" });
-
-    const campaignId = Date.now().toString();
-    let imageUrl = safeImageUrl("");
-
-    if (req.file && process.env.CLOUDINARY_API_KEY) {
-      try {
-        const uploadResult = await cloudinaryUploadFromBuffer(req.file.buffer, "joyfund/campaigns");
-        if (uploadResult && uploadResult.secure_url) imageUrl = uploadResult.secure_url;
-      } catch (uploadErr) {
-        console.error("Cloudinary upload error:", uploadErr);
-      }
-    }
-
-    const createdAt = new Date().toISOString();
-    const status = "Pending";
-    const newCampaignRow = [campaignId, title, user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl];
-    await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
-
-    await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
-
-    res.json({ success: true, message: "Campaign submitted", campaignId });
-  } catch (err) {
-    console.error("create-campaign error:", err);
-    res.status(500).json({ success: false, error: "Failed to create campaign" });
-  }
-});
-
-// Public campaigns (Approved only)
-app.get("/api/public-campaigns", async (req, res) => {
-  try {
-    if (!process.env.CAMPAIGNS_SHEET_ID) return res.status(500).json({ success: false, publicCampaigns: [] });
-    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const headers = ["Id", "Title", "Email", "Goal", "Description", "Category", "Status", "CreatedAt", "ImageURL"];
-    const publicCampaigns = rows.map(r => {
-      let obj = {};
-      headers.forEach((h, i) => obj[h] = r[i] || "");
-      return obj;
-    }).filter(c => (c.Status || "").toLowerCase() === "approved");
-    res.json({ success: true, publicCampaigns });
-  } catch (err) {
-    console.error("public-campaigns error:", err);
-    res.status(500).json({ success: false, publicCampaigns: [] });
-  }
-});
-
-// User campaigns (any status)
-app.get("/api/my-campaigns", async (req, res) => {
-  try {
-    const user = req.session.user;
-    if (!user) return res.status(401).json({ success: false, campaigns: [] });
-    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const headers = ["Id", "Title", "Email", "Goal", "Description", "Category", "Status", "CreatedAt", "ImageURL"];
-    const campaigns = rows.map(r => {
-      let obj = {};
-      headers.forEach((h, i) => obj[h] = r[i] || "");
-      return obj;
-    }).filter(c => (c.Email || "").toLowerCase() === user.email.toLowerCase());
-    res.json({ success: true, campaigns });
-  } catch (err) {
-    console.error("my-campaigns error:", err);
-    res.status(500).json({ success: false, campaigns: [] });
-  }
-});
-
-// Update Campaign
-app.put("/api/campaign/:id", upload.single("image"), async (req, res) => {
-  try {
-    const user = req.session.user;
-    if (!user) return res.status(401).json({ success: false, error: "Not signed in" });
-
-    const campaignId = req.params.id;
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    if (!spreadsheetId) return res.status(500).json({ success: false, error: "Missing CAMPAIGNS_SHEET_ID" });
-
-    const rows = await getSheetValues(spreadsheetId, "A:I");
-    const rowIndex = rows.findIndex(r => r[0] === campaignId);
-    if (rowIndex === -1) return res.status(404).json({ success: false, error: "Campaign not found" });
-
-    const ownerEmail = (rows[rowIndex][2] || "").toLowerCase();
-    if (ownerEmail !== (user.email || "").toLowerCase()) {
-      return res.status(403).json({ success: false, error: "Unauthorized to edit this campaign" });
-    }
-
-    const { title, description, goal } = req.body;
-    if (!title || !description || !goal) return res.status(400).json({ success: false, error: "Missing required fields" });
-
-    let imageUrl = rows[rowIndex][8] || "";
-    if (req.file && process.env.CLOUDINARY_API_KEY) {
-      try {
-        const uploadResult = await cloudinaryUploadFromBuffer(req.file.buffer, "joyfund/campaigns");
-        if (uploadResult?.secure_url) imageUrl = uploadResult.secure_url;
-      } catch (uploadErr) {
-        console.error("Cloudinary upload error during update:", uploadErr);
-      }
-    }
-
-    const updatedRow = [
-      campaignId,
-      title,
-      user.email.toLowerCase(),
-      goal,
-      description,
-      rows[rowIndex][5] || "",
-      rows[rowIndex][6] || "Pending",
-      rows[rowIndex][7] || new Date().toISOString(),
-      imageUrl
-    ];
-
-    // If your sheet has a header row, adjust +2. This assumes no header row.
-    const rowNumber = rowIndex + 1;
-    await updateSheetValues(spreadsheetId, `A${rowNumber}:I${rowNumber}`, [updatedRow]);
-
-    res.json({ success: true, message: "Campaign updated successfully", updated: updatedRow });
-  } catch (err) {
-    console.error("update-campaign error:", err);
-    res.status(500).json({ success: false, error: "Failed to update campaign" });
-  }
-});
-
-// ==================== DONATIONS ROUTES ====================
-app.get("/api/donations", async (req, res) => {
-  try {
-    const user = req.session.user;
-    if (!user) return res.status(401).json({ success: false, donations: [] });
-    if (!process.env.DONATIONS_SHEET_ID) return res.status(500).json({ success: false, donations: [] });
-    const rows = await getSheetValues(process.env.DONATIONS_SHEET_ID, "A:E");
-    const headers = ["Email", "CampaignId", "Amount", "Date", "Status"];
-    const donations = rows.map(r => {
-      let obj = {};
-      headers.forEach((h, i) => obj[h] = r[i] || "");
-      return obj;
-    }).filter(d => (d.Email || "").toLowerCase() === user.email.toLowerCase());
-    res.json({ success: true, donations });
-  } catch (err) {
-    console.error("donations error:", err);
-    res.status(500).json({ success: false, donations: [] });
-  }
-});
-
-// ==================== ID VERIFICATIONS (google-spreadsheet) ====================
-app.get("/api/my-verifications", async (req, res) => {
-  try {
-    const user = req.session.user;
-    if (!user) return res.status(401).json({ success: false, verifications: [{ Status: "Pending", Notes: "Not logged in", PhotoURL: null }] });
-
-    const sheetId = process.env.ID_VERIFICATION_SHEET_ID;
-    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-    const privateKey = process.env.GOOGLE_PRIVATE_KEY;
-
-    if (!sheetId || !clientEmail || !privateKey) {
-      return res.status(500).json({ success: false, verifications: [{ Status: "Pending", Notes: "Verification sheet not configured", PhotoURL: null }] });
-    }
-
-    const doc = new GoogleSpreadsheet(sheetId);
-    await doc.useServiceAccountAuth({
-      client_email: clientEmail,
-      private_key: privateKey.replace(/\\n/g, "\n"),
-    });
-    await doc.loadInfo();
-
-    const sheet = doc.sheetsByTitle["ID_Verifications"];
-    if (!sheet) return res.status(500).json({ success: false, verifications: [{ Status: "Pending", Notes: "Sheet not found", PhotoURL: null }] });
-
-    const rows = await sheet.getRows();
-    const match = rows.find(r => (r.Email || "").trim().toLowerCase() === user.email.toLowerCase());
-
-    if (!match) return res.json({ success: true, verifications: [{ Status: "Pending", Notes: "Not found in sheet yet", PhotoURL: null }] });
-
-    res.json({
-      success: true,
-      verifications: [{
-        Status: match.Status || "Pending",
-        Notes: match.Notes || "",
-        PhotoURL: match.PhotoURL || null
-      }]
-    });
-  } catch (err) {
-    console.error("my-verifications error:", err);
-    res.status(500).json({ success: false, verifications: [{ Status: "Pending", Notes: "Server error", PhotoURL: null }] });
-  }
-});
 
 // ==================== STRIPE CHECKOUT SESSION ====================
 app.post("/api/create-checkout-session/:campaignId?", async (req, res) => {
@@ -596,5 +125,564 @@ app.post("/api/create-checkout-session/:campaignId?", async (req, res) => {
   }
 });
 
+// -------------------- MAILJET --------------------
+let mailjetClient = null;
+if (process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET) {
+  // === FIXED: use connect() not apiConnect() ===
+  // new API uses connect()
+  mailjetClient = mailjetLib.connect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
+}
+async function sendMailjetEmail(subject, htmlContent, toEmail) {
+  if (!mailjetClient) {
+    console.warn("Mailjet not configured; email would be:", subject, toEmail);
+    console.warn("Mailjet not configured; would send:", subject, toEmail);
+    return;
+  }
+  try {
+    await mailjetClient.post("send", { version: "v3.1" }).request({
+      Messages: [{
+        From: { Email: process.env.MAILJET_SENDER_EMAIL || process.env.EMAIL_FROM || "admin@joyfund.net", Name: "JoyFund INC" },
+        To: [{ Email: toEmail || process.env.NOTIFY_EMAIL }],
+        Subject: subject,
+        HTMLPart: htmlContent
+      }]
+    });
+  } catch (err) { console.error("Mailjet error:", err); }
+  } catch (err) {
+    console.error("Mailjet send error:", err);
+  }
+}
+
+// -------------------- GOOGLE SHEETS --------------------
+// -------------------- GOOGLE SHEETS (googleapis) --------------------
+let sheets = null;
+try {
+  if (process.env.GOOGLE_CREDENTIALS_JSON) {
+    const creds = JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON);
+    const auth = new google.auth.GoogleAuth({
+      credentials: creds,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+    });
+    sheets = google.sheets({ version: "v4", auth });
+  } else {
+    console.warn("GOOGLE_CREDENTIALS_JSON not present - Sheets disabled.");
+  }
+} catch (err) { console.error("Google Sheets init failed", err && err.message); }
+} catch (err) {
+  console.error("Google Sheets init failed:", err && err.message);
+}
+
+async function getSheetValues(spreadsheetId, range) {
+  try {
+    if (!sheets || !spreadsheetId) return [];
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    return res.data.values || [];
+  } catch (err) {
+    console.error("getSheetValues error:", err && err.message);
+    return [];
+  }
+}
+
+async function appendSheetValues(spreadsheetId, range, values) {
+  try {
+    if (!sheets || !spreadsheetId) throw new Error("Sheets not initialized or missing spreadsheetId");
+    await sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range,
+      valueInputOption: "USER_ENTERED",
+      resource: { values }
+    });
+  } catch (err) {
+    console.error("appendSheetValues error:", err);
+    throw err;
+  }
+}
+
+async function updateSheetValues(spreadsheetId, range, values) {
+  try {
+    if (!sheets || !spreadsheetId) throw new Error("Sheets not initialized or missing spreadsheetId");
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: "USER_ENTERED",
+      resource: { values }
+    });
+  } catch (err) {
+    console.error("updateSheetValues error:", err);
+    throw err;
+  }
+}
+
+async function appendSheetValues(spreadsheetId, range, values) {
+  if (!sheets || !spreadsheetId) throw new Error("Sheets not initialized or missing spreadsheetId");
+  await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range,
+    valueInputOption: "USER_ENTERED",
+    resource: { values }
+  });
+}
+
+// -------------------- MULTER --------------------
+// -------------------- MULTER (file upload memory) --------------------
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
+
+// -------------------- CLOUDINARY --------------------
+if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+  });
+} else {
+  console.warn("Cloudinary not fully configured. Image uploads will fail without CLOUDINARY env vars.");
+}
+
+// helper to upload buffer to cloudinary using upload_stream -> returns secure_url
+function cloudinaryUploadFromBuffer(buffer, folder = "joyfund/campaigns") {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream({ folder }, (error, result) => {
+      if (error) return reject(error);
+      resolve(result);
+    });
+    stream.end(buffer);
+  });
+}
+
+function safeImageUrl(url) {
+  if (!url || url.toString().trim() === "") return "https://placehold.co/400x200?text=No+Image";
+  return url;
+}
+
+// ==================== LIVE VISITOR TRACKING ====================
+const liveVisitors = {};
+app.post("/api/track-visitor", (req, res) => {
+  try {
+    const { visitorId } = req.body;
+    if (!visitorId) return res.status(400).json({ success: false, message: "Missing visitorId" });
+    const now = Date.now();
+    liveVisitors[visitorId] = now;
+    for (const id in liveVisitors) {
+      if (now - liveVisitors[id] > 30000) delete liveVisitors[id];
+    }
+    res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
+  } catch (err) {
+    console.error("Visitor tracking error:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ==================== USERS & AUTH ====================
+async function getUsers() {
+  if (!process.env.USERS_SHEET_ID) return [];
+  const rows = await getSheetValues(process.env.USERS_SHEET_ID, "A:D");
+  return rows.map(r => ({ joinDate: r[0], name: r[1], email: r[2], password: r[3] }));
+}
+
+app.post("/api/signup", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ error: "Missing fields" });
+    const users = await getUsers();
+    const emailLower = email.trim().toLowerCase();
+    if (users.some(u => (u.email || "").toLowerCase() === emailLower)) return res.status(409).json({ error: "Email already exists" });
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const timestamp = new Date().toISOString();
+    await appendSheetValues(process.env.USERS_SHEET_ID, "A:D", [[timestamp, name, emailLower, hashedPassword]]);
+    req.session.user = { name, email: emailLower, joinDate: timestamp };
+    res.json({ ok: true, loggedIn: true, user: req.session.user });
+  } catch (err) { console.error(err); res.status(500).json({ error: "Signup failed" }); }
+  } catch (err) {
+    console.error("Signup error:", err);
+    res.status(500).json({ error: "Signup failed" });
+  }
+});
+
+app.post("/api/signin", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Missing fields" });
+    const users = await getUsers();
+    const inputEmail = email.trim().toLowerCase();
+    const user = users.find(u => (u.email || "").toLowerCase() === inputEmail);
+    if (!user) return res.status(401).json({ error: "Invalid credentials" });
+    const match = await bcrypt.compare(password, user.password || "");
+    if (!match) return res.status(401).json({ error: "Invalid credentials" });
+    req.session.user = { name: user.name, email: user.email, joinDate: user.joinDate };
+    res.json({ ok: true, loggedIn: true, user: req.session.user });
+  } catch (err) { console.error(err); res.status(500).json({ error: "Signin failed" }); }
+  } catch (err) {
+    console.error("Signin error:", err);
+    res.status(500).json({ error: "Signin failed" });
+  }
+});
+
+app.get("/api/check-session", (req, res) => {
+  if (req.session.user) {
+    const u = req.session.user;
+    return res.json({ loggedIn: true, user: u, name: u.name || null, email: u.email || null, joinDate: u.joinDate || null });
+  } else {
+    return res.json({ loggedIn: false, user: null });
+  }
+});
+
+app.post("/api/logout", (req, res) => {
+  req.session.destroy(err => err ? res.status(500).json({ error: "Logout failed" }) : res.json({ ok: true }));
+});
+
+// ==================== PASSWORD RESET ====================
+app.post("/api/request-reset", async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Missing email" });
+    const token = crypto.randomBytes(20).toString("hex");
+    const expiry = Date.now() + 3600000;
+    const expiry = Date.now() + 3600000; // 1 hour
+    // Save token on sheet E:G (email, token, expiry)
+    await appendSheetValues(process.env.USERS_SHEET_ID, "E:G", [[email.toLowerCase(), token, expiry]]);
+    await sendMailjetEmail("Password Reset", `<p>Click <a href="${process.env.FRONTEND_URL}/reset-password?token=${token}">here</a> to reset your password. Expires in 1 hour.</p>`, email);
+    res.json({ ok: true, message: "Reset email sent" });
+  } catch (err) { console.error(err); res.status(500).json({ error: "Failed to request reset" }); }
+  } catch (err) {
+    console.error("request-reset error:", err);
+    res.status(500).json({ error: "Failed to request reset" });
+  }
+});
+
+app.post("/api/reset-password", async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) return res.status(400).json({ error: "Missing fields" });
+    const rows = await getSheetValues(process.env.USERS_SHEET_ID, "E:G");
+    const row = rows.find(r => r[1] === token && r[2] && parseInt(r[2], 10) > Date.now());
+    if (!row) return res.status(400).json({ error: "Invalid or expired token" });
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const email = row[0];
+    // Append a new credentials row (timestamp, name/email placeholders, email, hashedPassword)
+    await appendSheetValues(process.env.USERS_SHEET_ID, "A:D", [[new Date().toISOString(), email, email, hashedPassword]]);
+    res.json({ ok: true, message: "Password reset successful" });
+  } catch (err) { console.error(err); res.status(500).json({ error: "Failed to reset password" }); }
+  } catch (err) {
+    console.error("reset-password error:", err);
+    res.status(500).json({ error: "Failed to reset password" });
+  }
+});
+
+// ==================== WAITLIST / VOLUNTEERS / STREET TEAM ====================
+app.post("/api/waitlist", async (req, res) => {
+  try {
+    const { name, email, reason } = req.body;
+    if (!name || !email) return res.status(400).json({ success: false });
+    const timestamp = new Date().toLocaleString();
+    await appendSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:D", [[timestamp, name, email.toLowerCase(), reason || ""]]);
+    await sendMailjetEmail("New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}. Reason: ${reason || "N/A"}</p>`);
+    res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+  } catch (err) {
+    console.error("waitlist error:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+app.post("/api/volunteer", async (req, res) => {
+  try {
+    const { name, email, role, availability } = req.body;
+    if (!name || !email || !role) return res.status(400).json({ success: false });
+    const timestamp = new Date().toLocaleString();
+    await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "Volunteers!A:E", [[timestamp, name, email.toLowerCase(), role, availability || ""]]);
+    await sendMailjetEmail("New Volunteer Submission", `<p>${name} (${email}) signed up as volunteer for ${role} at ${timestamp}. Availability: ${availability || "N/A"}</p>`);
+    res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+  } catch (err) {
+    console.error("volunteer error:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+app.post("/api/street-team", async (req, res) => {
+  try {
+    const { name, email, city, hoursAvailable } = req.body;
+    if (!name || !email || !city) return res.status(400).json({ success: false });
+    const timestamp = new Date().toLocaleString();
+    await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "StreetTeam!A:E", [[timestamp, name, email.toLowerCase(), city, hoursAvailable || ""]]);
+    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined street team in ${city} at ${timestamp}. Hours: ${hoursAvailable || "N/A"}</p>`);
+    res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+  } catch (err) {
+    console.error("street-team error:", err);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ==================== ADMIN ROUTES ====================
+function requireAdmin(req, res, next) {
+  if (req.session && req.session.admin) return next();
+  res.status(403).json({ success: false, message: "Forbidden" });
+}
+
+app.post("/api/admin-login", (req,res)=>{
+  const {username,password}=req.body;
+  if(username===ADMIN_USERNAME && password===ADMIN_PASSWORD){
+    req.session.admin=true;
+    return res.json({success:true});
+app.post("/api/admin-login", (req, res) => {
+  const { username, password } = req.body;
+  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+    req.session.admin = true;
+    return res.json({ success: true });
+  }
+  res.status(401).json({success:false,message:"Invalid credentials"});
+  res.status(401).json({ success: false, message: "Invalid credentials" });
+});
+
+app.get("/api/admin-check", (req,res)=>{ res.json({admin:!!(req.session && req.session.admin)}); });
+app.get("/api/admin-check", (req, res) => { res.json({ admin: !!(req.session && req.session.admin) }); });
+
+app.post("/api/admin-logout", (req,res)=>{ req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true})); });
+app.post("/api/admin-logout", (req, res) => { req.session.destroy(err => err ? res.status(500).json({ success: false }) : res.json({ success: true })); });
+
+// ==================== CAMPAIGNS ROUTES ====================
+// Campaign rows assumed columns: [Id, Title, Email, Goal, Description, Category, Status, CreatedAt, ImageURL] (A:I)
+
+// -- Create Campaign
+app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{ /* existing code */ });
+app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ success: false, message: "Not signed in" });
+
+    const { title, goal, description, category } = req.body;
+    if (!title || !goal || !description || !category) return res.status(400).json({ success: false, message: "Missing fields" });
+
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    if (!spreadsheetId) return res.status(500).json({ success: false, message: "CAMPAIGNS_SHEET_ID not configured" });
+
+    const campaignId = Date.now().toString();
+    let imageUrl = safeImageUrl("");
+
+    if (req.file && process.env.CLOUDINARY_API_KEY) {
+      try {
+        const uploadResult = await cloudinaryUploadFromBuffer(req.file.buffer, "joyfund/campaigns");
+        if (uploadResult && uploadResult.secure_url) imageUrl = uploadResult.secure_url;
+      } catch (uploadErr) {
+        console.error("Cloudinary upload error:", uploadErr);
+      }
+    }
+
+    const createdAt = new Date().toISOString();
+    const status = "Pending";
+    const newCampaignRow = [campaignId, title, user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl];
+    await appendSheetValues(spreadsheetId, "A:I", [newCampaignRow]);
+
+    // Notify admins
+    await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
+    res.json({ success: true, message: "Campaign submitted", campaignId });
+  } catch (err) {
+    console.error("create-campaign error:", err);
+    res.status(500).json({ success: false, message: "Failed to create campaign" });
+  }
+});
+
+// -- Public campaigns (Approved only)
+app.get("/api/public-campaigns", async(req,res)=>{ /* existing code */ });
+app.get("/api/public-campaigns", async (req, res) => {
+  try {
+    if (!process.env.CAMPAIGNS_SHEET_ID) return res.status(500).json([]);
+    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
+    const headers = ["Id", "Title", "Email", "Goal", "Description", "Category", "Status", "CreatedAt", "ImageURL"];
+    const campaigns = rows.map(r => {
+      let obj = {};
+      headers.forEach((h, i) => obj[h] = r[i] || "");
+      return obj;
+    }).filter(c => (c.Status || "").toLowerCase() === "approved");
+    // Normalize keys to lower-case property names used on frontend if needed
+    res.json(campaigns);
+  } catch (err) {
+    console.error("public-campaigns error:", err);
+    res.status(500).json([]);
+  }
+});
+
+// -- User campaigns (any status)
+app.get("/api/my-campaigns", async(req,res)=>{ /* existing code */ });
+app.get("/api/my-campaigns", async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json([]);
+    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
+    const headers = ["Id", "Title", "Email", "Goal", "Description", "Category", "Status", "CreatedAt", "ImageURL"];
+    const campaigns = rows.map(r => {
+      let obj = {};
+      headers.forEach((h, i) => obj[h] = r[i] || "");
+      return obj;
+    }).filter(c => (c.Email || "").toLowerCase() === user.email.toLowerCase());
+    res.json({ campaigns });
+  } catch (err) {
+    console.error("my-campaigns error:", err);
+    res.status(500).json([]);
+  }
+});
+
+// ==================== UPDATE CAMPAIGN ====================
+app.put("/api/campaign/:id", upload.single("image"), async (req, res) => { /* existing code */ });
+app.put("/api/campaign/:id", upload.single("image"), async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ success: false, message: "Not signed in" });
+
+    const campaignId = req.params.id;
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+    if (!spreadsheetId) return res.status(500).json({ success: false, message: "Missing CAMPAIGNS_SHEET_ID" });
+
+    const rows = await getSheetValues(spreadsheetId, "A:I");
+    // find the row index where col A === campaignId
+    const rowIndex = rows.findIndex(r => r[0] === campaignId);
+    if (rowIndex === -1) return res.status(404).json({ success: false, message: "Campaign not found" });
+
+    const ownerEmail = (rows[rowIndex][2] || "").toLowerCase();
+    if (ownerEmail !== (user.email || "").toLowerCase()) {
+      return res.status(403).json({ success: false, message: "Unauthorized to edit this campaign" });
+    }
+
+    const { title, description, goal } = req.body;
+    if (!title || !description || !goal) return res.status(400).json({ success: false, message: "Missing required fields" });
+
+    // existing data preserved
+    let imageUrl = rows[rowIndex][8] || "";
+    if (req.file && process.env.CLOUDINARY_API_KEY) {
+      try {
+        const uploadResult = await cloudinaryUploadFromBuffer(req.file.buffer, "joyfund/campaigns");
+        if (uploadResult?.secure_url) imageUrl = uploadResult.secure_url;
+      } catch (uploadErr) {
+        console.error("Cloudinary upload error during update:", uploadErr);
+      }
+    }
+
+    const updatedRow = [
+      campaignId,
+      title,
+      user.email.toLowerCase(),
+      goal,
+      description,
+      rows[rowIndex][5] || "", // keep category
+      rows[rowIndex][6] || "Pending", // keep status
+      rows[rowIndex][7] || new Date().toISOString(), // keep createdAt
+      imageUrl
+    ];
+
+    // Sheets rows are 1-based. If your sheet has a header row, add +2 instead of +1.
+    const rowNumber = rowIndex + 1;
+    await updateSheetValues(spreadsheetId, `A${rowNumber}:I${rowNumber}`, [updatedRow]);
+    res.json({ success: true, message: "Campaign updated successfully" });
+  } catch (err) {
+    console.error("update-campaign error:", err);
+    res.status(500).json({ success: false, message: "Failed to update campaign" });
+  }
+});
+
+// ==================== DONATIONS ROUTES ====================
+app.get("/api/donations", async (req, res) => { /* existing code */ });
+app.get("/api/donations", async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json([]);
+    if (!process.env.DONATIONS_SHEET_ID) return res.status(500).json([]);
+    const rows = await getSheetValues(process.env.DONATIONS_SHEET_ID, "A:E");
+    const headers = ["Email", "CampaignId", "Amount", "Date", "Status"];
+    const donations = rows.map(r => {
+      let obj = {};
+      headers.forEach((h, i) => obj[h] = r[i] || "");
+      return obj;
+    }).filter(d => (d.Email || "").toLowerCase() === user.email.toLowerCase());
+    res.json(donations);
+  } catch (err) {
+    console.error("donations error:", err);
+    res.status(500).json([]);
+  }
+});
+
+// ==================== MY VERIFICATIONS ROUTE ====================
+// ==================== ID VERIFICATIONS (google-spreadsheet) ====================
+app.get("/api/my-verifications", async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json([{ Status: "Pending", Notes: "Not logged in", PhotoURL: null }]);
+
+    const sheetId = process.env.ID_VERIFICATION_SHEET_ID;
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+
+    if (!sheetId || !clientEmail || !privateKey) {
+      return res.status(500).json([{ Status: "Pending", Notes: "Verification sheet not configured", PhotoURL: null }]);
+    }
+
+    const doc = new GoogleSpreadsheet(sheetId);
+    await doc.useServiceAccountAuth({
+      client_email: clientEmail,
+      private_key: privateKey.replace(/\\n/g, "\n"),
+    });
+    await doc.loadInfo();
+
+    const sheet = doc.sheetsByTitle["ID_Verifications"];
+    if (!sheet) return res.status(500).json([{ Status: "Pending", Notes: "Sheet not found", PhotoURL: null }]);
+
+    const rows = await sheet.getRows();
+    const verifications = rows
+      .filter(r => r.Email?.toLowerCase() === user.email.toLowerCase())
+      .map(r => ({ Status: r.Status || "Pending", Notes: r.Notes || "", PhotoURL: r.PhotoURL || null }));
+    const match = rows.find(r => (r.Email || "").trim().toLowerCase() === user.email.toLowerCase());
+
+    if (!match) return res.json([{ Status: "Pending", Notes: "Not found in sheet yet", PhotoURL: null }]);
+
+    res.json([{
+      Status: match.Status || "Pending",
+      Notes: match.Notes || "",
+      PhotoURL: match.PhotoURL || null
+    }]);
+  } catch (err) {
+    console.error("my-verifications error:", err);
+    res.status(500).json([{ Status: "Pending", Notes: "Server error", PhotoURL: null }]);
+  }
+});
+
+// ==================== STRIPE CHECKOUT SESSION (alternate route included earlier) ====================
+app.post("/api/create-checkout-session/:campaignId?", async (req, res) => {
+  try {
+    if (!stripe) return res.status(500).json({ success: false, message: "Stripe not configured" });
+
+    const campaignId = req.params.campaignId || req.body.campaignId;
+    const { amount, successUrl, cancelUrl } = req.body;
+    if (!campaignId || !amount || !successUrl || !cancelUrl) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    const amountInCents = Math.round(Number(amount) * 100);
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: { name: `Donation to campaign ${campaignId}` },
+          unit_amount: amountInCents,
+        },
+        quantity: 1
+      }],
+      mode: "payment",
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: { campaignId }
+    });
+
+    res.json(verifications.length ? verifications : [{ Status: "Pending", Notes: "", PhotoURL: null }]);
+  } catch (err) { console.error(err); res.status(500).json([{ Status: "Pending", Notes: "Error fetching verifications", PhotoURL: null }]); }
+    res.json({ success: true, sessionId: session.id, campaignId });
+  } catch (err) {
+    console.error("Stripe checkout error:", err);
+    res.status(500).json({ success: false, message: "Failed to create checkout session" });
+  }
+});
+
 // ==================== START SERVER ====================
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 app.listen(PORT, () => console.log(`JoyFund backend running on port ${PORT}`));
