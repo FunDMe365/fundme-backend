@@ -384,6 +384,90 @@ app.get("/api/my-campaigns", async(req,res)=>{
   }catch(err){console.error(err);res.status(500).json([]);}
 });
 
+// ==================== UPDATE CAMPAIGN ====================
+app.put("/api/campaign/:id", upload.single("image"), async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) {
+      return res.status(401).json({ success: false, message: "Not signed in" });
+    }
+
+    const campaignId = req.params.id;
+    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
+
+    if (!spreadsheetId) {
+      return res.status(500).json({ success: false, message: "Missing CAMPAIGNS_SHEET_ID" });
+    }
+
+    // Load sheet data
+    const rows = await getSheetValues(spreadsheetId, "A:I");
+    const headers = ["Id", "Title", "Email", "Goal", "Description", "Category", "Status", "CreatedAt", "ImageURL"];
+
+    // Find row index
+    const rowIndex = rows.findIndex(r => r[0] === campaignId);
+    if (rowIndex === -1) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+
+    // Permission check: only owner can update
+    const rowOwnerEmail = rows[rowIndex][2]?.toLowerCase() || "";
+    if (rowOwnerEmail !== user.email.toLowerCase()) {
+      return res.status(403).json({ success: false, message: "Unauthorized to edit this campaign" });
+    }
+
+    // ------ Update fields ------
+    const { title, description, goal } = req.body;
+
+    if (!title || !description || !goal) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    let imageUrl = rows[rowIndex][8] || ""; // default existing image
+
+    // If new image uploaded + Cloudinary active
+    if (req.file && process.env.CLOUDINARY_API_KEY) {
+      const uploadResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "joyfund/campaigns" },
+          (err, result) => (err ? reject(err) : resolve(result))
+        );
+        stream.end(req.file.buffer);
+      });
+
+      if (uploadResult?.secure_url) {
+        imageUrl = uploadResult.secure_url;
+      }
+    }
+
+    // Build updated row
+    const updatedRow = [
+      campaignId,
+      title,
+      user.email.toLowerCase(),
+      goal,
+      description,
+      rows[rowIndex][5], // keep original category
+      rows[rowIndex][6], // keep original status
+      rows[rowIndex][7], // keep createdAt
+      imageUrl
+    ];
+
+    // Write back to sheet
+    const rowNumber = rowIndex + 1; // Sheets is 1-based
+    await updateSheetValues(
+      spreadsheetId,
+      `A${rowNumber}:I${rowNumber}`,
+      [updatedRow]
+    );
+
+    res.json({ success: true, message: "Campaign updated successfully" });
+
+  } catch (err) {
+    console.error("Error updating campaign:", err);
+    res.status(500).json({ success: false, message: "Failed to update campaign" });
+  }
+});
+
 // ==================== DONATIONS ROUTES (NEW FOR DASHBOARD) ====================
 app.get("/api/donations", async (req, res) => {
   try {
@@ -410,10 +494,35 @@ app.get("/api/my-verifications", async (req, res) => {
     const user = req.session.user;
     if (!user) {
       console.log("❌ No user session");
+      return res.status(401).json([
+        {
+          Status: "Pending",
+          Notes: "Not logged in",
+          PhotoURL: null
+        }
+      ]);
       return res.status(401).json({ error: "No user session" });
     }
 
     const sheetId = process.env.ID_VERIFICATION_SHEET_ID;
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+
+    // DEBUG logs
+    console.log("DEBUG: user.email =", user.email);
+    console.log("DEBUG: sheetId =", !!sheetId);
+    console.log("DEBUG: clientEmail =", !!clientEmail);
+    console.log("DEBUG: privateKey exists =", !!privateKey);
+
+    if (!sheetId || !clientEmail || !privateKey) {
+      console.warn("⚠️ Google Sheets credentials missing or invalid");
+      return res.status(500).json([
+        {
+          Status: "Pending",
+          Notes: "Verification sheet not configured",
+          PhotoURL: null
+        }
+      ]);
     if (!sheetId) {
       console.log("❌ No sheet ID provided");
       return res.status(500).json({ error: "Sheet ID missing" });
@@ -421,6 +530,20 @@ app.get("/api/my-verifications", async (req, res) => {
 
     const doc = new GoogleSpreadsheet(sheetId);
 
+    try {
+      await doc.useServiceAccountAuth({
+        client_email: clientEmail,
+        private_key: privateKey.replace(/\\n/g, "\n"),
+      });
+    } catch (authErr) {
+      console.error("❌ Google auth failed:", authErr);
+      return res.status(500).json([
+        {
+          Status: "Pending",
+          Notes: "Google auth failed",
+          PhotoURL: null
+        }
+      ]);
     // Authenticate with service account
     await doc.useServiceAccountAuth({
       client_email: process.env.GOOGLE_CLIENT_EMAIL,
@@ -435,6 +558,40 @@ app.get("/api/my-verifications", async (req, res) => {
       return res.status(500).json({ error: "Sheet not found" });
     }
 
+    try {
+      await doc.loadInfo();
+      const sheet = doc.sheetsByIndex[0];
+      const rows = await sheet.getRows();
+
+      const match = rows.find(r => r.Email === user.email);
+
+      if (!match) {
+        console.log("⚠️ No matching verification found for:", user.email);
+        return res.json([
+          {
+            Status: "Pending",
+            Notes: "Not found in sheet yet",
+            PhotoURL: null
+          }
+        ]);
+      }
+
+      return res.json([
+        {
+          Status: match.Status || "Pending",
+          Notes: match.Notes || "",
+          PhotoURL: match.PhotoURL || null
+        }
+      ]);
+    } catch (sheetErr) {
+      console.error("❌ Error reading sheet:", sheetErr);
+      return res.status(500).json([
+        {
+          Status: "Pending",
+          Notes: "Error reading verification sheet",
+          PhotoURL: null
+        }
+      ]);
     const rows = await sheet.getRows();
 
     // Debug: see what rows are coming in
@@ -451,6 +608,15 @@ app.get("/api/my-verifications", async (req, res) => {
       return res.json({ Status: "pending", IDPhotoURL: null });
     }
 
+  } catch (err) {
+    console.error("❌ Unexpected error in /api/my-verifications:", err);
+    return res.status(500).json([
+      {
+        Status: "Pending",
+        Notes: "Server error",
+        PhotoURL: null
+      }
+    ]);
     // Return relevant info
     res.json({
       Status: row.Status || "pending",
@@ -464,4 +630,3 @@ app.get("/api/my-verifications", async (req, res) => {
 
 // ==================== START SERVER ====================
 app.listen(PORT, ()=>console.log(`JoyFund backend running on port ${PORT}`));
-
