@@ -451,7 +451,7 @@ app.get("/api/my-campaigns", async (req, res) => {
       category: r[5] || "",
       status: r[6] || "",
       createdAt: r[7] || "",
-      imageURL: r[8] || ""
+      ImageURL: r[8] || "https://placehold.co/80x60"
     })).filter(c => (c.email || "").toLowerCase() === user.email.toLowerCase());
 
     res.json(campaigns);
@@ -558,11 +558,11 @@ app.get("/api/my-verifications", async (req, res) => {
 
     if (!match) return res.json([{ Status: "Pending", Notes: "Not found in sheet yet", PhotoURL: null }]);
 
-    res.json([{
-      Status: match.Status || "Pending",
-      Notes: match.Notes || "",
-      PhotoURL: match.PhotoURL || null
-    }]);
+    res.json({
+  Status: match.Status || "Pending",
+  Notes: match.Notes || "",
+  IDPhotoURL: match.PhotoURL || null   // <-- must match JS
+});
 
   } catch (err) {
     console.error("my-verifications error:", err);
