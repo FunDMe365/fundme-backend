@@ -480,21 +480,33 @@ app.delete("/api/delete-account", async (req, res) => {
 });
 
 // ==================== STRIPE CHECKOUT ====================
-app.post("/api/create-checkout-session", async (req, res) => {
+app.post("/api/create-checkout-session/:id", async (req, res) => {
+  const campaignId = req.params.id; // <-- gets the ID from the URL
   try {
-    if (!stripe) return res.status(500).json({ error: "Stripe not configured" });
-    const { amount, currency = "usd" } = req.body;
+    // your existing Stripe checkout code
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
+      // example:
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: `Donation for campaign ${campaignId}`,
+            },
+            unit_amount: 5000, // $50 donation as an example
+          },
+          quantity: 1,
+        },
+      ],
       mode: "payment",
-      line_items: [{ price_data: { currency, product_data: { name: "Donation" }, unit_amount: parseInt(amount * 100) }, quantity: 1 }],
-      success_url: `${process.env.FRONTEND_URL || "https://joyfund.org"}/success.html`,
-      cancel_url: `${process.env.FRONTEND_URL || "https://joyfund.org"}/cancel.html`
+      success_url: "https://yourfrontend.com/success",
+      cancel_url: "https://yourfrontend.com/cancel",
     });
-    res.json({ id: session.id });
+
+    res.json({ url: session.url });
   } catch (err) {
-    console.error("create-checkout-session error:", err);
-    res.status(500).json({ error: "Failed to create session" });
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
