@@ -19,6 +19,12 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "FunDMe$123";
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// -------------------- SIMPLE REQUEST LOGGER (helps confirm route hits) --------------------
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 // -------------------- CORS --------------------
 const cors = require("cors");
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
@@ -26,17 +32,15 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .map(o => o.trim())
   .filter(o => o.length > 0);
 
-app.use(cors({
-  origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.length === 0) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error("CORS not allowed: " + origin));
-  },
-  credentials: true,
-  optionsSuccessStatus: 200
-}));
-app.options("*", cors({ origin: allowedOrigins.length ? allowedOrigins : true, credentials: true }));
+// Robust CORS handling: allow all origins when ALLOWED_ORIGINS is empty, otherwise allow only listed origins.
+// Also ensure preflight (OPTIONS) returns quickly.
+if (allowedOrigins.length === 0) {
+  app.use(cors({ origin: true, credentials: true, optionsSuccessStatus: 200 }));
+  app.options("*", cors({ origin: true, credentials: true, optionsSuccessStatus: 200 }));
+} else {
+  app.use(cors({ origin: allowedOrigins, credentials: true, optionsSuccessStatus: 200 }));
+  app.options("*", cors({ origin: allowedOrigins, credentials: true, optionsSuccessStatus: 200 }));
+}
 
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Credentials", "true");
@@ -297,7 +301,7 @@ app.post("/api/waitlist", async (req, res) => {
     if (!name || !email) return res.status(400).json({ success: false });
     const timestamp = new Date().toLocaleString();
     await appendSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:D", [[timestamp, name, email.toLowerCase(), reason || ""]]);
-    await sendMailjetEmail("New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}. Reason: ${reason || "N/A"}</p>`);
+    await sendMailjetEmail("New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}. Reason: ${reason || "N/A"}</p>`, email);
     res.json({ success: true });
   } catch (err) {
     console.error("waitlist error:", err);
@@ -311,7 +315,7 @@ app.post("/api/volunteer", async (req, res) => {
     if (!name || !email || !role) return res.status(400).json({ success: false });
     const timestamp = new Date().toLocaleString();
     await appendSheetValues(process.env.VOLUNTEERS_SHEET_ID, "Volunteers!A:E", [[timestamp, name, email.toLowerCase(), role, availability || ""]]);
-    await sendMailjetEmail("New Volunteer Submission", `<p>${name} (${email}) signed up as volunteer for ${role} at ${timestamp}. Availability: ${availability || "N/A"}</p>`);
+    await sendMailjetEmail("New Volunteer Submission", `<p>${name} (${email}) signed up as volunteer for ${role} at ${timestamp}. Availability: ${availability || "N/A"}</p>`, email);
     res.json({ success: true });
   } catch (err) {
     console.error("volunteer error:", err);
@@ -325,7 +329,7 @@ app.post("/api/street-team", async (req, res) => {
     if (!name || !email || !city) return res.status(400).json({ success: false });
     const timestamp = new Date().toLocaleString();
     await appendSheetValues(process.env.STREETTEAM_SHEET_ID, "StreetTeam!A:E", [[timestamp, name, email.toLowerCase(), city, hoursAvailable || ""]]);
-    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined street team in ${city} at ${timestamp}. Hours: ${hoursAvailable || "N/A"}</p>`);
+    await sendMailjetEmail("New Street Team Submission", `<p>${name} (${email}) joined street team in ${city} at ${timestamp}. Hours: ${hoursAvailable || "N/A"}</p>`, email);
     res.json({ success: true });
   } catch (err) {
     console.error("street-team error:", err);
@@ -407,13 +411,22 @@ app.get("/api/my-campaigns", async (req, res) => {
 });
 
 app.get("/api/public-campaigns", async (req, res) => {
+  console.log("🔥 /api/public-campaigns was called");
   try {
     const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID, "A:I");
-    const campaigns = rows.map(r => ({
+    console.log("🔥 Rows received from sheet:", Array.isArray(rows) ? rows.length : typeof rows);
+    // defensive: ensure rows is an array
+    const safeRows = Array.isArray(rows) ? rows : [];
+
+    const campaigns = safeRows.map(r => ({
       Id: r[0], title: r[1], Email: r[2], Goal: r[3], Description: r[4],
       Category: r[5], Status: r[6], CreatedAt: r[7], ImageURL: r[8]
     }));
-    res.json(campaigns.filter(c => (c.Status || "").toLowerCase() === "approved"));
+
+    const approved = campaigns.filter(c => (c.Status || "").toLowerCase() === "approved");
+
+    console.log("🔥 Approved campaigns count:", approved.length);
+    res.json(approved);
   } catch (err) {
     console.error("public-campaigns error:", err);
     res.status(500).json([]);
