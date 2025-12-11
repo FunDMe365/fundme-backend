@@ -405,42 +405,32 @@ app.get("/api/id-verifications", async (req, res) => {
   try {
     const user = req.session.user;
     if (!user) return res.status(401).json([]);
-
     if (!process.env.IDS_SHEET_ID) return res.status(500).json([]);
 
-    // Fetch the ID_Verifications tab specifically
+    // Read all relevant columns from the ID_Verifications tab
     const rows = await getSheetValues(process.env.IDS_SHEET_ID, "ID_Verifications!A:E");
 
-    if (!rows || rows.length === 0) return res.json([]);
+    const headers = ["TimeStamp", "Email", "Name", "Status", "ID Photo URL"];
 
-    // Map headers to indices
-    const headers = rows[0]; // Expecting: ['TimeStamp','Email','Name','Status','ID Photo URL']
-    const dataRows = rows.slice(1); // skip headers
+    // Map rows to objects and filter for current user
+    const userRows = rows
+      .map(r => {
+        const obj = {};
+        headers.forEach((h, i) => obj[h] = r[i] || "");
 
-    // Filter for the logged-in user's email
-    const userRows = dataRows.filter(r => {
-      const emailIndex = headers.indexOf("Email");
-      return r[emailIndex] && r[emailIndex].toLowerCase() === user.email.toLowerCase();
-    });
+        // Normalize Status
+        if (!["Verified","Pending","Denied"].includes(obj.Status)) obj.Status = "Pending";
 
-    // Map to objects
-    const verifications = userRows.map(r => {
-      const obj = {};
-      headers.forEach((h, i) => {
-        obj[h] = r[i] || "";
-      });
+        // Add frontend-friendly property
+        obj.IDPhotoURL = obj["ID Photo URL"] || "";
 
-      // Normalize Status to one of: Verified, Pending, Denied
-      if (!["Verified","Pending","Denied"].includes(obj.Status)) {
-        obj.Status = "Pending";
-      }
+        return obj;
+      })
+      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase());
 
-      return obj;
-    });
-
-    res.json(verifications);
+    res.json(userRows);
   } catch (err) {
-    console.error("ID Verifications fetch error:", err);
+    console.error("ID verification error:", err);
     res.status(500).json([]);
   }
 });
