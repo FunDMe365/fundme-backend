@@ -406,40 +406,43 @@ app.get("/api/id-verifications", async (req, res) => {
     const user = req.session.user;
     if (!user) return res.status(401).json([]);
 
-    if (!process.env.IDS_SHEET_ID) {
-      console.error("IDS_SHEET_ID missing!");
-      return res.status(500).json([]);
-    }
+    if (!process.env.IDS_SHEET_ID) return res.status(500).json([]);
 
-    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:E");
-    console.log("Fetched ID rows:", rows); // <-- log the raw rows
+    // Fetch the ID_Verifications tab specifically
+    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "ID_Verifications!A:E");
 
-    if (!rows || rows.length === 0) {
-      console.warn("No rows returned from sheet.");
-      return res.json([]);
-    }
+    if (!rows || rows.length === 0) return res.json([]);
 
-    const headers = ["TimeStamp", "Email", "Name", "Status", "IDPhotoURL"];
-    const verifications = rows
-      .map(r => {
-        let obj = {};
-        headers.forEach((h, i) => obj[h] = r[i] || "");
-        return obj;
-      })
-      .filter(v => v.Email.toLowerCase() === user.email.toLowerCase())
-      .map(v => ({
-        ...v,
-        Status: ["Verified","Pending","Denied"].includes(v.Status) ? v.Status : "Pending"
-      }));
+    // Map headers to indices
+    const headers = rows[0]; // Expecting: ['TimeStamp','Email','Name','Status','ID Photo URL']
+    const dataRows = rows.slice(1); // skip headers
 
-    console.log("Filtered verifications:", verifications); // <-- log the filtered result
+    // Filter for the logged-in user's email
+    const userRows = dataRows.filter(r => {
+      const emailIndex = headers.indexOf("Email");
+      return r[emailIndex] && r[emailIndex].toLowerCase() === user.email.toLowerCase();
+    });
+
+    // Map to objects
+    const verifications = userRows.map(r => {
+      const obj = {};
+      headers.forEach((h, i) => {
+        obj[h] = r[i] || "";
+      });
+
+      // Normalize Status to one of: Verified, Pending, Denied
+      if (!["Verified","Pending","Denied"].includes(obj.Status)) {
+        obj.Status = "Pending";
+      }
+
+      return obj;
+    });
+
     res.json(verifications);
-
   } catch (err) {
-    console.error("ID verification error:", err);
+    console.error("ID Verifications fetch error:", err);
     res.status(500).json([]);
   }
 });
-
 // ==================== START SERVER ====================
 app.listen(PORT, ()=>console.log(`JoyFund backend running on port ${PORT}`));
