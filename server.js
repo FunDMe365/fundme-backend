@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - COMPLETE JOYFUND BACKEND ====================
+// ==================== SERVER.JS - COMPLETE JOYFUND BACKEND (PATCHED) ====================
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
@@ -38,6 +38,10 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .map(o => o.trim())
   .filter(o => o.length > 0);
 
+if (!allowedOrigins.includes("https://fundasmile.net")) {
+  console.warn("ALLOWED_ORIGINS does not include https://fundasmile.net — make sure to add it in your environment variables if your frontend is served there.");
+}
+
 const corsOptions = {
   origin: function(origin, callback) {
     if (!origin) return callback(null, true); // allow non-browser requests (mobile, curl)
@@ -48,35 +52,8 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// UPDATE PROFILE ROUTE
-app.post("/api/update-profile", (req, res) => {
-  const { userId, name, email, phone } = req.body;
-
-  if (!userId) {
-    return res.status(400).json({ success: false, message: "User ID is required" });
-  }
-
-  const userIndex = users.findIndex(u => u.id === userId);
-  if (userIndex === -1) {
-    return res.status(404).json({ success: false, message: "User not found" });
-  }
-
-  // Update fields
-  if (name) users[userIndex].name = name;
-  if (email) users[userIndex].email = email;
-  if (phone) users[userIndex].phone = phone;
-
-  // Save back to JSON file
-  try {
-    fs.writeFileSync(usersFile, JSON.stringify(users, null, 2));
-  } catch (err) {
-    console.error("Failed to save users.json:", err);
-    return res.status(500).json({ success: false, message: "Failed to save profile" });
-  }
-
-  res.json({ success: true, message: "Profile updated successfully", user: users[userIndex] });
-});
 // -------------------- BODY PARSER --------------------
+// IMPORTANT: body parser must be registered BEFORE any routes that use req.body
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
@@ -478,5 +455,71 @@ app.get("/api/id-verifications", async (req, res) => {
     res.status(500).json([]);
   }
 });
+
+// ==================== UPDATE PROFILE (robust) ====================
+app.post("/api/update-profile", (req, res) => {
+  try {
+    const { userId, name, email, phone } = req.body || {};
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "User ID is required" });
+    }
+
+    // ensure users array loaded
+    if (!Array.isArray(users)) users = [];
+
+    const userIndex = users.findIndex(u => u.id === userId);
+    if (userIndex === -1) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Update fields
+    if (name) users[userIndex].name = name;
+    if (email) users[userIndex].email = email;
+    if (phone) users[userIndex].phone = phone;
+
+    // Save back to JSON file
+    try {
+      fs.writeFileSync(usersFile, JSON.stringify(users, null, 2));
+    } catch (err) {
+      console.error("Failed to save users.json:", err);
+      return res.status(500).json({ success: false, message: "Failed to save profile" });
+    }
+
+    res.json({ success: true, message: "Profile updated successfully", user: users[userIndex] });
+  } catch (err) {
+    console.error("Update profile route error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== DONATIONS ROUTE (added) ====================
+// Returns JSON array of donations.
+// Priority: donations.json (local file) -> Google Sheets (if DONATIONS_SHEET_ID configured) -> []
+app.get("/api/donations", async (req, res) => {
+  try {
+    const donationsFile = path.join(__dirname, "donations.json");
+    if (fs.existsSync(donationsFile)) {
+      const raw = fs.readFileSync(donationsFile, "utf8");
+      const parsed = JSON.parse(raw || "[]");
+      return res.json(parsed);
+    }
+
+    // Fallback to Google Sheets if configured
+    if (process.env.DONATIONS_SHEET_ID && sheets) {
+      const rows = await getSheetValues(process.env.DONATIONS_SHEET_ID, "A:Z");
+      // Basic mapping: return rows as objects with the row arrays
+      const donations = rows.map(r => ({ raw: r }));
+      return res.json(donations);
+    }
+
+    // Default: empty array
+    res.json([]);
+  } catch (err) {
+    console.error("Error loading donations:", err);
+    res.status(500).json([]);
+  }
+});
+
 // ==================== START SERVER ====================
 app.listen(PORT, ()=>console.log(`JoyFund backend running on port ${PORT}`));
