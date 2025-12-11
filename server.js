@@ -15,6 +15,51 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "FunDMe$123";
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+const fs = require("fs");
+const path = require("path");
+
+// Load users from a JSON file (or use in-memory array if you prefer)
+const usersFile = path.join(__dirname, "users.json");
+let users = [];
+
+// Load users at startup
+try {
+  if (fs.existsSync(usersFile)) {
+    users = JSON.parse(fs.readFileSync(usersFile, "utf-8"));
+  }
+} catch (err) {
+  console.error("Failed to load users.json:", err);
+}
+
+// UPDATE PROFILE ROUTE
+app.post("/api/update-profile", (req, res) => {
+  const { userId, name, email, phone } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ success: false, message: "User ID is required" });
+  }
+
+  const userIndex = users.findIndex(u => u.id === userId);
+  if (userIndex === -1) {
+    return res.status(404).json({ success: false, message: "User not found" });
+  }
+
+  // Update fields
+  if (name) users[userIndex].name = name;
+  if (email) users[userIndex].email = email;
+  if (phone) users[userIndex].phone = phone;
+
+  // Save back to JSON file
+  try {
+    fs.writeFileSync(usersFile, JSON.stringify(users, null, 2));
+  } catch (err) {
+    console.error("Failed to save users.json:", err);
+    return res.status(500).json({ success: false, message: "Failed to save profile" });
+  }
+
+  res.json({ success: true, message: "Profile updated successfully", user: users[userIndex] });
+});
+
 // -------------------- CORS --------------------
 const cors = require("cors");
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
