@@ -31,6 +31,23 @@ try {
   console.error("Failed to load users.json:", err);
 }
 
+// -------------------- CORS --------------------
+const cors = require("cors");
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map(o => o.trim())
+  .filter(o => o.length > 0);
+
+const corsOptions = {
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true); // allow non-browser requests (mobile, curl)
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("CORS not allowed: " + origin));
+  },
+  credentials: true
+};
+app.use(cors(corsOptions));
+
 // UPDATE PROFILE ROUTE
 app.post("/api/update-profile", (req, res) => {
   const { userId, name, email, phone } = req.body;
@@ -59,24 +76,6 @@ app.post("/api/update-profile", (req, res) => {
 
   res.json({ success: true, message: "Profile updated successfully", user: users[userIndex] });
 });
-
-// -------------------- CORS --------------------
-const cors = require("cors");
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
-  .split(",")
-  .map(o => o.trim())
-  .filter(o => o.length > 0);
-
-const corsOptions = {
-  origin: function(origin, callback) {
-    if (!origin) return callback(null, true); // allow non-browser requests (mobile, curl)
-    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error("CORS not allowed: " + origin));
-  },
-  credentials: true
-};
-app.use(cors(corsOptions));
-
 // -------------------- BODY PARSER --------------------
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
