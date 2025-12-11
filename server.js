@@ -384,21 +384,34 @@ app.get("/api/my-campaigns", async(req,res)=>{
 });
 
 // ==================== ID VERIFICATION ====================
-app.get("/api/id-verifications", async(req,res)=>{
-  try{
+app.get("/api/id-verifications", async (req, res) => {
+  try {
     const user = req.session.user;
-    if(!user) return res.status(401).json([]);
-    if(!process.env.IDS_SHEET_ID) return res.status(500).json([]);
-    const rows = await getSheetValues(process.env.IDS_SHEET_ID,"A:C");
-    const headers = ["Email","Status","SubmittedAt"];
-    const verifications = rows.map(r=>{
-      let obj={};
-      headers.forEach((h,i)=>obj[h]=r[i]||"");
-      return obj;
-    }).filter(v=>v.Email && v.Email.toLowerCase()===user.email.toLowerCase())
-      .map(v=>({...v, Status: v.Status==="Verified"?"Verified":"Pending"}));
+    if (!user) return res.status(401).json([]);
+    if (!process.env.IDS_SHEET_ID) return res.status(500).json([]);
+
+    // Read all relevant columns: Timestamp, Email, Name, Status, ID Photo URL
+    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:E");
+
+    const headers = ["TimeStamp", "Email", "Name", "Status", "IDPhotoURL"];
+
+    const verifications = rows
+      .map(r => {
+        let obj = {};
+        headers.forEach((h, i) => obj[h] = r[i] || "");
+        return obj;
+      })
+      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
+      .map(v => ({
+        ...v,
+        Status: v.Status === "Verified" ? "Verified" : "Pending"
+      }));
+
     res.json(verifications);
-  }catch(err){console.error(err);res.status(500).json([]);}
+  } catch (err) {
+    console.error(err);
+    res.status(500).json([]);
+  }
 });
 
 // ==================== START SERVER ====================
