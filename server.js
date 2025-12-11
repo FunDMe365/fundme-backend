@@ -7,7 +7,12 @@ const multer = require("multer");
 const crypto = require("crypto");
 const Stripe = require("stripe");
 const { google } = require("googleapis");
-const mailjetLib = require("node-mailjet");
+const Mailjet = require("node-mailjet");
+const Mailjet = require("node-mailjet");
+const mailjetClient = Mailjet.apiConnect(
+  process.env.MAILJET_API_KEY,
+  process.env.MAILJET_API_SECRET
+);
 const cloudinary = require("cloudinary").v2;
 require("dotenv").config();
 
