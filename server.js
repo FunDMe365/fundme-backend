@@ -419,6 +419,24 @@ app.get("/api/my-campaigns", async(req,res)=>{
     }).filter(c=>c.Email && c.Email.toLowerCase()===user.email.toLowerCase());
     res.json(campaigns);
   }catch(err){console.error(err);res.status(500).json([]);}
+  
+});
+
+// ===== VERIFY ID ROUTE =====
+app.post("/api/verify-id", upload.single("idFile"), (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: "No file uploaded" });
+        }
+
+        console.log("ID uploaded:", req.file.filename);
+
+        // Respond to frontend
+        res.json({ success: true, message: "ID submitted successfully", file: req.file.filename });
+    } catch (err) {
+        console.error("Error in verify-id route:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
 });
 
 // ==================== ID VERIFICATION ====================
