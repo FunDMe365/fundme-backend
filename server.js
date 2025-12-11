@@ -105,9 +105,9 @@ app.post("/api/create-checkout-session/:campaignId?", async (req, res) => {
 // -------------------- MAILJET --------------------
 const Mailjet = require("node-mailjet");
 
-// Initialize mailjetClient once
+// Initialize mailjet client once
 const mailjetClient = process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET
-  ? Mailjet.apiConnect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET)
+  ? Mailjet.connect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET)
   : null;
 
 /**
@@ -139,7 +139,7 @@ async function sendMailjetEmail(subject, htmlContent, toEmail) {
   }
 }
 
-// Example usage route (optional)
+// Optional test route to verify email sending
 app.post("/api/send-test-email", async (req, res) => {
   const { to, subject, html } = req.body;
   try {
