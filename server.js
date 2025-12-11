@@ -7,10 +7,8 @@ const multer = require("multer");
 const crypto = require("crypto");
 const Stripe = require("stripe");
 const { google } = require("googleapis");
-const Mailjet = require("node-mailjet");
 const cloudinary = require("cloudinary").v2;
 require("dotenv").config();
-
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "FunDMe$123";
 
@@ -105,37 +103,53 @@ app.post("/api/create-checkout-session/:campaignId?", async (req, res) => {
 });
 
 // -------------------- MAILJET --------------------
-// Initialize mailjetClient only once
-let mailjetClient = null;
-if (process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET) {
-  mailjetClient = Mailjet.apiConnect(
-    process.env.MAILJET_API_KEY,
-    process.env.MAILJET_API_SECRET
-  );
-}
+const Mailjet = require("node-mailjet");
 
+// Initialize mailjetClient once
+const mailjetClient = process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET
+  ? Mailjet.apiConnect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET)
+  : null;
+
+/**
+ * Send an email via Mailjet
+ * @param {string} subject - Email subject
+ * @param {string} htmlContent - HTML content of the email
+ * @param {string} toEmail - Recipient email
+ */
 async function sendMailjetEmail(subject, htmlContent, toEmail) {
   if (!mailjetClient) {
-    console.warn("Mailjet not configured; email would be:", subject, toEmail);
+    console.warn("Mailjet not configured; email would be sent with subject:", subject, "to:", toEmail);
     return;
   }
+
   try {
     await mailjetClient.post("send", { version: "v3.1" }).request({
       Messages: [{
         From: { 
-          Email: process.env.MAILJET_SENDER_EMAIL || process.env.EMAIL_FROM || "admin@joyfund.net", 
-          Name: "JoyFund INC" 
+          Email: process.env.MAILJET_SENDER_EMAIL || process.env.EMAIL_FROM || "admin@joyfund.net",
+          Name: "JoyFund INC"
         },
         To: [{ Email: toEmail || process.env.NOTIFY_EMAIL }],
         Subject: subject,
         HTMLPart: htmlContent
       }]
     });
-  } catch (err) { 
-    console.error("Mailjet error:", err); 
+  } catch (err) {
+    console.error("Mailjet error:", err);
   }
 }
 
+// Example usage route (optional)
+app.post("/api/send-test-email", async (req, res) => {
+  const { to, subject, html } = req.body;
+  try {
+    await sendMailjetEmail(subject || "Test Email", html || "<p>This is a test.</p>", to);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to send email" });
+  }
+});
 
 // -------------------- GOOGLE SHEETS --------------------
 let sheets = null;
