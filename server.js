@@ -8,7 +8,6 @@ const crypto = require("crypto");
 const Stripe = require("stripe");
 const { google } = require("googleapis");
 const Mailjet = require("node-mailjet");
-const Mailjet = require("node-mailjet");
 const mailjetClient = Mailjet.apiConnect(
   process.env.MAILJET_API_KEY,
   process.env.MAILJET_API_SECRET
