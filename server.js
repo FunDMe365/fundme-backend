@@ -22,30 +22,22 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .map(o => o.trim())
   .filter(o => o.length > 0);
 
-app.use(cors({
+const corsOptions = {
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.length === 0) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (!origin) return callback(null, true); // allow non-browser requests (mobile, curl)
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error("CORS not allowed: " + origin));
   },
-  credentials: true,
-  optionsSuccessStatus: 200
-}));
-app.options("*", cors({ origin: allowedOrigins.length ? allowedOrigins : true, credentials: true }));
-
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  next();
-});
+  credentials: true
+};
+app.use(cors(corsOptions));
 
 // -------------------- BODY PARSER --------------------
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // -------------------- SESSION --------------------
-app.set('trust proxy', 1);
+app.set('trust proxy', 1); // required if behind a proxy (like Render)
 app.use(session({
   name: 'sessionId',
   secret: process.env.SESSION_SECRET || 'supersecretkey',
@@ -53,9 +45,9 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? 'none' : 'lax',
-    maxAge: 1000 * 60 * 60 * 24
+    secure: process.env.NODE_ENV === "production", // false for local dev
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
 
