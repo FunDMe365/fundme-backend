@@ -410,7 +410,7 @@ app.get("/api/id-verifications", async (req, res) => {
     // Read all relevant columns: Timestamp, Email, Name, Status, ID Photo URL
     const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:E");
 
-    const headers = ["TimeStamp, "Email", "Name", "Status", "IDPhotoURL"];
+    const headers = ["TimeStamp", "Email", "Name", "Status", "IDPhotoURL"];
 
     const verifications = rows
       .map(r => {
