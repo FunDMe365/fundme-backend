@@ -415,18 +415,26 @@ app.get("/api/id-verifications", async (req, res) => {
     const verifications = rows
       .map(r => {
         let obj = {};
-        headers.forEach((h,i) => obj[h] = r[i] || "");
+        headers.forEach((h, i) => obj[h] = r[i] ? r[i].toString().trim() : "");
         return obj;
       })
-      .filter(v => v.Email && v.Email.toLowerCase().trim() === user.email.toLowerCase().trim())
-      .map(v => ({
-        ...v,
-        Status: ["Verified","Pending","Denied"].includes(v.Status) ? v.Status : "Pending"
-      }));
+      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
+      .map(v => {
+        let status = v.Status.toLowerCase();
+        if (status === "verified") status = "Verified";
+        else if (status === "pending") status = "Pending";
+        else if (status === "denied") status = "Denied";
+        else status = "Pending";
+
+        return {
+          ...v,
+          Status: status
+        };
+      });
 
     res.json(verifications);
   } catch (err) {
-    console.error(err);
+    console.error("ID verification error:", err);
     res.status(500).json([]);
   }
 });
