@@ -8,10 +8,6 @@ const crypto = require("crypto");
 const Stripe = require("stripe");
 const { google } = require("googleapis");
 const Mailjet = require("node-mailjet");
-const mailjetClient = Mailjet.apiConnect(
-  process.env.MAILJET_API_KEY,
-  process.env.MAILJET_API_SECRET
-);
 const cloudinary = require("cloudinary").v2;
 require("dotenv").config();
 
@@ -109,10 +105,15 @@ app.post("/api/create-checkout-session/:campaignId?", async (req, res) => {
 });
 
 // -------------------- MAILJET --------------------
+// Initialize mailjetClient only once
 let mailjetClient = null;
 if (process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET) {
-  mailjetClient = mailjetLib.apiConnect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET);
+  mailjetClient = Mailjet.apiConnect(
+    process.env.MAILJET_API_KEY,
+    process.env.MAILJET_API_SECRET
+  );
 }
+
 async function sendMailjetEmail(subject, htmlContent, toEmail) {
   if (!mailjetClient) {
     console.warn("Mailjet not configured; email would be:", subject, toEmail);
@@ -121,14 +122,20 @@ async function sendMailjetEmail(subject, htmlContent, toEmail) {
   try {
     await mailjetClient.post("send", { version: "v3.1" }).request({
       Messages: [{
-        From: { Email: process.env.MAILJET_SENDER_EMAIL || process.env.EMAIL_FROM || "admin@joyfund.net", Name: "JoyFund INC" },
+        From: { 
+          Email: process.env.MAILJET_SENDER_EMAIL || process.env.EMAIL_FROM || "admin@joyfund.net", 
+          Name: "JoyFund INC" 
+        },
         To: [{ Email: toEmail || process.env.NOTIFY_EMAIL }],
         Subject: subject,
         HTMLPart: htmlContent
       }]
     });
-  } catch (err) { console.error("Mailjet error:", err); }
+  } catch (err) { 
+    console.error("Mailjet error:", err); 
+  }
 }
+
 
 // -------------------- GOOGLE SHEETS --------------------
 let sheets = null;
