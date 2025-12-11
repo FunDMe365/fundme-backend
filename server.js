@@ -407,27 +407,43 @@ app.get("/api/id-verifications", async (req, res) => {
     if (!user) return res.status(401).json([]);
     if (!process.env.IDS_SHEET_ID) return res.status(500).json([]);
 
-    // Read all relevant columns: Timestamp, Email, Name, Status, ID Photo URL
     const rows = await getSheetValues(process.env.IDS_SHEET_ID, "A:E");
 
     const headers = ["TimeStamp", "Email", "Name", "Status", "IDPhotoURL"];
 
-    const verifications = rows
-      .map(r => {
-        let obj = {};
-        headers.forEach((h, i) => obj[h] = r[i] || "");
-        return obj;
-      })
-      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase())
-      .map(v => ({
-        ...v,
-        Status: v.Status === "Verified" ? "Verified" : "Pending"
-      }));
+    // Map rows to objects
+    const verifications = rows.map(r => {
+      let obj = {};
+      headers.forEach((h, i) => {
+        obj[h] = (r[i] || "").toString().trim();
+      });
+      return obj;
+    });
 
-    res.json(verifications);
+    // Find the latest row for this user (assuming email is unique)
+    const userVerification = verifications
+      .filter(v => v.Email.toLowerCase() === user.email.toLowerCase())
+      .sort((a, b) => new Date(b.TimeStamp) - new Date(a.TimeStamp))[0];
+
+    if (!userVerification) {
+      return res.json([{ Status: "Pending", IDPhotoURL: "" }]);
+    }
+
+    // Normalize status
+    const statusNormalized =
+      userVerification.Status.toLowerCase() === "verified" ? "Verified" : "Pending";
+
+    res.json([{
+      TimeStamp: userVerification.TimeStamp,
+      Email: userVerification.Email,
+      Name: userVerification.Name,
+      Status: statusNormalized,
+      IDPhotoURL: userVerification.IDPhotoURL
+    }]);
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json([]);
+    console.error("ID Verification error:", err);
+    res.status(500).json([{ Status: "Pending", IDPhotoURL: "" }]);
   }
 });
 
