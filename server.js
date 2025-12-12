@@ -7,6 +7,7 @@ const multer = require("multer");
 const crypto = require("crypto");
 const Stripe = require("stripe");
 const { google } = require("googleapis");
+const SPREADSHEET_ID = process.env.CAMPAIGNS_SHEET_ID;
 const cloudinary = require("cloudinary").v2;
 require("dotenv").config();
 const SHEET_ID = process.env.IDS_SHEET_ID;
@@ -393,12 +394,12 @@ app.post('/api/create-campaign', upload.single('idFile'), async (req, res) => {
 
     // Append to Google Sheet
     await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Sheet1!A:I', // adjust sheet name if needed
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      resource: { values }
-    });
+  spreadsheetId: SPREADSHEET_ID,
+  range: 'Sheet1!A:I',
+  valueInputOption: 'USER_ENTERED',
+  insertDataOption: 'INSERT_ROWS',
+  resource: { values }
+});
 
     // Return success JSON to frontend
     res.json({
