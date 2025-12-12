@@ -9,6 +9,8 @@ const Stripe = require("stripe");
 const { google } = require("googleapis");
 const cloudinary = require("cloudinary").v2;
 require("dotenv").config();
+const SHEET_ID = process.env.IDS_SHEET_ID;
+if (!SHEET_ID) console.warn("IDS_SHEET_ID env variable is not set!");
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "FunDMe$123";
 
@@ -424,47 +426,33 @@ app.get("/api/my-campaigns", async(req,res)=>{
 
 // ===== VERIFY ID ROUTE =====
 app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({
-                success: false,
-                message: "No file uploaded",
-            });
-        }
-
-        // Get logged-in user email from session
-        const userEmail = req.session.user?.email || "Unknown";
-
-        // Google Sheets row data
-        const newRow = [
-            userEmail,                   // Column A: Email
-            req.file.filename,           // Column B: File Name
-            new Date().toLocaleString(), // Column C: Timestamp
-            "Pending"                    // Column D: Status
-        ];
-
-        // Append to Google Sheet
-        await sheets.spreadsheets.values.append({
-            spreadsheetId: SHEET_ID,
-            range: "ID_Verifications!A:D", // <-- MUST match your sheet tab name
-            valueInputOption: "USER_ENTERED",
-            resource: { values: [newRow] },
-        });
-
-        console.log("ID verification added to Google Sheet:", newRow);
-
-        res.json({
-            success: true,
-            message: "ID submitted successfully",
-            file: req.file.filename,
-        });
-    } catch (err) {
-        console.error("Error in verify-id route:", err);
-        res.status(500).json({
-            success: false,
-            message: "Server error",
-        });
+  try {
+    const user = req.session.user;
+    if (!user) {
+      return res.status(401).json({ success: false, message: "You must be signed in." });
     }
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
+
+    const newRow = [
+      user.email,
+      req.file.filename,
+      new Date().toLocaleString(),
+      "Pending"
+    ];
+
+    console.log("Submitting ID for:", user.email);
+    console.log("Appending to sheet:", SHEET_ID, "Row:", newRow);
+
+    await appendSheetValues(SHEET_ID, "ID_Verifications!A:D", [newRow]);
+
+    res.json({ success: true, message: "ID submitted successfully", file: req.file.filename });
+  } catch (err) {
+    console.error("Error in verify-id route:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 // ==================== ID VERIFICATION ====================
 app.get("/api/id-verifications", async (req, res) => {
