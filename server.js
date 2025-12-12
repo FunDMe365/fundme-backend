@@ -369,27 +369,38 @@ app.post("/api/admin-logout", (req,res)=>{ req.session.destroy(err=>err?res.stat
 app.post('/api/create-campaign', upload.single('idFile'), async (req, res) => {
   try {
     const { title, Goal, Description, Category, Email } = req.body;
-    const ImageURL = req.file ? `/uploads/${req.file.filename}` : null;
+    const ImageURL = req.file
+      ? `/uploads/${req.file.filename}` // store locally or generate a URL if hosting
+      : null;
 
-    // Example: insert into your DB
-    const newCampaign = {
+    const Status = "pending";
+    const CreatedAt = new Date();
+
+    // Append to Google Sheet
+    const values = [[
+      '',        // Id (optional, can be auto-generated later)
       title,
       Email,
       Goal,
       Description,
       Category,
-      Status: "pending",
-      CreatedAt: new Date(),
+      Status,
+      CreatedAt.toISOString(),
       ImageURL
-    };
+    ]];
 
-    // TODO: Replace with actual DB insertion code
-    console.log("New campaign:", newCampaign);
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: 'Sheet1!A:I',  // adjust range/sheet name if different
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      resource: { values }
+    });
 
-    res.json({ success: true, message: "Campaign created", campaign: newCampaign });
+    res.json({ success: true, message: 'Campaign created', campaign: { title, Goal, Description, Category, Email, Status, CreatedAt, ImageURL } });
   } catch (err) {
-    console.error("Error creating campaign:", err);
-    res.status(500).send("Internal Server Error");
+    console.error('Error creating campaign:', err);
+    res.status(500).json({ success: false, message: 'Internal Server Error' });
   }
 });
 
