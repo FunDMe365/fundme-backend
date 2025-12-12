@@ -428,25 +428,32 @@ app.get("/api/my-campaigns", async(req,res)=>{
 app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
   try {
     const user = req.session.user;
-    if (!user) {
-      return res.status(401).json({ success: false, message: "You must be signed in." });
-    }
+    if (!user) return res.status(401).json({ success: false, message: "You must be signed in." });
+    if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
 
-    if (!req.file) {
-      return res.status(400).json({ success: false, message: "No file uploaded" });
+    let idPhotoUrl = "";
+    if (process.env.CLOUDINARY_API_KEY) {
+      const uploadResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "joyfund/id-verifications" },
+          (err, result) => (err ? reject(err) : resolve(result))
+        );
+        stream.end(req.file.buffer);
+      });
+      if (uploadResult?.secure_url) idPhotoUrl = uploadResult.secure_url;
     }
 
     const newRow = [
-      user.email,
-      req.file.filename,
-      new Date().toLocaleString(),
-      "Pending"
+      new Date().toLocaleString(), // TimeStamp
+      user.email,                  // Email
+      user.name || "",             // Name
+      "Pending",                   // Status
+      idPhotoUrl                   // ID Photo URL
     ];
 
-    console.log("Submitting ID for:", user.email);
-    console.log("Appending to sheet:", SHEET_ID, "Row:", newRow);
+    await appendSheetValues(SHEET_ID, "ID_Verifications!A:E", [newRow]);
 
-    await appendSheetValues(SHEET_ID, "ID_Verifications!A:D", [newRow]);
+    console.log("ID verification added:", newRow);
 
     res.json({ success: true, message: "ID submitted successfully", file: req.file.filename });
   } catch (err) {
