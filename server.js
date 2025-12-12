@@ -395,7 +395,7 @@ app.post('/api/create-campaign', upload.single('idFile'), async (req, res) => {
     // Append to Google Sheet
     await sheets.spreadsheets.values.append({
   spreadsheetId: SPREADSHEET_ID,
-  range: 'Sheet1!A:I',
+  range: 'Campaigns!A:I',
   valueInputOption: 'USER_ENTERED',
   insertDataOption: 'INSERT_ROWS',
   resource: { values }
