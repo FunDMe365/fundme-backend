@@ -366,30 +366,31 @@ app.post("/api/admin-logout", (req,res)=>{ req.session.destroy(err=>err?res.stat
 
 // ==================== CAMPAIGNS ROUTES ====================
 // -- Create Campaign
-app.post("/api/create-campaign", upload.single("image"), async (req,res)=>{
-  try{
-    const user = req.session.user;
-    if(!user) return res.status(401).json({success:false,message:"Not signed in"});
-    const { title, goal, description, category } = req.body;
-    if(!title || !goal || !description || !category) return res.status(400).json({success:false,message:"Missing fields"});
-    const spreadsheetId = process.env.CAMPAIGNS_SHEET_ID;
-    if(!spreadsheetId) return res.status(500).json({success:false,message:"CAMPAIGNS_SHEET_ID not configured"});
-    const campaignId = Date.now().toString();
-    let imageUrl = safeImageUrl("");
-    if(req.file && process.env.CLOUDINARY_API_KEY){
-      const uploadResult = await new Promise((resolve,reject)=>{
-        const stream = cloudinary.uploader.upload_stream({ folder:"joyfund/campaigns" }, (err,result)=> err?reject(err):resolve(result));
-        stream.end(req.file.buffer);
-      });
-      if(uploadResult && uploadResult.secure_url) imageUrl = uploadResult.secure_url;
-    }
-    const createdAt = new Date().toISOString();
-    const status = "Pending";
-    const newCampaignRow = [campaignId, title, user.email.toLowerCase(), goal, description, category, status, createdAt, imageUrl];
-    await appendSheetValues(spreadsheetId,"A:I",[newCampaignRow]);
-    await sendMailjetEmail("New Campaign Submitted", `<p>${user.name} (${user.email}) submitted a campaign titled "${title}"</p>`);
-    res.json({success:true,message:"Campaign submitted",campaignId});
-  }catch(err){console.error(err);res.status(500).json({success:false,message:"Failed to create campaign"});}
+app.post('/api/create-campaign', upload.single('idFile'), async (req, res) => {
+  try {
+    const { title, Goal, Description, Category, Email } = req.body;
+    const ImageURL = req.file ? `/uploads/${req.file.filename}` : null;
+
+    // Example: insert into your DB
+    const newCampaign = {
+      title,
+      Email,
+      Goal,
+      Description,
+      Category,
+      Status: "pending",
+      CreatedAt: new Date(),
+      ImageURL
+    };
+
+    // TODO: Replace with actual DB insertion code
+    console.log("New campaign:", newCampaign);
+
+    res.json({ success: true, message: "Campaign created", campaign: newCampaign });
+  } catch (err) {
+    console.error("Error creating campaign:", err);
+    res.status(500).send("Internal Server Error");
+  }
 });
 
 // -- Public campaigns (Approved only)
