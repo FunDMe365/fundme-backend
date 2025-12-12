@@ -368,17 +368,19 @@ app.post("/api/admin-logout", (req,res)=>{ req.session.destroy(err=>err?res.stat
 // -- Create Campaign
 app.post('/api/create-campaign', upload.single('idFile'), async (req, res) => {
   try {
+    // Grab fields from frontend
     const { title, Goal, Description, Category, Email } = req.body;
-    const ImageURL = req.file
-      ? `/uploads/${req.file.filename}` // store locally or generate a URL if hosting
-      : null;
 
-    const Status = "pending";
+    // Handle uploaded file
+    const ImageURL = req.file ? `/uploads/${req.file.filename}` : null;
+
+    // Defaults
+    const Status = 'pending';
     const CreatedAt = new Date();
 
-    // Append to Google Sheet
+    // Prepare values for Google Sheets (matching columns exactly)
     const values = [[
-      '',        // Id (optional, can be auto-generated later)
+      '', // Id (leave blank if auto-generated later)
       title,
       Email,
       Goal,
@@ -389,15 +391,22 @@ app.post('/api/create-campaign', upload.single('idFile'), async (req, res) => {
       ImageURL
     ]];
 
+    // Append to Google Sheet
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: 'Sheet1!A:I',  // adjust range/sheet name if different
+      range: 'Sheet1!A:I', // adjust sheet name if needed
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       resource: { values }
     });
 
-    res.json({ success: true, message: 'Campaign created', campaign: { title, Goal, Description, Category, Email, Status, CreatedAt, ImageURL } });
+    // Return success JSON to frontend
+    res.json({
+      success: true,
+      message: 'Campaign created successfully!',
+      campaign: { title, Email, Goal, Description, Category, Status, CreatedAt, ImageURL }
+    });
+
   } catch (err) {
     console.error('Error creating campaign:', err);
     res.status(500).json({ success: false, message: 'Internal Server Error' });
