@@ -423,22 +423,49 @@ app.get("/api/my-campaigns", async(req,res)=>{
 });
 
 // ===== VERIFY ID ROUTE =====
-app.post("/api/verify-id", upload.single("idFile"), (req, res) => {
+app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
     try {
         if (!req.file) {
-            return res.status(400).json({ success: false, message: "No file uploaded" });
+            return res.status(400).json({
+                success: false,
+                message: "No file uploaded",
+            });
         }
 
-        console.log("ID uploaded:", req.file.filename);
+        // Get logged-in user email from session
+        const userEmail = req.session.user?.email || "Unknown";
 
-        // Respond to frontend
-        res.json({ success: true, message: "ID submitted successfully", file: req.file.filename });
+        // Google Sheets row data
+        const newRow = [
+            userEmail,                   // Column A: Email
+            req.file.filename,           // Column B: File Name
+            new Date().toLocaleString(), // Column C: Timestamp
+            "Pending"                    // Column D: Status
+        ];
+
+        // Append to Google Sheet
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: SHEET_ID,
+            range: "ID_Verifications!A:D", // <-- MUST match your sheet tab name
+            valueInputOption: "USER_ENTERED",
+            resource: { values: [newRow] },
+        });
+
+        console.log("ID verification added to Google Sheet:", newRow);
+
+        res.json({
+            success: true,
+            message: "ID submitted successfully",
+            file: req.file.filename,
+        });
     } catch (err) {
         console.error("Error in verify-id route:", err);
-        res.status(500).json({ success: false, message: "Server error" });
+        res.status(500).json({
+            success: false,
+            message: "Server error",
+        });
     }
 });
-
 // ==================== ID VERIFICATION ====================
 app.get("/api/id-verifications", async (req, res) => {
   try {
