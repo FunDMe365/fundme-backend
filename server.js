@@ -367,7 +367,7 @@ app.post("/api/admin-logout", (req,res)=>{ req.session.destroy(err=>err?res.stat
 
 // ==================== CAMPAIGNS ROUTES ====================
 // -- Create Campaign
-pp.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
     // 1️⃣ Validate required fields
     const { title, goal, description, category, email } = req.body;
