@@ -369,23 +369,57 @@ app.post("/api/admin-logout", (req,res)=>{ req.session.destroy(err=>err?res.stat
 // -- Create Campaign
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
-    // 1️⃣ Validate required fields
     const { title, goal, description, category, email } = req.body;
     if (!title || !goal || !description || !category || !email) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
     }
 
-    // 2️⃣ Validate uploaded file
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No image uploaded" });
     }
 
-    // 3️⃣ Upload image to Cloudinary
-    const cloudRes = await cloudinary.uploader.upload(req.file.path, {
-      folder: "joyfund/campaigns",
-      use_filename: true,
-      unique_filename: true,
+    // Upload to Cloudinary from memory
+    const cloudRes = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "joyfund/campaigns", use_filename: true, unique_filename: true },
+        (err, result) => (err ? reject(err) : resolve(result))
+      );
+      stream.end(req.file.buffer);
     });
+
+    const imageURL = cloudRes.secure_url;
+
+    // Append to Google Sheets
+    const now = new Date().toISOString();
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: "Campaigns!A:I",
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: {
+        values: [
+          [
+            Date.now(),
+            title,
+            email,
+            goal,
+            description,
+            category,
+            "pending",
+            now,
+            imageURL
+          ]
+        ]
+      }
+    });
+
+    res.json({ success: true, message: "Campaign created", imageURL });
+
+  } catch (err) {
+    console.error("Create campaign failed:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
     // Clean up local file
     fs.unlink(req.file.path, (err) => {
