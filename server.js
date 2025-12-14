@@ -366,21 +366,20 @@ app.get("/api/admin-check", (req,res)=>{ res.json({admin:!!(req.session && req.s
 app.post("/api/admin-logout", (req,res)=>{ req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true})); });
 
 // ==================== CAMPAIGNS ROUTES ====================
-// -- Create Campaign (fixed for memoryStorage & Cloudinary)
+// -- Create Campaign
+// -- Create Campaign (FIXED for memoryStorage + Cloudinary)
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
-    // 1️⃣ Validate required fields
     const { title, goal, description, category, email } = req.body;
     if (!title || !goal || !description || !category || !email) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
     }
 
-    // 2️⃣ Validate uploaded file
-    if (!req.file || !req.file.buffer) {
+    if (!req.file) {
       return res.status(400).json({ success: false, message: "No image uploaded" });
     }
 
-    // 3️⃣ Upload image to Cloudinary from memory buffer
+    // Upload to Cloudinary from memory
     const cloudRes = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         { folder: "joyfund/campaigns", use_filename: true, unique_filename: true },
@@ -391,11 +390,50 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
     const imageURL = cloudRes.secure_url;
 
-    // 4️⃣ Append campaign to Google Sheet
+    // Append to Google Sheets
     const now = new Date().toISOString();
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
       range: "Campaigns!A:I",
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: {
+        values: [
+          [
+            Date.now(),
+            title,
+            email,
+            goal,
+            description,
+            category,
+            "pending",
+            now,
+            imageURL
+          ]
+        ]
+      }
+    });
+
+    res.json({ success: true, message: "Campaign created", imageURL });
+
+  } catch (err) {
+    console.error("Create campaign failed:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+    // Clean up local file
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.warn("Failed to delete local file:", err);
+    });
+
+    const imageURL = cloudRes.secure_url;
+
+    // 4️⃣ Append campaign to Google Sheet
+    const now = new Date().toISOString();
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: "Campaigns!A:I", // sheet name and range
       valueInputOption: "USER_ENTERED",
       insertDataOption: "INSERT_ROWS",
       requestBody: {
@@ -424,24 +462,120 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   }
 });
 
+// -- Public campaigns (Approved only)
+app.get("/api/public-campaigns", async(req,res)=>{
+  try{
+    if(!process.env.CAMPAIGNS_SHEET_ID) return res.status(500).json([]);
+    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID,"A:I");
+    const headers = ["Id","Title","Email","Goal","Description","Category","Status","CreatedAt","ImageURL"];
+    const campaigns = rows.map(r=>{
+      let obj={};
+      headers.forEach((h,i)=>obj[h]=r[i]||"");
+      return obj;
+    }).filter(c=>c.Status==="Approved");
+    res.json(campaigns);
+  }catch(err){console.error(err);res.status(500).json([]);}
+});
+
+// -- User campaigns (any status)
+app.get("/api/my-campaigns", async(req,res)=>{
 // -- Get Campaigns
 app.get("/api/campaigns", async (req,res)=>{
   try{
+    const user = req.session.user;
+    if(!user) return res.status(401).json([]);
+    const rows = await getSheetValues(process.env.CAMPAIGNS_SHEET_ID,"A:I");
+    const headers = ["Id","Title","Email","Goal","Description","Category","Status","CreatedAt","ImageURL"];
+    const campaigns = rows.map(r=>{
+      let obj={};
+      headers.forEach((h,i)=>obj[h]=r[i]||"");
+      return obj;
+    }).filter(c=>c.Email && c.Email.toLowerCase()===user.email.toLowerCase());
     if(!sheets) return res.json([]);
     const rows = await getSheetValues(SPREADSHEET_ID,"Campaigns!A:I");
     const campaigns = rows.map(r=>({
       id: r[0], title:r[1], email:r[2], goal:r[3], description:r[4], category:r[5], status:r[6], created:r[7], image:r[8] ? r[8] : ""
     }));
     res.json(campaigns);
+  }catch(err){console.error(err);res.status(500).json([]);}
+  
   }catch(err){ console.error(err); res.status(500).json({}); }
 });
 
+// ===== VERIFY ID ROUTE =====
+app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json({ success: false, message: "You must be signed in." });
+    if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
+
+    let idPhotoUrl = "";
+    if (process.env.CLOUDINARY_API_KEY) {
+      const uploadResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "joyfund/id-verifications" },
+          (err, result) => (err ? reject(err) : resolve(result))
+        );
+        stream.end(req.file.buffer);
+      });
+      if (uploadResult?.secure_url) idPhotoUrl = uploadResult.secure_url;
+    }
+
+    const newRow = [
+      new Date().toLocaleString(), // TimeStamp
+      user.email,                  // Email
+      user.name || "",             // Name
+      "Pending",                   // Status
+      idPhotoUrl                   // ID Photo URL
+    ];
+
+    await appendSheetValues(SHEET_ID, "ID_Verifications!A:E", [newRow]);
+
+    console.log("ID verification added:", newRow);
+
+    res.json({ success: true, message: "ID submitted successfully", file: req.file.filename });
+  } catch (err) {
+    console.error("Error in verify-id route:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 // -- Delete Campaign (admin)
 app.post("/api/delete-campaign/:id", requireAdmin, async (req,res)=>{
   // implement as needed; e.g., remove from sheet or mark as deleted
   res.json({success:true});
 });
+// ==================== ID VERIFICATION ====================
+app.get("/api/id-verifications", async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (!user) return res.status(401).json([]);
+    if (!process.env.IDS_SHEET_ID) return res.status(500).json([]);
 
+    // Read all relevant columns from the ID_Verifications tab
+    const rows = await getSheetValues(process.env.IDS_SHEET_ID, "ID_Verifications!A:E");
+
+    const headers = ["TimeStamp", "Email", "Name", "Status", "ID Photo URL"];
+
+    // Map rows to objects and filter for current user
+    const userRows = rows
+      .map(r => {
+        const obj = {};
+        headers.forEach((h, i) => obj[h] = r[i] || "");
+
+        // Normalize Status
+        if (!["Verified","Pending","Denied"].includes(obj.Status)) obj.Status = "Pending";
+
+        // Add frontend-friendly property
+        obj.IDPhotoURL = obj["ID Photo URL"] || "";
+
+        return obj;
+      })
+      .filter(v => v.Email && v.Email.toLowerCase() === user.email.toLowerCase());
+
+    res.json(userRows);
+  } catch (err) {
+    console.error("ID verification error:", err);
+    res.status(500).json([]);
+  }
 // ==================== DONATIONS ====================
 app.post("/api/donation", async (req,res)=>{
   try{
@@ -453,6 +587,41 @@ app.post("/api/donation", async (req,res)=>{
   }catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
 
+// ==================== UPDATE PROFILE (robust) ====================
+app.post("/api/update-profile", (req, res) => {
+  try {
+    const { userId, name, email, phone } = req.body || {};
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "User ID is required" });
+    }
+
+    // ensure users array loaded
+    if (!Array.isArray(users)) users = [];
+
+    const userIndex = users.findIndex(u => u.id === userId);
+    if (userIndex === -1) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Update fields
+    if (name) users[userIndex].name = name;
+    if (email) users[userIndex].email = email;
+    if (phone) users[userIndex].phone = phone;
+
+    // Save back to JSON file
+    try {
+      fs.writeFileSync(usersFile, JSON.stringify(users, null, 2));
+    } catch (err) {
+      console.error("Failed to save users.json:", err);
+      return res.status(500).json({ success: false, message: "Failed to save profile" });
+    }
+
+    res.json({ success: true, message: "Profile updated successfully", user: users[userIndex] });
+  } catch (err) {
+    console.error("Update profile route error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 // ==================== ID VERIFICATION ====================
 app.post("/api/verify-id", upload.single("idFile"), async (req,res)=>{
   try{
@@ -468,6 +637,33 @@ app.post("/api/verify-id", upload.single("idFile"), async (req,res)=>{
   }catch(err){ console.error(err); res.status(500).json({success:false,message:err.message}); }
 });
 
+// ==================== DONATIONS ROUTE (added) ====================
+// Returns JSON array of donations.
+// Priority: donations.json (local file) -> Google Sheets (if DONATIONS_SHEET_ID configured) -> []
+app.get("/api/donations", async (req, res) => {
+  try {
+    const donationsFile = path.join(__dirname, "donations.json");
+    if (fs.existsSync(donationsFile)) {
+      const raw = fs.readFileSync(donationsFile, "utf8");
+      const parsed = JSON.parse(raw || "[]");
+      return res.json(parsed);
+    }
+
+    // Fallback to Google Sheets if configured
+    if (process.env.DONATIONS_SHEET_ID && sheets) {
+      const rows = await getSheetValues(process.env.DONATIONS_SHEET_ID, "A:Z");
+      // Basic mapping: return rows as objects with the row arrays
+      const donations = rows.map(r => ({ raw: r }));
+      return res.json(donations);
+    }
+
+    // Default: empty array
+    res.json([]);
+  } catch (err) {
+    console.error("Error loading donations:", err);
+    res.status(500).json([]);
+  }
+});
 // ==================== STATIC FILES ====================
 app.use(express.static(path.join(__dirname, "public")));
 
