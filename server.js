@@ -7,6 +7,15 @@ const multer = require("multer");
 const crypto = require("crypto");
 const Stripe = require("stripe");
 const { google } = require("googleapis");
+const mongoose = require('mongoose');
+const mongoURI = "mongodb+srv://fundasmile365:<db_password>@funasmile365.gvihjsw.mongodb.net/joyfund?retryWrites=true&w=majority";
+
+mongoose.connect(mongoURI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log("✅ Connected to MongoDB successfully"))
+.catch(err => console.error("❌ MongoDB connection error:", err));
 const SPREADSHEET_ID = process.env.CAMPAIGNS_SHEET_ID;
 const cloudinary = require("cloudinary").v2;
 require("dotenv").config();
@@ -74,6 +83,12 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
+mongoose.connect(mongoURI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log("✅ Connected to MongoDB successfully"))
+.catch(err => console.error("❌ MongoDB connection error:", err));
 
 // -------------------- STRIPE --------------------
 let stripe = null;
