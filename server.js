@@ -6,14 +6,13 @@ const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const crypto = require("crypto");
 const Stripe = require("stripe");
-const Waitlist = require('./models/Waitlist');
+const mongoURI = "mongodb+srv://fundasmile365:fundasmile365@joyfund365.gvihjsw.mongodb.net/joyfund";
 const { google } = require("googleapis");
 const mongoose = require('mongoose');
-const mongoURI = "mongodb+srv://fundasmile365:<db_password>@funasmile365.gvihjsw.mongodb.net/joyfund?retryWrites=true&w=majority";
-
-mongoose.connect(mongoURI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
+const mongoURI = "mongodb+srv://:MySecure%40Pass@funasmile365.gvihjsw.mongodb.net/joyfund";
+mongoose.connect(mongoURI)
+  .then(() => console.log("✅ Connected to MongoDB successfully"))
+  .catch(err => console.error("❌ MongoDB connection error:", err));
 })
 .then(() => console.log("✅ Connected to MongoDB successfully"))
 .catch(err => console.error("❌ MongoDB connection error:", err));
@@ -84,12 +83,6 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 24 // 1 day
   }
 }));
-mongoose.connect(mongoURI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log("✅ Connected to MongoDB successfully"))
-.catch(err => console.error("❌ MongoDB connection error:", err));
 
 // -------------------- STRIPE --------------------
 let stripe = null;
