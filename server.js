@@ -6,6 +6,7 @@ const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const crypto = require("crypto");
 const Stripe = require("stripe");
+const Waitlist = require('./models/Waitlist');
 const { google } = require("googleapis");
 const mongoose = require('mongoose');
 const mongoURI = "mongodb+srv://fundasmile365:<db_password>@funasmile365.gvihjsw.mongodb.net/joyfund?retryWrites=true&w=majority";
@@ -333,15 +334,15 @@ app.post("/api/reset-password", async (req, res) => {
 });
 
 // ==================== WAITLIST / VOLUNTEERS / STREET TEAM ====================
-app.post("/api/waitlist", async (req, res) => {
+app.post('/waitlist', async (req, res) => {
   try {
-    const { name, email, reason } = req.body;
-    if (!name || !email) return res.status(400).json({ success: false });
-    const timestamp = new Date().toLocaleString();
-    await appendSheetValues(process.env.WAITLIST_SHEET_ID, "Waitlist!A:D", [[timestamp, name, email.toLowerCase(), reason || ""]]);
-    await sendMailjetEmail("New Waitlist Submission", `<p>${name} (${email}) joined the waitlist at ${timestamp}. Reason: ${reason || "N/A"}</p>`);
-    res.json({ success: true });
-  } catch (err) { console.error(err); res.status(500).json({ success: false }); }
+    const { name, email } = req.body;
+    const entry = await Waitlist.create({ name, email });
+    res.status(200).json({ success: true, message: 'Added to waitlist', entry });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Error adding to waitlist' });
+  }
 });
 app.post("/api/volunteer", async (req, res) => {
   try {
