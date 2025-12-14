@@ -366,19 +366,21 @@ app.get("/api/admin-check", (req,res)=>{ res.json({admin:!!(req.session && req.s
 app.post("/api/admin-logout", (req,res)=>{ req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true})); });
 
 // ==================== CAMPAIGNS ROUTES ====================
-// -- Create Campaign (FIXED for memoryStorage + Cloudinary)
+// -- Create Campaign (fixed for memoryStorage & Cloudinary)
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
+    // 1️⃣ Validate required fields
     const { title, goal, description, category, email } = req.body;
     if (!title || !goal || !description || !category || !email) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
     }
 
-    if (!req.file) {
+    // 2️⃣ Validate uploaded file
+    if (!req.file || !req.file.buffer) {
       return res.status(400).json({ success: false, message: "No image uploaded" });
     }
 
-    // Upload to Cloudinary from memory
+    // 3️⃣ Upload image to Cloudinary from memory buffer
     const cloudRes = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         { folder: "joyfund/campaigns", use_filename: true, unique_filename: true },
@@ -389,7 +391,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
     const imageURL = cloudRes.secure_url;
 
-    // Append to Google Sheets
+    // 4️⃣ Append campaign to Google Sheet
     const now = new Date().toISOString();
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
@@ -399,24 +401,26 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       requestBody: {
         values: [
           [
-            Date.now(),
-            title,
-            email,
-            goal,
-            description,
-            category,
-            "pending",
-            now,
-            imageURL
+            Date.now(),      // Id
+            title,           // Title
+            email,           // Email
+            goal,            // Goal
+            description,     // Description
+            category,        // Category
+            "pending",       // Status
+            now,             // CreatedAt
+            imageURL         // ImageURL
           ]
         ]
       }
     });
 
-    res.json({ success: true, message: "Campaign created", imageURL });
+    // 5️⃣ Return success
+    return res.json({ success: true, message: "Campaign created", imageURL });
+
   } catch (err) {
     console.error("Create campaign failed:", err);
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
 
