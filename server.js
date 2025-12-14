@@ -367,52 +367,81 @@ app.post("/api/admin-logout", (req,res)=>{ req.session.destroy(err=>err?res.stat
 
 // ==================== CAMPAIGNS ROUTES ====================
 // -- Create Campaign
-app.post('/api/create-campaign', upload.single('idFile'), async (req, res) => {
-  try {
-    // Grab fields from frontend
-    const { title, Goal, Description, Category, Email } = req.body;
+app.post(
+  "/api/create-campaign",
+  upload.single("image"), // MUST match frontend
+  async (req, res) => {
+    try {
+      // 1️⃣ Validate auth/session
+      if (!req.session || !req.session.user) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
 
-    // Handle uploaded file
-    const ImageURL = req.file ? `/uploads/${req.file.filename}` : null;
+      // 2️⃣ Validate required fields
+      const { title, goal, description, category } = req.body;
 
-    // Defaults
-    const Status = 'pending';
-    const CreatedAt = new Date();
+      if (!title || !goal || !description || !category) {
+        return res.status(400).json({ success: false, message: "Missing fields" });
+      }
 
-    // Prepare values for Google Sheets (matching columns exactly)
-    const values = [[
-      '', // Id (leave blank if auto-generated later)
-      title,
-      Email,
-      Goal,
-      Description,
-      Category,
-      Status,
-      CreatedAt.toISOString(),
-      ImageURL
-    ]];
+      // 3️⃣ Validate image
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "Image upload required"
+        });
+      }
 
-    // Append to Google Sheet
-    await sheets.spreadsheets.values.append({
-  spreadsheetId: SPREADSHEET_ID,
-  range: 'Campaigns!A:I',
-  valueInputOption: 'USER_ENTERED',
-  insertDataOption: 'INSERT_ROWS',
-  resource: { values }
-});
+      // 4️⃣ Upload to Cloudinary
+      const uploadResult = await cloudinary.uploader.upload(req.file.path, {
+        folder: "joyfund/campaigns"
+      });
 
-    // Return success JSON to frontend
-    res.json({
-      success: true,
-      message: 'Campaign created successfully!',
-      campaign: { title, Email, Goal, Description, Category, Status, CreatedAt, ImageURL }
-    });
+      if (!uploadResult.secure_url) {
+        throw new Error("Cloudinary upload failed");
+      }
 
-  } catch (err) {
-    console.error('Error creating campaign:', err);
-    res.status(500).json({ success: false, message: 'Internal Server Error' });
+      // 5️⃣ Build campaign row
+      const campaignId = Date.now().toString();
+      const createdAt = new Date().toISOString();
+
+      const row = [
+        campaignId,
+        title,
+        req.session.user.email,
+        goal,
+        description,
+        category,
+        "Pending",
+        createdAt,
+        uploadResult.secure_url
+      ];
+
+      // 6️⃣ Append to Google Sheets
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.CAMPAIGNS_SHEET_ID,
+        range: "Campaigns!A:I",
+        valueInputOption: "USER_ENTERED",
+        insertDataOption: "INSERT_ROWS",
+        resource: { values: [row] }
+      });
+
+      // 7️⃣ Success
+      res.json({
+        success: true,
+        message: "Campaign created successfully",
+        campaignId
+      });
+
+    } catch (err) {
+      console.error("Create campaign failed:", err);
+      res.status(500).json({
+        success: false,
+        message: "Failed to create campaign"
+      });
+    }
   }
-});
+);
 
 // -- Public campaigns (Approved only)
 app.get("/api/public-campaigns", async(req,res)=>{
