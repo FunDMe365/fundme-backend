@@ -367,81 +367,65 @@ app.post("/api/admin-logout", (req,res)=>{ req.session.destroy(err=>err?res.stat
 
 // ==================== CAMPAIGNS ROUTES ====================
 // -- Create Campaign
-app.post(
-  "/api/create-campaign",
-  upload.single("image"), // MUST match frontend
-  async (req, res) => {
-    try {
-      // 1️⃣ Validate auth/session
-      if (!req.session || !req.session.user) {
-        return res.status(401).json({ success: false, message: "Unauthorized" });
-      }
-
-      // 2️⃣ Validate required fields
-      const { title, goal, description, category } = req.body;
-
-      if (!title || !goal || !description || !category) {
-        return res.status(400).json({ success: false, message: "Missing fields" });
-      }
-
-      // 3️⃣ Validate image
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          message: "Image upload required"
-        });
-      }
-
-      // 4️⃣ Upload to Cloudinary
-      const uploadResult = await cloudinary.uploader.upload(req.file.path, {
-        folder: "joyfund/campaigns"
-      });
-
-      if (!uploadResult.secure_url) {
-        throw new Error("Cloudinary upload failed");
-      }
-
-      // 5️⃣ Build campaign row
-      const campaignId = Date.now().toString();
-      const createdAt = new Date().toISOString();
-
-      const row = [
-        campaignId,
-        title,
-        req.session.user.email,
-        goal,
-        description,
-        category,
-        "Pending",
-        createdAt,
-        uploadResult.secure_url
-      ];
-
-      // 6️⃣ Append to Google Sheets
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: process.env.CAMPAIGNS_SHEET_ID,
-        range: "Campaigns!A:I",
-        valueInputOption: "USER_ENTERED",
-        insertDataOption: "INSERT_ROWS",
-        resource: { values: [row] }
-      });
-
-      // 7️⃣ Success
-      res.json({
-        success: true,
-        message: "Campaign created successfully",
-        campaignId
-      });
-
-    } catch (err) {
-      console.error("Create campaign failed:", err);
-      res.status(500).json({
-        success: false,
-        message: "Failed to create campaign"
-      });
+pp.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+  try {
+    // 1️⃣ Validate required fields
+    const { title, goal, description, category, email } = req.body;
+    if (!title || !goal || !description || !category || !email) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
     }
+
+    // 2️⃣ Validate uploaded file
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "No image uploaded" });
+    }
+
+    // 3️⃣ Upload image to Cloudinary
+    const cloudRes = await cloudinary.uploader.upload(req.file.path, {
+      folder: "joyfund/campaigns",
+      use_filename: true,
+      unique_filename: true,
+    });
+
+    // Clean up local file
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.warn("Failed to delete local file:", err);
+    });
+
+    const imageURL = cloudRes.secure_url;
+
+    // 4️⃣ Append campaign to Google Sheet
+    const now = new Date().toISOString();
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: SPREADSHEET_ID,
+      range: "Campaigns!A:I", // sheet name and range
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: {
+        values: [
+          [
+            Date.now(),      // Id
+            title,           // Title
+            email,           // Email
+            goal,            // Goal
+            description,     // Description
+            category,        // Category
+            "pending",       // Status
+            now,             // CreatedAt
+            imageURL         // ImageURL
+          ]
+        ]
+      }
+    });
+
+    // 5️⃣ Return success
+    return res.json({ success: true, message: "Campaign created", imageURL });
+
+  } catch (err) {
+    console.error("Create campaign failed:", err);
+    return res.status(500).json({ success: false, message: err.message });
   }
-);
+});
 
 // -- Public campaigns (Approved only)
 app.get("/api/public-campaigns", async(req,res)=>{
