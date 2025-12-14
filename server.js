@@ -12,9 +12,7 @@ const mongoose = require('mongoose');
 mongoose.connect(mongoURI)
   .then(() => console.log("✅ Connected to MongoDB successfully"))
   .catch(err => console.error("❌ MongoDB connection error:", err));
-})
-.then(() => console.log("✅ Connected to MongoDB successfully"))
-.catch(err => console.error("❌ MongoDB connection error:", err));
+}
 const SPREADSHEET_ID = process.env.CAMPAIGNS_SHEET_ID;
 const cloudinary = require("cloudinary").v2;
 require("dotenv").config();
