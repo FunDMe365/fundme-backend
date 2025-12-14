@@ -9,7 +9,6 @@ const Stripe = require("stripe");
 const mongoURI = "mongodb+srv://fundasmile365:fundasmile365@joyfund365.gvihjsw.mongodb.net/joyfund";
 const { google } = require("googleapis");
 const mongoose = require('mongoose');
-const mongoURI = "mongodb+srv://:MySecure%40Pass@funasmile365.gvihjsw.mongodb.net/joyfund";
 mongoose.connect(mongoURI)
   .then(() => console.log("✅ Connected to MongoDB successfully"))
   .catch(err => console.error("❌ MongoDB connection error:", err));
