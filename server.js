@@ -117,10 +117,10 @@ app.post('/api/signup', async (req, res) => {
     } catch (err) { console.error(err); res.status(500).json({ error: "Signup failed" }); }
 });
 
-app.post('/api/signin', async (req, res) => {
+app.post("/api/signin", async (req, res) => {
     try {
         const { email, password } = req.body;
-        const user = await db.collection('Users').findOne({ email: email.toLowerCase() });
+        const user = await db.collection('users').findOne({ email: email.toLowerCase() });
         if (!user) return res.status(401).json({ error: "Invalid credentials" });
         const match = await bcrypt.compare(password, user.password);
         if (!match) return res.status(401).json({ error: "Invalid credentials" });
@@ -154,7 +154,7 @@ app.post('/api/create-campaign', upload.single('image'), async (req,res)=>{
         const { title, goal, description, category, email } = req.body;
         if(!title||!goal||!description||!category||!email||!req.file) return res.status(400).json({success:false,message:"Missing fields"});
         const cloudRes = await cloudinary.uploader.upload_stream({ folder:'joyfund/campaigns', use_filename:true, unique_filename:true }, (err,result)=>{ if(err) throw err; return result; }).end(req.file.buffer);
-        const campaignsCollection = db.collection('Campaigns');
+        const campaignsCollection = db.collection('campaigns');
         const campaign = { title, goal, description, category, email, status:'pending', createdAt:new Date(), imageURL: cloudRes.secure_url };
         await campaignsCollection.insertOne(campaign);
         res.json({ success:true, message:"Campaign created", imageURL: cloudRes.secure_url });
@@ -163,7 +163,7 @@ app.post('/api/create-campaign', upload.single('image'), async (req,res)=>{
 
 app.get('/api/public-campaigns', async(req,res)=>{
     try{
-        const rows = await db.collection('Campaigns').find({ status:'Approved' }).toArray();
+        const rows = await db.collection('campaigns').find({ status:'Approved' }).toArray();
         res.json({ success:true, campaigns: rows });
     }catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
@@ -172,7 +172,7 @@ app.get('/api/my-campaigns', async(req,res)=>{
     try{
         const email = req.query.email?.toLowerCase();
         if(!email) return res.status(400).json({success:false,message:"Missing email"});
-        const rows = await db.collection('Campaigns').find({ email }).toArray();
+        const rows = await db.collection('campaigns').find({ email }).toArray();
         res.json({ success:true, campaigns: rows });
     }catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
