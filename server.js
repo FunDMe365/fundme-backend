@@ -125,6 +125,7 @@ app.post("/api/signin", async (req, res) => {
         const { email, password } = req.body;
         if (!email || !password) return res.status(400).json({ error: "Missing fields" });
 
+        // Use correct collection name with capital U
         const usersCollection = db.collection('Users');
         const user = await usersCollection.findOne({ email: email.toLowerCase() });
 
@@ -147,6 +148,7 @@ app.post("/api/signin", async (req, res) => {
         res.status(500).json({ error: "Signin failed" });
     }
 });
+
 
 app.post('/api/signout', (req,res)=>{
     req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true}));
