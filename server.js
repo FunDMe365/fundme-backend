@@ -102,30 +102,48 @@ app.post("/api/track-visitor", (req, res) => {
 });
 
 // ==================== USERS & AUTH ====================
+
+// Sign up a new user
 app.post('/api/signup', async (req, res) => {
     try {
         const { name, email, password } = req.body;
-        if (!name || !email || !password) return res.status(400).json({ error: "Missing fields" });
-        const hashed = await bcrypt.hash(password, 10);
-        const usersCollection = db.collection('Users');
-        const exists = await usersCollection.findOne({ email: email.toLowerCase() });
-        if (exists) return res.status(400).json({ error: "Email already exists" });
-        const user = { name, email: email.toLowerCase(), password: hashed, joinDate: new Date() };
-        await usersCollection.insertOne(user);
-        req.session.user = { name: user.name, email: user.email, joinDate: user.joinDate };
-        res.json({ ok: true, loggedIn: true, user: req.session.user });
-    } catch (err) { console.error(err); res.status(500).json({ error: "Signup failed" }); }
-});
-
-app.post("/api/signin", async (req, res) => {
-    try {
-        const { email, password } = req.body;
-
-        if (!email || !password) {
+        if (!name || !email || !password) {
             return res.status(400).json({ error: "Missing fields" });
         }
 
-        const usersCollection = db.collection("ID_Verifications");
+        const usersCollection = db.collection('Users');
+        const existing = await usersCollection.findOne({ Email: { $regex: `^${email}$`, $options: 'i' } });
+        if (existing) return res.status(400).json({ error: "Email already exists" });
+
+        const hashed = await bcrypt.hash(password, 10);
+        const newUser = {
+            Name: name,
+            Email: email,
+            PasswordHash: hashed,
+            JoinDate: new Date()
+        };
+
+        await usersCollection.insertOne(newUser);
+        req.session.user = {
+            name: newUser.Name,
+            email: newUser.Email,
+            joinDate: newUser.JoinDate
+        };
+
+        res.json({ ok: true, loggedIn: true, user: req.session.user });
+    } catch (err) {
+        console.error("Signup error:", err);
+        res.status(500).json({ error: "Signup failed" });
+    }
+});
+
+// Sign in an existing user
+app.post("/api/signin", async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) return res.status(400).json({ error: "Missing fields" });
+
+        const usersCollection = db.collection("Users");
 
         const user = await usersCollection.findOne({
             Email: { $regex: `^${email}$`, $options: "i" }
@@ -149,22 +167,28 @@ app.post("/api/signin", async (req, res) => {
         };
 
         console.log("Signin success:", user.Email);
-
         res.json({ ok: true, loggedIn: true, user: req.session.user });
-
     } catch (err) {
         console.error("Signin error:", err);
         res.status(500).json({ error: "Signin failed" });
     }
 });
 
-app.post('/api/signout', (req,res)=>{
-    req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true}));
+// Sign out the current user
+app.post('/api/signout', (req, res) => {
+    req.session.destroy(err => {
+        if (err) return res.status(500).json({ success: false });
+        res.json({ success: true });
+    });
 });
 
-app.get('/api/check-session',(req,res)=>{
-    if(req.session.user) res.json({ loggedIn:true, user:req.session.user });
-    else res.json({ loggedIn:false, user:null });
+// Check if the user is logged in
+app.get('/api/check-session', (req, res) => {
+    if (req.session.user) {
+        res.json({ loggedIn: true, user: req.session.user });
+    } else {
+        res.json({ loggedIn: false, user: null });
+    }
 });
 
 // ==================== ADMIN ====================
