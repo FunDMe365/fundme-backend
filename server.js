@@ -127,9 +127,9 @@ app.post("/api/signin", async (req, res) => {
 
         const usersCollection = db.collection("Users");
 
-        // IMPORTANT: match DB field names exactly
+        // ✅ CASE-INSENSITIVE email lookup
         const user = await usersCollection.findOne({
-            Email: email.toLowerCase()
+            Email: { $regex: `^${email}$`, $options: "i" }
         });
 
         if (!user) {
@@ -149,6 +149,8 @@ app.post("/api/signin", async (req, res) => {
             email: user.Email,
             joinDate: user.JoinDate
         };
+
+        console.log("Signin success:", user.Email);
 
         res.json({
             ok: true,
