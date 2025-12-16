@@ -14,7 +14,7 @@ require("dotenv").config();
 
 // ==================== ENV VARIABLES ====================
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = "mongodb+srv://fundasmile:fundasmile@joyfund.gvihjsw.mongodb.net/?appName=JoyFund";
+const MONGO_URI = process.env.MONGO_URI;
 const DB_NAME = "joyfund";
 const STRIPE_SECRET_KEY = "mk_1S3ksM0qKIo9Xb6efUvOzm2B";
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
@@ -79,13 +79,17 @@ async function sendMailjetEmail(subject, htmlContent, toEmail) {
 
 // ==================== MONGO ====================
 let db;
-MongoClient.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(client => {
+
+const client = new MongoClient(MONGO_URI);
+
+client.connect()
+    .then(() => {
         db = client.db(DB_NAME);
         console.log("Connected to MongoDB");
     })
-    .catch(err => console.error("MongoDB connection error:", err));
-
+    .catch(err => {
+        console.error("MongoDB connection error:", err);
+    });
 // ==================== LIVE VISITOR TRACKING ====================
 const liveVisitors = {};
 app.post("/api/track-visitor", (req, res) => {
