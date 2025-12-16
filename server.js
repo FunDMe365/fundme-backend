@@ -125,22 +125,24 @@ app.post("/api/signin", async (req, res) => {
             return res.status(400).json({ error: "Missing fields" });
         }
 
-        const usersCollection = db.collection("Users");
+        console.log("Signin attempt:", email);
+        console.log("DB:", db.databaseName);
 
-        // ✅ CASE-INSENSITIVE email lookup
+        const usersCollection = db.collection("ID_Verifications");
+
         const user = await usersCollection.findOne({
             Email: { $regex: `^${email}$`, $options: "i" }
         });
 
+        console.log("User found:", user);
+
         if (!user) {
-            console.log("Signin failed: user not found for email", email);
             return res.status(401).json({ error: "Invalid credentials" });
         }
 
         const match = await bcrypt.compare(password, user.PasswordHash);
 
         if (!match) {
-            console.log("Signin failed: password mismatch for", email);
             return res.status(401).json({ error: "Invalid credentials" });
         }
 
@@ -150,16 +152,10 @@ app.post("/api/signin", async (req, res) => {
             joinDate: user.JoinDate
         };
 
-        console.log("Signin success:", user.Email);
-
-        res.json({
-            ok: true,
-            loggedIn: true,
-            user: req.session.user
-        });
+        res.json({ ok: true, loggedIn: true, user: req.session.user });
 
     } catch (err) {
-        console.error("Signin failed:", err);
+        console.error("Signin error:", err);
         res.status(500).json({ error: "Signin failed" });
     }
 });
