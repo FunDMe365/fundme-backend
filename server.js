@@ -120,15 +120,46 @@ app.post('/api/signup', async (req, res) => {
 app.post("/api/signin", async (req, res) => {
     try {
         const { email, password } = req.body;
-        if (!email || !password) return res.status(400).json({ error: "Missing fields" });
-        const usersCollection = db.collection('Users'); // <- Correct collection
-        const user = await usersCollection.findOne({ email: email.toLowerCase() });
-        if (!user) return res.status(401).json({ error: "Invalid credentials" });
-        const match = await bcrypt.compare(password, user.password);
-        if (!match) return res.status(401).json({ error: "Invalid credentials" });
-        req.session.user = { name: user.name, email: user.email, joinDate: user.joinDate };
-        res.json({ ok: true, loggedIn: true, user: req.session.user });
-    } catch (err) { console.error("Signin failed:", err); res.status(500).json({ error: "Signin failed" }); }
+
+        if (!email || !password) {
+            return res.status(400).json({ error: "Missing fields" });
+        }
+
+        const usersCollection = db.collection("Users");
+
+        // IMPORTANT: match DB field names exactly
+        const user = await usersCollection.findOne({
+            Email: email.toLowerCase()
+        });
+
+        if (!user) {
+            console.log("Signin failed: user not found for email", email);
+            return res.status(401).json({ error: "Invalid credentials" });
+        }
+
+        const match = await bcrypt.compare(password, user.PasswordHash);
+
+        if (!match) {
+            console.log("Signin failed: password mismatch for", email);
+            return res.status(401).json({ error: "Invalid credentials" });
+        }
+
+        req.session.user = {
+            name: user.Name,
+            email: user.Email,
+            joinDate: user.JoinDate
+        };
+
+        res.json({
+            ok: true,
+            loggedIn: true,
+            user: req.session.user
+        });
+
+    } catch (err) {
+        console.error("Signin failed:", err);
+        res.status(500).json({ error: "Signin failed" });
+    }
 });
 
 app.post('/api/signout', (req,res)=>{
