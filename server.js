@@ -1,4 +1,4 @@
-// ==================== SERVER.JS - FIXED JOYFUND BACKEND ====================
+// ==================== SERVER.JS - JOYFUND BACKEND ====================
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
@@ -9,13 +9,14 @@ const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
+const fs = require("fs");
 require("dotenv").config();
 
 // ==================== ENV VARIABLES ====================
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI;
-const DB_NAME = "joyfund";
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const MONGO_URI = process.env.MONGO_URI; // ensure DB name in URI matches "JoyFund"
+const DB_NAME = "JoyFund";
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "mk_1S3ksM0qKIo9Xb6efUvOzm2B";
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
@@ -105,15 +106,12 @@ app.post('/api/signup', async (req, res) => {
     try {
         const { name, email, password } = req.body;
         if (!name || !email || !password) return res.status(400).json({ error: "Missing fields" });
-
+        const hashed = await bcrypt.hash(password, 10);
         const usersCollection = db.collection('Users');
         const exists = await usersCollection.findOne({ email: email.toLowerCase() });
         if (exists) return res.status(400).json({ error: "Email already exists" });
-
-        const hashed = await bcrypt.hash(password, 10);
         const user = { name, email: email.toLowerCase(), password: hashed, joinDate: new Date() };
         await usersCollection.insertOne(user);
-
         req.session.user = { name: user.name, email: user.email, joinDate: user.joinDate };
         res.json({ ok: true, loggedIn: true, user: req.session.user });
     } catch (err) { console.error(err); res.status(500).json({ error: "Signup failed" }); }
@@ -123,29 +121,14 @@ app.post("/api/signin", async (req, res) => {
     try {
         const { email, password } = req.body;
         if (!email || !password) return res.status(400).json({ error: "Missing fields" });
-
-        // FIX: Use correct collection name 'Users'
-        const usersCollection = db.collection('Users');
+        const usersCollection = db.collection('Users'); // <- Correct collection
         const user = await usersCollection.findOne({ email: email.toLowerCase() });
-
-        if (!user) {
-            console.log(`Signin failed: user not found for email ${email}`);
-            return res.status(401).json({ error: "Invalid credentials" });
-        }
-
+        if (!user) return res.status(401).json({ error: "Invalid credentials" });
         const match = await bcrypt.compare(password, user.password);
-        if (!match) {
-            console.log(`Signin failed: incorrect password for email ${email}`);
-            return res.status(401).json({ error: "Invalid credentials" });
-        }
-
+        if (!match) return res.status(401).json({ error: "Invalid credentials" });
         req.session.user = { name: user.name, email: user.email, joinDate: user.joinDate };
-        console.log(`Signin success: ${email}`);
         res.json({ ok: true, loggedIn: true, user: req.session.user });
-    } catch (err) {
-        console.error("Signin error:", err);
-        res.status(500).json({ error: "Signin failed" });
-    }
+    } catch (err) { console.error("Signin failed:", err); res.status(500).json({ error: "Signin failed" }); }
 });
 
 app.post('/api/signout', (req,res)=>{
@@ -172,13 +155,8 @@ app.post('/api/create-campaign', upload.single('image'), async (req,res)=>{
     try{
         const { title, goal, description, category, email } = req.body;
         if(!title||!goal||!description||!category||!email||!req.file) return res.status(400).json({success:false,message:"Missing fields"});
-
-        const cloudRes = await new Promise((resolve,reject)=>{
-            const stream = cloudinary.uploader.upload_stream({ folder:'joyfund/campaigns', use_filename:true, unique_filename:true }, (err,result)=>{ if(err) reject(err); else resolve(result); });
-            stream.end(req.file.buffer);
-        });
-
-        const campaignsCollection = db.collection('campaigns');
+        const cloudRes = await cloudinary.uploader.upload_stream({ folder:'joyfund/campaigns', use_filename:true, unique_filename:true }, (err,result)=>{ if(err) throw err; return result; }).end(req.file.buffer);
+        const campaignsCollection = db.collection('Campaigns');
         const campaign = { title, goal, description, category, email, status:'pending', createdAt:new Date(), imageURL: cloudRes.secure_url };
         await campaignsCollection.insertOne(campaign);
         res.json({ success:true, message:"Campaign created", imageURL: cloudRes.secure_url });
@@ -187,7 +165,7 @@ app.post('/api/create-campaign', upload.single('image'), async (req,res)=>{
 
 app.get('/api/public-campaigns', async(req,res)=>{
     try{
-        const rows = await db.collection('campaigns').find({ status:'Approved' }).toArray();
+        const rows = await db.collection('Campaigns').find({ status:'Approved' }).toArray();
         res.json({ success:true, campaigns: rows });
     }catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
@@ -196,7 +174,7 @@ app.get('/api/my-campaigns', async(req,res)=>{
     try{
         const email = req.query.email?.toLowerCase();
         if(!email) return res.status(400).json({success:false,message:"Missing email"});
-        const rows = await db.collection('campaigns').find({ email }).toArray();
+        const rows = await db.collection('Campaigns').find({ email }).toArray();
         res.json({ success:true, campaigns: rows });
     }catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
@@ -228,7 +206,6 @@ app.post('/api/waitlist', async(req,res)=>{
         res.json({success:true});
     }catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
-
 app.post('/api/volunteer', async(req,res)=>{
     try{
         const { name,email,role,availability } = req.body;
@@ -238,7 +215,6 @@ app.post('/api/volunteer', async(req,res)=>{
         res.json({success:true});
     }catch(err){ console.error(err); res.status(500).json({success:false}); }
 });
-
 app.post('/api/street-team', async(req,res)=>{
     try{
         const { name,email,city,hoursAvailable } = req.body;
@@ -259,7 +235,6 @@ app.post('/api/verify-id', upload.single('idFile'), async(req,res)=>{
         res.json({success:true,url:cloudRes.secure_url});
     }catch(err){ console.error(err); res.status(500).json({success:false,message:err.message}); }
 });
-
 app.get('/api/id-verifications', async(req,res)=>{
     try{
         const rows = await db.collection('ID_Verifications').find({}).toArray();
