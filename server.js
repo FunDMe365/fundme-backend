@@ -9,14 +9,13 @@ const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
 const { MongoClient, ObjectId } = require("mongodb");
 const cors = require("cors");
-const fs = require("fs");
 require("dotenv").config();
 
 // ==================== ENV VARIABLES ====================
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
 const DB_NAME = "joyfund";
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "mk_1S3ksM0qKIo9Xb6efUvOzm2B";
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
@@ -125,7 +124,7 @@ app.post("/api/signin", async (req, res) => {
         const { email, password } = req.body;
         if (!email || !password) return res.status(400).json({ error: "Missing fields" });
 
-        // Use correct collection name with capital U
+        // FIX: Use correct collection name 'Users'
         const usersCollection = db.collection('Users');
         const user = await usersCollection.findOne({ email: email.toLowerCase() });
 
@@ -148,7 +147,6 @@ app.post("/api/signin", async (req, res) => {
         res.status(500).json({ error: "Signin failed" });
     }
 });
-
 
 app.post('/api/signout', (req,res)=>{
     req.session.destroy(err=>err?res.status(500).json({success:false}):res.json({success:true}));
