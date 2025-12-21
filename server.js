@@ -8,6 +8,7 @@ const crypto = require("crypto");
 const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
 const mongoose = require('./db');
+const db = mongoose.connection;
 const cors = require("cors");
 const fs = require("fs");
 require("dotenv").config();
@@ -78,17 +79,6 @@ async function sendMailjetEmail(subject, htmlContent, toEmail) {
 }
 
 // ==================== MONGO ====================
-let db;
-const client = new MongoClient(MONGO_URI);
-
-client.connect()
-    .then(() => {
-        db = client.db(DB_NAME);
-        console.log("Connected to MongoDB");
-    })
-    .catch(err => {
-        console.error("MongoDB connection error:", err);
-    });
 
 // ==================== LIVE VISITOR TRACKING ====================
 const liveVisitors = {};
