@@ -36,7 +36,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
 const app = express();
 
 // ==================== PRODUCTION-READY SESSION & CORS ====================
-const MongoStore = require("connect-mongo");
+const MongoStore = require("connect-mongo").default;
 
 // CORS: allow credentials and frontend origin
 app.use(cors({
