@@ -35,27 +35,35 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
 // ==================== APP ====================
 const app = express();
 
-// ==================== MIDDLEWARE ====================
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+// ==================== PRODUCTION-READY SESSION & CORS ====================
+const MongoStore = require("connect-mongo");
 
+// CORS: allow credentials and frontend origin
 app.use(cors({
-    origin: FRONTEND_URL,  // must be exactly 'https://fundasmile.net'
-    credentials: true      // allow cookies
+    origin: FRONTEND_URL, // must match your deployed frontend exactly
+    credentials: true
 }));
 
+// SESSION: MongoDB-backed, secure for HTTPS
 app.use(session({
     name: 'sessionId',
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
+    store: MongoStore.create({
+        mongoUrl: MONGO_URI,
+        dbName: DB_NAME,
+        collectionName: "sessions",
+        ttl: 14 * 24 * 60 * 60 // 14 days
+    }),
     cookie: {
         httpOnly: true,
-        secure: true,            // must be true for HTTPS
-        sameSite: 'none',        // allows cross-site cookies
-        maxAge: 1000 * 60 * 60 * 24 // 1 day
+        secure: true,       // MUST be true if HTTPS
+        sameSite: "none",   // allows cross-site cookies
+        maxAge: 14 * 24 * 60 * 60 * 1000 // 14 days
     }
 }));
+
 
 // ==================== CLOUDINARY ====================
 if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
