@@ -39,7 +39,10 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-app.use(cors({ origin: FRONTEND_URL, credentials: true }));
+app.use(cors({
+    origin: FRONTEND_URL,  // must be exactly 'https://fundasmile.net'
+    credentials: true      // allow cookies
+}));
 
 app.use(session({
     name: 'sessionId',
@@ -48,8 +51,8 @@ app.use(session({
     saveUninitialized: false,
     cookie: {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        secure: true,            // must be true for HTTPS
+        sameSite: 'none',        // allows cross-site cookies
         maxAge: 1000 * 60 * 60 * 24 // 1 day
     }
 }));
