@@ -21,7 +21,7 @@ require("dotenv").config();
 // ==================== ENV VARIABLES ====================
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI; // ensure DB name in URI matches "JoyFund"
-const DB_NAME = "JoyFund";
+const DB_NAME = "joyfund";
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "mk_1S3ksM0qKIo9Xb6efUvOzm2B";
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
@@ -112,7 +112,7 @@ app.post('/api/signup', async (req, res) => {
             return res.status(400).json({ error: "Missing fields" });
         }
 
-        const usersCollection = db.db('JoyFund').collection('Users');
+        const usersCollection = db.db(joyfund).collection('Users');
         const existing = await usersCollection.findOne({ Email: { $regex: `^${email}$`, $options: 'i' } });
         if (existing) return res.status(400).json({ error: "Email already exists" });
 
