@@ -11,12 +11,11 @@ if (!MONGODB_URI) {
 
 mongoose.set('strictQuery', true); // optional, prevents warnings in newer versions
 
-mongoose.connect(MONGODB_URI);
-
-.then(() => console.log("✅ MongoDB connected"))
-.catch((err) => {
-    console.error("❌ MongoDB connection error:", err);
-    process.exit(1); // stop server if DB fails
-});
+mongoose.connect(MONGODB_URI)
+    .then(() => console.log("✅ MongoDB connected"))
+    .catch((err) => {
+        console.error("❌ MongoDB connection error:", err);
+        process.exit(1);
+    });
 
 module.exports = mongoose; // export to use elsewhere in your backend
