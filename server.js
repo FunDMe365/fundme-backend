@@ -7,7 +7,7 @@ const multer = require("multer");
 const crypto = require("crypto");
 const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
-const { MongoClient, ObjectId } = require("mongodb");
+const mongoose = require('./db');
 const cors = require("cors");
 const fs = require("fs");
 require("dotenv").config();

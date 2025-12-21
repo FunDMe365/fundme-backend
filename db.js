@@ -1,15 +1,24 @@
-const Database = require('better-sqlite3');
-const db = new Database('waitlist.db'); // Creates or opens this file
+// db.js
+const mongoose = require('mongoose');
 
-// Create table if not exists
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS waitlist (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    reason TEXT NOT NULL,
-    joinedAt TEXT NOT NULL
-  )
-`).run();
+// Grab the URI from Render environment variable
+const MONGODB_URI = process.env.MONGODB_URI;
 
-module.exports = db;
+if (!MONGODB_URI) {
+    console.error("❌ MONGODB_URI is not set in environment variables!");
+    process.exit(1);
+}
+
+mongoose.set('strictQuery', true); // optional, prevents warnings in newer versions
+
+mongoose.connect(MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+.then(() => console.log("✅ MongoDB connected"))
+.catch((err) => {
+    console.error("❌ MongoDB connection error:", err);
+    process.exit(1); // stop server if DB fails
+});
+
+module.exports = mongoose; // export to use elsewhere in your backend
