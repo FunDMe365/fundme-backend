@@ -9,6 +9,10 @@ const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
 const mongoose = require('./db');
 const db = mongoose.connection;
+db.on('error', console.error.bind(console, 'MongoDB connection error:'));
+db.once('open', () => {
+    console.log('✅ MongoDB native db ready');
+});
 const cors = require("cors");
 const fs = require("fs");
 require("dotenv").config();
@@ -101,7 +105,7 @@ app.post('/api/signup', async (req, res) => {
             return res.status(400).json({ error: "Missing fields" });
         }
 
-        const usersCollection = db.collection('Users');
+        const usersCollection = db.db('JoyFund').collection('Users');
         const existing = await usersCollection.findOne({ Email: { $regex: `^${email}$`, $options: 'i' } });
         if (existing) return res.status(400).json({ error: "Email already exists" });
 
