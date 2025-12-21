@@ -1,5 +1,6 @@
 // ==================== SERVER.JS - JOYFUND BACKEND ====================
 const express = require("express");
+require("dotenv").config();
 const bodyParser = require("body-parser");
 const session = require("express-session");
 const bcrypt = require("bcryptjs");
@@ -38,32 +39,27 @@ const app = express();
 // ==================== PRODUCTION-READY SESSION & CORS ====================
 const MongoStore = require("connect-mongo").default;
 
-// CORS: allow credentials and frontend origin
-app.use(cors({
-    origin: FRONTEND_URL, // must match your deployed frontend exactly
-    credentials: true
-}));
-
-// SESSION: MongoDB-backed, secure for HTTPS
 app.use(session({
-    name: 'sessionId',
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({
-        mongoUrl: MONGO_URI,
-        dbName: DB_NAME,
-        collectionName: "sessions",
-        ttl: 14 * 24 * 60 * 60 // 14 days
-    }),
-    cookie: {
-        httpOnly: true,
-        secure: true,       // MUST be true if HTTPS
-        sameSite: "none",   // allows cross-site cookies
-        maxAge: 14 * 24 * 60 * 60 * 1000 // 14 days
-    }
-}));
+  name: "sessionId",
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
 
+  // ✅ Use same client mongoose is using
+  store: MongoStore.create({
+    clientPromise: mongoose.connection.asPromise().then(() => mongoose.connection.getClient()),
+    dbName: DB_NAME,
+    collectionName: "sessions",
+    ttl: 14 * 24 * 60 * 60
+  }),
+
+  cookie: {
+    httpOnly: true,
+    secure: true,
+    sameSite: "none",
+    maxAge: 14 * 24 * 60 * 60 * 1000
+  }
+}));
 
 // ==================== CLOUDINARY ====================
 if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
