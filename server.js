@@ -282,36 +282,17 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       Goal: String(goal).trim(),
       Description: String(description).trim(),
       Category: String(category).trim(),
-      Status: "Pending", // default until admin approves
+      Status: "Pending",
       CreatedAt: new Date().toISOString(),
       ImageURL: cloudRes.secure_url
     };
 
     await db.collection("Campaigns").insertOne(doc);
 
-    res.json({ success: true, campaign: doc });
+    return res.json({ success: true, campaign: doc });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Create campaign failed" });
-  }
-});
-    const campaignsCollection = db.collection("Campaigns");
-    const campaign = {
-      title,
-      goal,
-      description,
-      category,
-      email,
-      status: "pending",
-      createdAt: new Date(),
-      imageURL: cloudRes.secure_url
-    };
-
-    await campaignsCollection.insertOne(campaign);
-    res.json({ success: true, message: "Campaign created", imageURL: cloudRes.secure_url });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: err.message });
+    console.error("create-campaign error:", err);
+    return res.status(500).json({ success: false, message: "Create campaign failed" });
   }
 });
 
