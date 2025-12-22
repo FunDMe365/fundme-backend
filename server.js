@@ -94,9 +94,68 @@ if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// ==================== STRIPE ====================
+// ==================== STRIPE CHECKOUT (DONATIONS) ====================
 const stripe = Stripe(STRIPE_SECRET_KEY);
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+  try {
+    const campaignId = req.params.campaignId;
 
+    // amount in dollars from frontend
+    const amount = Number(req.body.amount);
+    if (!amount || !isFinite(amount) || amount < 1) {
+      return res.status(400).json({ error: "Invalid donation amount" });
+    }
+
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(500).json({ error: "STRIPE_SECRET_KEY is not set on the backend" });
+    }
+    //verify campaign exists & approved
+    const campaign = await db.collection("Campaigns").findOne({
+      $or: [
+        { Id: String(campaignId) },                 // your custom Id field
+        { _id: new (require("mongodb").ObjectId)(campaignId) } // mongo _id
+      ],
+      Status: "Approved"
+    }).catch(() => null);
+
+    if (!campaign) {
+      return res.status(404).json({ error: "Campaign not found or not approved" });
+    }
+
+    const successUrl = req.body.successUrl || "https://fundasmile.net/thankyou.html";
+    const cancelUrl  = req.body.cancelUrl  || "https://fundasmile.net/campaigns.html";
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: campaign.title || "JoyFund Donation",
+              description: "Donation to support a JoyFund campaign",
+              images: campaign.ImageURL ? [campaign.ImageURL] : undefined
+            },
+            unit_amount: Math.round(amount * 100) // cents
+          },
+          quantity: 1
+        }
+      ],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      metadata: {
+        campaignId: String(campaignId),
+        campaignTitle: String(campaign.title || "")
+      }
+    });
+
+    return res.json({ sessionId: session.id });
+  } catch (err) {
+    console.error("Stripe checkout error:", err);
+    return res.status(500).json({ error: "Failed to create checkout session" });
+  }
+});
 // ==================== MAILJET ====================
 const Mailjet = require("node-mailjet");
 const mailjetClient =
