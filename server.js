@@ -261,11 +261,12 @@ app.get("/api/admin-check", (req, res) => {
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
     const { title, goal, description, category, email } = req.body;
+
     if (!title || !goal || !description || !category || !email || !req.file) {
       return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
-    // Upload to Cloudinary using upload_stream properly
+    // Upload to Cloudinary
     const cloudRes = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         { folder: "joyfund/campaigns", use_filename: true, unique_filename: true },
@@ -274,6 +275,26 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
       stream.end(req.file.buffer);
     });
 
+    const doc = {
+      Id: String(Date.now()),
+      title: String(title).trim(),
+      Email: String(email).trim().toLowerCase(),
+      Goal: String(goal).trim(),
+      Description: String(description).trim(),
+      Category: String(category).trim(),
+      Status: "Pending", // default until admin approves
+      CreatedAt: new Date().toISOString(),
+      ImageURL: cloudRes.secure_url
+    };
+
+    await db.collection("Campaigns").insertOne(doc);
+
+    res.json({ success: true, campaign: doc });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Create campaign failed" });
+  }
+});
     const campaignsCollection = db.collection("Campaigns");
     const campaign = {
       title,
@@ -296,7 +317,7 @@ app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
 
 app.get("/api/public-campaigns", async (req, res) => {
   try {
-    const rows = await db.collection("Campaigns").find({ status: "Approved" }).toArray();
+    const rows = await db.collection("Campaigns").find({ Status: "Approved" }).toArray();
     res.json({ success: true, campaigns: rows });
   } catch (err) {
     console.error(err);
@@ -309,7 +330,7 @@ app.get("/api/my-campaigns", async (req, res) => {
     const email = req.query.email?.toLowerCase();
     if (!email) return res.status(400).json({ success: false, message: "Missing email" });
 
-    const rows = await db.collection("Campaigns").find({ email }).toArray();
+    const rows = await db.collection("Campaigns").find({ Email: Email }).toArray();
     res.json({ success: true, campaigns: rows });
   } catch (err) {
     console.error(err);
