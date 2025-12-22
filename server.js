@@ -42,7 +42,10 @@ const app = express();
 app.set("trust proxy", 1); // important on Render/behind proxy
 
 // ==================== CORS (must be before routes) ====================
-const allowedOrigins = ["https://fundasmile.net", "https://www.fundasmile.net"];
+const allowedOrigins = [
+  "https://fundasmile.net",
+  "https://www.fundasmile.net"
+];
 
 const corsOptions = {
   origin: function(origin, cb) {
@@ -56,7 +59,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // ✅ IMPORTANT
+app.options("*", cors(corsOptions)); // ✅ this is the fix
 
 
 // ==================== MIDDLEWARE ====================
@@ -200,29 +203,44 @@ app.post("/api/track-visitor", (req, res) => {
 app.post("/api/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
 
-    // ... your existing validation + user creation logic here ...
-    // Make sure you end up with a created user object (newUser)
+    const usersCollection = db.db(DB_NAME).collection("Users");
+    const existing = await usersCollection.findOne({
+      Email: { $regex: `^${email}$`, $options: "i" }
+    });
+    if (existing) return res.status(400).json({ error: "Email already exists" });
 
-    // ✅ set session user
-    req.session.user = {
-      name: newUser.Name || newUser.name || name,
-      email: (newUser.Email || newUser.email || email).toLowerCase(),
-      joinDate: newUser.JoinDate || newUser.joinDate || new Date().toISOString()
+    const hashed = await bcrypt.hash(password, 10);
+    const newUser = {
+      Name: name,
+      Email: email,
+      PasswordHash: hashed,
+      JoinDate: new Date()
     };
 
-    // ✅ IMPORTANT for mobile: force session write before replying
+    await usersCollection.insertOne(newUser);
+
+    req.session.user = {
+      name: newUser.Name,
+      email: newUser.Email,
+      joinDate: newUser.JoinDate
+    };
+
+    // ✅ IMPORTANT: force session write before responding (mobile fix)
     req.session.save((err) => {
       if (err) {
         console.error("Session save error (signup):", err);
-        return res.status(500).json({ success: false, message: "Session failed to save" });
+        return res.status(500).json({ error: "Session failed to save" });
       }
-      return res.json({ success: true, loggedIn: true, user: req.session.user });
+      return res.json({ ok: true, loggedIn: true, user: req.session.user });
     });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Signup failed" });
+    console.error("Signup error:", err);
+    res.status(500).json({ error: "Signup failed" });
   }
 });
 
@@ -233,34 +251,34 @@ app.post("/api/signin", async (req, res) => {
     if (!email || !password) return res.status(400).json({ error: "Missing fields" });
 
     const usersCollection = db.collection("Users");
-
     const user = await usersCollection.findOne({
       Email: { $regex: `^${email}$`, $options: "i" }
     });
 
-    if (!user) {
-      console.log("Signin failed: user not found for email", email);
-      return res.status(401).json({ error: "Invalid credentials" });
-    }
+    if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
     const match = await bcrypt.compare(password, user.PasswordHash);
-    if (!match) {
-      console.log("Signin failed: password mismatch");
-      return res.status(401).json({ error: "Invalid credentials" });
-    }
+    if (!match) return res.status(401).json({ error: "Invalid credentials" });
 
-   req.session.user = {
-  name: user.Name,
-  email: user.Email,
-  joinDate: user.JoinDate
-};
+    req.session.user = {
+      name: user.Name,
+      email: user.Email,
+      joinDate: user.JoinDate
+    };
 
-req.session.save((err) => {
-  if (err) {
-    console.error("Session save error:", err);
-    return res.status(500).json({ error: "Session failed to save" });
+    // ✅ IMPORTANT: force session write before responding (mobile fix)
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error (signin):", err);
+        return res.status(500).json({ error: "Session failed to save" });
+      }
+      return res.json({ ok: true, loggedIn: true, user: req.session.user });
+    });
+
+  } catch (err) {
+    console.error("Signin error:", err);
+    res.status(500).json({ error: "Signin failed" });
   }
-  return res.json({ ok: true, loggedIn: true, user: req.session.user });
 });
 
 // Sign out the current user
