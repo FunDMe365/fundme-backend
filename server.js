@@ -70,21 +70,15 @@ app.use(bodyParser.urlencoded({ extended: true }));
 const MongoStore = require("connect-mongo").default;
 
 app.use(session({
-  name: "sessionId",
-  secret: SESSION_SECRET,
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  store: MongoStore.create({
-    clientPromise: mongoose.connection.asPromise().then(() => mongoose.connection.getClient()),
-    dbName: DB_NAME,
-    collectionName: "sessions",
-    ttl: 14 * 24 * 60 * 60 // 14 days
-  }),
+  proxy: true,
   cookie: {
     httpOnly: true,
-    secure: true,
-    sameSite: "none",
-    maxAge: 14 * 24 * 60 * 60 * 1000 // 14 days
+    secure: true,        // REQUIRED on Render (https)
+    sameSite: "none",    // REQUIRED for cross-site cookie
+    maxAge: 1000 * 60 * 60 * 24 * 7
   }
 }));
 
@@ -308,14 +302,23 @@ app.get("/api/public-campaigns", async (req, res) => {
 
 app.get("/api/my-campaigns", async (req, res) => {
   try {
-    const email = req.query.email?.toLowerCase();
-    if (!email) return res.status(400).json({ success: false, message: "Missing email" });
+    // Must be logged in
+    const sessionEmail = req.session?.user?.email;
+    if (!sessionEmail) {
+      return res.status(401).json({ success: false, message: "Not logged in" });
+    }
 
-    const rows = await db.collection("Campaigns").find({ Email: Email }).toArray();
-    res.json({ success: true, campaigns: rows });
+    const email = String(sessionEmail).trim().toLowerCase();
+
+    // Support both field names just in case (Email vs email)
+    const rows = await db.collection("Campaigns")
+      .find({ $or: [{ Email: email }, { email: email }] })
+      .toArray();
+
+    return res.json({ success: true, campaigns: rows });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    console.error("my-campaigns error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -398,6 +401,26 @@ app.post("/api/street-team", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false });
+  }
+});
+
+//====================LOGOUT=============================
+app.post("/api/logout", (req, res) => {
+  try {
+    req.session.destroy((err) => {
+      if (err) return res.status(500).json({ ok: false, error: "Logout failed" });
+
+      // IMPORTANT: clear the same cookie name/path your session uses
+      res.clearCookie("connect.sid", {
+        path: "/",
+        secure: true,
+        sameSite: "none"
+      });
+
+      return res.json({ ok: true });
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: "Logout failed" });
   }
 });
 
