@@ -122,7 +122,8 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       return res.status(404).json({ error: "Campaign not found or not approved" });
     }
 
-    const successUrl = req.body.successUrl || "https://fundasmile.net/thankyou.html";
+    const baseSuccessUrl = req.body.successUrl || "https://fundasmile.net/thankyou.html";
+    const successUrl = `${baseSuccessUrl}${baseSuccessUrl.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`;
     const cancelUrl  = req.body.cancelUrl  || "https://fundasmile.net/campaigns.html";
 
     const session = await stripe.checkout.sessions.create({
