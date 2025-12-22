@@ -48,15 +48,12 @@ const allowedOrigins = [
 ];
 
 app.use(cors({
-  origin: function (origin, callback) {
-    // allow requests with no origin (curl/postman)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error("CORS blocked for origin: " + origin));
+  origin: function(origin, cb) {
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error("CORS blocked: " + origin));
   },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  credentials: true
 }));
 
 // respond to ALL preflight requests
@@ -69,6 +66,8 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // ==================== PRODUCTION-READY SESSION ====================
 const MongoStore = require("connect-mongo").default;
 
+app.set("trust proxy", 1);
+
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
@@ -76,9 +75,9 @@ app.use(session({
   proxy: true,
   cookie: {
     httpOnly: true,
-    secure: true,        // REQUIRED on Render (https)
-    sameSite: "none",    // REQUIRED for cross-site cookie
-    maxAge: 1000 * 60 * 60 * 24 * 7
+    secure: true,          // ✅ required on HTTPS (Render)
+    sameSite: "none",      // ✅ required when frontend & backend are different domains
+    maxAge: 1000 * 60 * 60 * 24 * 14
   }
 }));
 
