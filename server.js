@@ -42,41 +42,42 @@ const app = express();
 app.set("trust proxy", 1); // important on Render/behind proxy
 
 // ==================== CORS (must be before routes) ====================
-const allowedOrigins = [
-  "https://fundasmile.net",
-  "https://www.fundasmile.net"
-];
+const allowedOrigins = ["https://fundasmile.net", "https://www.fundasmile.net"];
 
-app.use(cors({
+const corsOptions = {
   origin: function(origin, cb) {
     if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin)) return cb(null, true);
     return cb(new Error("CORS blocked: " + origin));
   },
-  credentials: true
-}));
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+};
 
-// respond to ALL preflight requests
-app.options("*", cors());
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // ✅ IMPORTANT
+
 
 // ==================== MIDDLEWARE ====================
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ==================== PRODUCTION-READY SESSION ====================
-const MongoStore = require("connect-mongo").default;
+const MongoStore = require("connect-mongo");
 
 app.set("trust proxy", 1);
 
 app.use(session({
+  name: "connect.sid",          // ✅ single cookie name (or change to "joyfund.sid")
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   proxy: true,
   cookie: {
     httpOnly: true,
-    secure: true,          // ✅ required on HTTPS (Render)
-    sameSite: "none",      // ✅ required when frontend & backend are different domains
+    secure: true,
+    sameSite: "none",
     maxAge: 1000 * 60 * 60 * 24 * 14
   }
 }));
@@ -199,35 +200,29 @@ app.post("/api/track-visitor", (req, res) => {
 app.post("/api/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: "Missing fields" });
-    }
 
-    const usersCollection = db.db(DB_NAME).collection("Users");
-    const existing = await usersCollection.findOne({
-      Email: { $regex: `^${email}$`, $options: "i" }
-    });
-    if (existing) return res.status(400).json({ error: "Email already exists" });
+    // ... your existing validation + user creation logic here ...
+    // Make sure you end up with a created user object (newUser)
 
-    const hashed = await bcrypt.hash(password, 10);
-    const newUser = {
-      Name: name,
-      Email: email,
-      PasswordHash: hashed,
-      JoinDate: new Date()
-    };
-
-    await usersCollection.insertOne(newUser);
+    // ✅ set session user
     req.session.user = {
-      name: newUser.Name,
-      email: newUser.Email,
-      joinDate: newUser.JoinDate
+      name: newUser.Name || newUser.name || name,
+      email: (newUser.Email || newUser.email || email).toLowerCase(),
+      joinDate: newUser.JoinDate || newUser.joinDate || new Date().toISOString()
     };
 
-    res.json({ ok: true, loggedIn: true, user: req.session.user });
+    // ✅ IMPORTANT for mobile: force session write before replying
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error (signup):", err);
+        return res.status(500).json({ success: false, message: "Session failed to save" });
+      }
+      return res.json({ success: true, loggedIn: true, user: req.session.user });
+    });
+
   } catch (err) {
-    console.error("Signup error:", err);
-    res.status(500).json({ error: "Signup failed" });
+    console.error(err);
+    res.status(500).json({ success: false, message: "Signup failed" });
   }
 });
 
@@ -254,18 +249,18 @@ app.post("/api/signin", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    req.session.user = {
-      name: user.Name,
-      email: user.Email,
-      joinDate: user.JoinDate
-    };
+   req.session.user = {
+  name: user.Name,
+  email: user.Email,
+  joinDate: user.JoinDate
+};
 
-    console.log("Signin success:", user.Email);
-    res.json({ ok: true, loggedIn: true, user: req.session.user });
-  } catch (err) {
-    console.error("Signin error:", err);
-    res.status(500).json({ error: "Signin failed" });
+req.session.save((err) => {
+  if (err) {
+    console.error("Session save error:", err);
+    return res.status(500).json({ error: "Session failed to save" });
   }
+  return res.json({ ok: true, loggedIn: true, user: req.session.user });
 });
 
 // Sign out the current user
