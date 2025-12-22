@@ -311,6 +311,40 @@ app.get("/api/admin-check", (req, res) => {
   res.json({ admin: !!(req.session && req.session.admin) });
 });
 
+// ==================== PUBLIC: ACTIVE CAMPAIGNS (SEARCH/LIST) ====================
+app.get("/api/campaigns", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+
+    // IMPORTANT: your Mongo collection is likely lowercase "campaigns"
+    const col = db.collection("campaigns");
+
+    // Status field in your docs appears to be "Status" (capital S)
+    // Accept a couple common "active" meanings to avoid mismatches.
+    const activeStatuses = ["Active", "Approved"];
+
+    const filter = { Status: { $in: activeStatuses } };
+
+    if (q) {
+      filter.$or = [
+        { title: { $regex: q, $options: "i" } },
+        { Description: { $regex: q, $options: "i" } },
+        { Category: { $regex: q, $options: "i" } }
+      ];
+    }
+
+    const campaigns = await col
+      .find(filter)
+      .sort({ CreatedAt: -1 })
+      .toArray();
+
+    res.json({ ok: true, campaigns });
+  } catch (err) {
+    console.error("GET /api/campaigns error:", err);
+    res.status(500).json({ ok: false, message: "Failed to load campaigns" });
+  }
+});
+
 // ==================== CAMPAIGNS ====================
 app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
   try {
