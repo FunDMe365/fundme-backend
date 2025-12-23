@@ -634,7 +634,7 @@ app.get("/api/campaigns", async (req, res) => {
     const q = String(req.query.q || "").trim();
 
     // IMPORTANT: your Mongo collection is likely lowercase "campaigns"
-    const col = db.collection("campaigns");
+    const col = db.collection("Campaigns");
 
     // Status field in your docs appears to be "Status" (capital S)
     // Accept a couple common "active" meanings to avoid mismatches.
