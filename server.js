@@ -379,77 +379,56 @@ app.get("/api/admin-check", (req, res) => {
   res.json({ admin: !!(req.session && req.session.admin) });
 });
 
-app.patch("/api/admin/campaigns/:id/status", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    const allowed = ["Approved", "Denied", "Pending", "Rejected"];
-    if (!status || !allowed.includes(status)) {
-      return res.status(400).json({ success: false, message: "Invalid status" });
-    }
-
-    let filter;
-
-    // Try ObjectId first
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      filter = { _id: new mongoose.Types.ObjectId(id) };
-    } else {
-      // Fall back to legacy Id field
-      filter = { Id: String(id) };
-    }
-
-    const updated = await db.collection("campaigns").findOneAndUpdate(
-      filter,
-      { $set: { Status: status } },
-      { returnDocument: "after" }
-    );
-
-    if (!updated.value) {
-      return res.status(404).json({ success: false, message: "Campaign not found" });
-    }
-
-    return res.json({ success: true, campaign: updated.value });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: "Server error", error: String(err.message || err) });
-  }
-});
-
-
 // ==================== ADMIN: USERS LIST ====================
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
-    // Your Users collection uses capital "Users"
-    const users = await db.collection("Users")
-      .find({})
-      .sort({ JoinDate: -1 })
-      .limit(1000)
-      .toArray();
+    const users = await db.collection("users").aggregate([
+      // Bring in latest verification by userId (ObjectId)
+      {
+        $lookup: {
+          from: "ID_Verifications",
+          let: { uid: "$_id", em: "$email" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    // match by ObjectId userId
+                    { $eq: ["$userId", "$$uid"] },
+                    // fallback: match by email if your old docs used email
+                    { $eq: ["$Email", "$$em"] },
+                    { $eq: ["$email", "$$em"] }
+                  ]
+                }
+              }
+            },
+            { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } },
+            { $limit: 1 }
+          ],
+          as: "verification"
+        }
+      },
+      {
+        $addFields: {
+          identityStatus: {
+            $ifNull: [{ $arrayElemAt: ["$verification.Status", 0] },
+            { $ifNull: [{ $arrayElemAt: ["$verification.status", 0] }, "Not Submitted"] }]
+          }
+        }
+      },
+      {
+        $project: {
+          password: 0,
+          verification: 0
+        }
+      },
+      { $sort: { joinDate: -1, createdAt: -1, _id: -1 } }
+    ]).toArray();
 
-    // Optional: compute ID status based on ID_Verifications approvals
-    const emails = users
-      .map(u => (u.Email || "").toString().trim().toLowerCase())
-      .filter(Boolean);
-
-    const approved = await db.collection("ID_Verifications")
-      .find({ email: { $in: emails }, Status: "Approved" })
-      .project({ email: 1 })
-      .toArray();
-
-    const approvedSet = new Set(approved.map(x => (x.email || "").toLowerCase()));
-
-    const normalized = users.map(u => ({
-      _id: u._id,
-      name: u.Name || "",
-      email: u.Email || "",
-      joinDate: u.JoinDate || null,
-      identityStatus: approvedSet.has((u.Email || "").toLowerCase()) ? "Approved" : "Not Approved"
-    }));
-
-    return res.json({ success: true, users: normalized });
+    res.json({ success: true, users });
   } catch (err) {
-    console.error("GET /api/admin/users error:", err);
-    return res.status(500).json({ success: false, message: "Failed to load users" });
+    console.error("❌ /api/admin/users error:", err);
+    res.status(500).json({ success: false, message: "Failed to load users" });
   }
 });
 
@@ -564,12 +543,16 @@ app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
 // Update campaign status (Approved/Denied/Closed/etc.)
 app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
   try {
-    const id = req.params.id;
+    const id = String(req.params.id || "");
     const { status } = req.body;
 
     const allowed = ["Pending", "Approved", "Denied", "Closed"];
     if (!allowed.includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid campaign id" });
     }
 
     const result = await db.collection("Campaigns").findOneAndUpdate(
