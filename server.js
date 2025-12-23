@@ -61,6 +61,38 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions)); // ✅ this is the fix
 
+async function isIdentityApproved(email) {
+  if (!email) return false;
+  const cleanEmail = String(email).trim().toLowerCase();
+
+  const row = await db.collection("ID_Verifications").findOne({
+    email: cleanEmail,
+    Status: "Approved"
+  });
+
+  return !!row;
+}
+
+async function requireVerifiedIdentity(req, res, next) {
+  try {
+    const userEmail = req.session?.user?.email;
+    if (!userEmail) {
+      return res.status(401).json({ success: false, message: "Not logged in" });
+    }
+
+    const ok = await isIdentityApproved(userEmail);
+    if (!ok) {
+      return res.status(403).json({ success: false, message: "Identity not verified" });
+    }
+
+    next();
+  } catch (err) {
+    console.error("requireVerifiedIdentity error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+
 
 // ==================== MIDDLEWARE ====================
 app.use(bodyParser.json());
@@ -77,6 +109,7 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   proxy: true,
+  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }),
   cookie: {
     httpOnly: true,
     secure: true,
@@ -293,13 +326,25 @@ app.post("/api/signout", (req, res) => {
 });
 
 // Check if the user is logged in
-app.get("/api/check-session", (req, res) => {
-  if (req.session.user) {
-    res.json({ loggedIn: true, user: req.session.user });
-  } else {
-    res.json({ loggedIn: false, user: null });
+app.get("/api/check-session", async (req, res) => {
+  try {
+    if (!req.session.user) {
+      return res.json({ loggedIn: false, user: null, identityVerified: false });
+    }
+
+    const identityVerified = await isIdentityApproved(req.session.user.email);
+
+    return res.json({
+      loggedIn: true,
+      user: req.session.user,
+      identityVerified
+    });
+  } catch (err) {
+    console.error("check-session error:", err);
+    return res.json({ loggedIn: false, user: null, identityVerified: false });
   }
 });
+
 
 // ==================== ADMIN ====================
 function requireAdmin(req, res, next) {
@@ -324,6 +369,160 @@ app.post("/api/admin-logout", (req, res) => {
 
 app.get("/api/admin-check", (req, res) => {
   res.json({ admin: !!(req.session && req.session.admin) });
+});
+
+const { ObjectId } = require("mongodb");
+
+// Normalize campaign fields so the admin page always gets consistent keys
+function normalizeCampaign(doc) {
+  return {
+    _id: String(doc._id),
+    title: doc.title ?? doc.Title ?? "Untitled",
+    email: doc.Email ?? doc.email ?? "—",
+    goal: doc.Goal ?? doc.goal ?? "—",
+    status: doc.Status ?? doc.status ?? "—",
+    createdAt: doc.CreatedAt ?? doc.createdAt ?? doc.CreateAt ?? null,
+    imageUrl: doc.ImageURL ?? doc.imageUrl ?? null,
+    category: doc.Category ?? doc.category ?? null
+  };
+}
+
+// Normalize ID verification fields
+function normalizeIdv(doc) {
+  return {
+    _id: String(doc._id),
+    name: doc.name ?? doc.Name ?? "—",
+    email: doc.email ?? doc.Email ?? "—",
+    url: doc.url ?? doc.URL ?? null,
+    status: doc.Status ?? doc.status ?? "Pending",
+    createdAt: doc.createdAt ?? doc.CreatedAt ?? null,
+    reviewedAt: doc.ReviewedAt ?? null,
+    reviewedBy: doc.ReviewedBy ?? null,
+    denialReason: doc.DenialReason ?? null
+  };
+}
+
+// ==================== ADMIN STATS (counts) ====================
+app.get("/api/admin/stats", requireAdmin, async (req, res) => {
+  try {
+    const [users, volunteers, waitlist] = await Promise.all([
+      db.collection("Users").countDocuments({}),
+      db.collection("Volunteers").countDocuments({}),
+      db.collection("Waitlist").countDocuments({})
+    ]);
+
+    const recentWaitlistArr = await db.collection("Waitlist")
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(1)
+      .toArray();
+
+    const recentWaitlist = recentWaitlistArr[0] || null;
+
+    return res.json({
+      success: true,
+      users,
+      volunteers,
+      waitlist,
+      recentWaitlist
+    });
+  } catch (err) {
+    console.error("admin stats error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load stats" });
+  }
+});
+
+// ==================== ADMIN: CAMPAIGNS ====================
+// List ALL campaigns (Pending/Approved/Denied/etc.)
+app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection("Campaigns").find({}).sort({ CreatedAt: -1 }).toArray();
+    res.json({ success: true, campaigns: rows.map(normalizeCampaign) });
+  } catch (err) {
+    console.error("admin campaigns error:", err);
+    res.status(500).json({ success: false, message: "Failed to load campaigns" });
+  }
+});
+
+// Update campaign status (Approved/Denied/Closed/etc.)
+app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { status } = req.body;
+
+    const allowed = ["Pending", "Approved", "Denied", "Closed"];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    const result = await db.collection("Campaigns").findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: { Status: status, ReviewedAt: new Date(), ReviewedBy: "admin" } },
+      { returnDocument: "after" }
+    );
+
+    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
+
+    res.json({ success: true, campaign: normalizeCampaign(result.value) });
+  } catch (err) {
+    console.error("admin campaign status error:", err);
+    res.status(500).json({ success: false, message: "Failed to update campaign" });
+  }
+});
+
+// ==================== ADMIN: ID VERIFICATIONS ====================
+// List ID verifications (default Pending)
+app.get("/api/admin/id-verifications", requireAdmin, async (req, res) => {
+  try {
+    const status = String(req.query.status || "Pending");
+    const filter = status ? { Status: status } : {};
+    const rows = await db.collection("ID_Verifications").find(filter).sort({ createdAt: -1 }).toArray();
+    res.json({ success: true, data: rows.map(normalizeIdv) });
+  } catch (err) {
+    console.error("admin idv list error:", err);
+    res.status(500).json({ success: false, message: "Failed to load ID verifications" });
+  }
+});
+
+// Approve an ID verification
+app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    const result = await db.collection("ID_Verifications").findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
+      { returnDocument: "after" }
+    );
+
+    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
+
+    res.json({ success: true, row: normalizeIdv(result.value) });
+  } catch (err) {
+    console.error("admin idv approve error:", err);
+    res.status(500).json({ success: false, message: "Approve failed" });
+  }
+});
+
+// Deny an ID verification
+app.patch("/api/admin/id-verifications/:id/deny", requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { reason } = req.body;
+
+    const result = await db.collection("ID_Verifications").findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: { Status: "Denied", ReviewedAt: new Date(), ReviewedBy: "admin", DenialReason: reason || "" } },
+      { returnDocument: "after" }
+    );
+
+    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
+
+    res.json({ success: true, row: normalizeIdv(result.value) });
+  } catch (err) {
+    console.error("admin idv deny error:", err);
+    res.status(500).json({ success: false, message: "Deny failed" });
+  }
 });
 
 // ==================== PUBLIC: ACTIVE CAMPAIGNS (SEARCH/LIST) ====================
@@ -361,7 +560,7 @@ app.get("/api/campaigns", async (req, res) => {
 });
 
 // ==================== CAMPAIGNS ====================
-app.post("/api/create-campaign", upload.single("image"), async (req, res) => {
+app.post("/api/create-campaign", requireVerifiedIdentity, upload.single("image"), async (req, res) => {
   try {
     const { title, goal, description, category, email } = req.body;
 
@@ -551,11 +750,13 @@ app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
     });
 
     await db.collection("ID_Verifications").insertOne({
-      name,
-      email,
-      url: cloudRes.secure_url,
-      createdAt: new Date()
-    });
+  name: String(name).trim(),
+  email: String(email).trim().toLowerCase(),
+  url: cloudRes.secure_url,
+  Status: "Pending",              // ✅ add this
+  createdAt: new Date()
+});
+
 
     res.json({ success: true, url: cloudRes.secure_url });
   } catch (err) {
