@@ -99,7 +99,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ==================== PRODUCTION-READY SESSION ====================
-const MongoStore = require("connect-mongo");
+const MongoStore = require("connect-mongo").default;
 
 app.set("trust proxy", 1);
 
