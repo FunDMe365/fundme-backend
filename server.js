@@ -383,52 +383,58 @@ app.get("/api/admin-check", (req, res) => {
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
     const users = await db.collection("Users").aggregate([
-      // Bring in latest verification by userId (ObjectId)
+      // Join latest ID verification by email (your ID_Verifications uses lowercase email)
       {
         $lookup: {
           from: "ID_Verifications",
-          let: { uid: "$_id", em: "$email" },
+          let: { em: "$Email" }, // Users collection stores Email with capital E
           pipeline: [
             {
               $match: {
                 $expr: {
-                  $or: [
-                    // match by ObjectId userId
-                    { $eq: ["$userId", "$$uid"] },
-                    // fallback: match by email if your old docs used email
-                    { $eq: ["$Email", "$$em"] },
-                    { $eq: ["$email", "$$em"] }
+                  // compare lowercase(email) to lowercase(Email)
+                  $eq: [
+                    { $toLower: "$email" },
+                    { $toLower: "$$em" }
                   ]
                 }
               }
             },
-            { $sort: { submittedAt: -1, createdAt: -1, _id: -1 } },
+            { $sort: { createdAt: -1, CreatedAt: -1, _id: -1 } },
             { $limit: 1 }
           ],
           as: "verification"
         }
       },
-      {
-        $addFields: {
-          identityStatus: {
-            $ifNull: [{ $arrayElemAt: ["$verification.Status", 0] },
-            { $ifNull: [{ $arrayElemAt: ["$verification.status", 0] }, "Not Submitted"] }]
-          }
-        }
-      },
+
+      // Normalize to the exact keys your admin.html uses
       {
         $project: {
-          password: 0,
-          verification: 0
+          _id: 1,
+          joinDate: { $ifNull: ["$JoinDate", "$joinDate"] },
+          name: { $ifNull: ["$Name", "$name"] },
+          email: { $ifNull: ["$Email", "$email"] },
+
+          identityStatus: {
+            $ifNull: [
+              { $arrayElemAt: ["$verification.Status", 0] },
+              { $ifNull: [{ $arrayElemAt: ["$verification.status", 0] }, "Not Submitted"] }
+            ]
+          },
+
+          // never send password fields
+          PasswordHash: 0,
+          password: 0
         }
       },
-      { $sort: { joinDate: -1, createdAt: -1, _id: -1 } }
+
+      { $sort: { joinDate: -1, _id: -1 } }
     ]).toArray();
 
-    res.json({ success: true, users });
+    return res.json({ success: true, users });
   } catch (err) {
     console.error("❌ /api/admin/users error:", err);
-    res.status(500).json({ success: false, message: "Failed to load users" });
+    return res.status(500).json({ success: false, message: "Failed to load users" });
   }
 });
 
