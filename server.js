@@ -382,69 +382,48 @@ app.get("/api/admin-check", (req, res) => {
 // ==================== ADMIN: USERS LIST ====================
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
-    const users = await db.collection("Users").aggregate([
-      // Normalize email to lowercase safely (handles null/missing)
-      {
-        $addFields: {
-          _emailLower: {
-            $toLower: { $ifNull: ["$Email", ""] }
-          }
-        }
-      },
+    // ✅ Your real collection is "Users" (capital U)
+    const rawUsers = await db.collection("Users")
+      .find({})
+      .sort({ JoinDate: -1, _id: -1 })
+      .limit(2000)
+      .toArray();
 
-      // Lookup latest ID verification by lowercased email safely
-      {
-        $lookup: {
-          from: "ID_Verifications",
-          let: { em: "$_emailLower" },
-          pipeline: [
-            {
-              $addFields: {
-                _emailLower: { $toLower: { $ifNull: ["$email", ""] } }
-              }
-            },
-            {
-              $match: {
-                $expr: { $eq: ["$_emailLower", "$$em"] }
-              }
-            },
-            { $sort: { createdAt: -1, CreatedAt: -1, _id: -1 } },
-            { $limit: 1 },
-            { $project: { _emailLower: 0 } }
-          ],
-          as: "verification"
-        }
-      },
+    // Pull latest verification per user by email (ID_Verifications stores lowercase email)
+    const users = await Promise.all(rawUsers.map(async (u) => {
+      const email = String(u.Email ?? u.email ?? "").trim().toLowerCase();
 
-      // Output EXACT keys admin.html expects
-      {
-        $project: {
-          _id: 1,
-          joinDate: { $ifNull: ["$JoinDate", "$joinDate"] },
-          name: { $ifNull: ["$Name", "$name"] },
-          email: { $ifNull: ["$Email", "$email"] },
-          identityStatus: {
-            $ifNull: [
-              { $arrayElemAt: ["$verification.Status", 0] },
-              { $ifNull: [{ $arrayElemAt: ["$verification.status", 0] }, "Not Submitted"] }
-            ]
-          },
+      let identityStatus = "Not Submitted";
+      if (email) {
+        const v = await db.collection("ID_Verifications")
+          .find({ email })
+          .sort({ createdAt: -1, CreatedAt: -1, _id: -1 })
+          .limit(1)
+          .toArray();
 
-          // remove sensitive + temp fields
-          PasswordHash: 0,
-          password: 0,
-          verification: 0,
-          _emailLower: 0
-        }
-      },
+        const latest = v[0];
+        if (latest) identityStatus = latest.Status ?? latest.status ?? "Pending";
+      }
 
-      { $sort: { joinDate: -1, _id: -1 } }
-    ]).toArray();
+      // ✅ Return EXACT keys admin.html expects
+      return {
+        _id: String(u._id),
+        joinDate: u.JoinDate ?? u.joinDate ?? null,
+        name: u.Name ?? u.name ?? "—",
+        email: u.Email ?? u.email ?? "—",
+        identityStatus
+      };
+    }));
 
     return res.json({ success: true, users });
   } catch (err) {
-    console.error("❌ /api/admin/users error (details):", err); // IMPORTANT
-    return res.status(500).json({ success: false, message: "Failed to load users" });
+    console.error("❌ /api/admin/users error:", err);
+    // TEMP: return the real error so we can finish debugging fast
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load users",
+      error: String(err?.message || err)
+    });
   }
 });
 
