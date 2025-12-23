@@ -551,20 +551,17 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid status" });
     }
 
-    // Match either Mongo _id or your legacy Id field
-    const filter = ObjectId.isValid(id)
-      ? { $or: [{ _id: new ObjectId(id) }, { Id: id }] }
-      : { Id: id };
+    // ✅ Match ObjectId _id, string _id, or legacy Id field
+    const or = [{ _id: id }, { Id: id }];
+    if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
 
     const result = await db.collection("Campaigns").findOneAndUpdate(
-      filter,
+      { $or: or },
       { $set: { Status: status, ReviewedAt: new Date(), ReviewedBy: "admin" } },
       { returnDocument: "after" }
     );
 
-    if (!result?.value) {
-      return res.status(404).json({ success: false, message: "Not found" });
-    }
+    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
 
     res.json({ success: true, campaign: normalizeCampaign(result.value) });
   } catch (err) {
