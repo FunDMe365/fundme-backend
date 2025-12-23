@@ -479,12 +479,13 @@ const { ObjectId } = require("mongodb");
 // Normalize campaign fields so the admin page always gets consistent keys
 function normalizeCampaign(doc) {
   return {
-    _id: String(doc._id),
+    _id: String(doc._id),   // Mongo ID
+    Id: doc.Id || null,    // 👈 ADD THIS
     title: doc.title ?? doc.Title ?? "Untitled",
     email: doc.Email ?? doc.email ?? "—",
     goal: doc.Goal ?? doc.goal ?? "—",
     status: doc.Status ?? doc.status ?? "—",
-    createdAt: doc.CreatedAt ?? doc.createdAt ?? doc.CreateAt ?? null,
+    createdAt: doc.CreatedAt ?? doc.createdAt ?? null,
     imageUrl: doc.ImageURL ?? doc.imageUrl ?? null,
     category: doc.Category ?? doc.category ?? null
   };
