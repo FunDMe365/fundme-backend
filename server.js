@@ -7,6 +7,7 @@ const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const crypto = require("crypto");
+const WAITLIST_COLLECTION = "waitlist";
 const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
 const cors = require("cors");
@@ -412,17 +413,17 @@ function normalizeIdv(doc) {
 // ==================== ADMIN STATS (counts) ====================
 app.get("/api/admin/stats", requireAdmin, async (req, res) => {
   try {
-    const [users, volunteers, waitlist] = await Promise.all([
-      db.collection("Users").countDocuments({}),
-      db.collection("Volunteers").countDocuments({}),
-      db.collection("Waitlist").countDocuments({})
-    ]);
+   const [users, volunteers, waitlist] = await Promise.all([
+  db.collection("Users").countDocuments({}),
+  db.collection("Volunteers").countDocuments({}),
+  db.collection(WAITLIST_COLLECTION).countDocuments({})
+]);
 
-    const recentWaitlistArr = await db.collection("Waitlist")
-      .find({})
-      .sort({ createdAt: -1 })
-      .limit(1)
-      .toArray();
+const recentWaitlistArr = await db.collection(WAITLIST_COLLECTION)
+  .find({})
+  .sort({ createdAt: -1 })
+  .limit(1)
+  .toArray();
 
     const recentWaitlist = recentWaitlistArr[0] || null;
 
@@ -667,7 +668,7 @@ app.post("/api/waitlist", async (req, res) => {
     const { name, email, reason } = req.body;
     const row = { name, email, reason, createdAt: new Date() };
 
-    await db.collection("Waitlist").insertOne(row);
+    await db.collection(WAITLIST_COLLECTION).insertOne(row);
     await sendMailjetEmail(
       "New Waitlist Submission",
       `<p>${name} (${email}) joined the waitlist. Reason: ${reason || "N/A"}</p>`,
