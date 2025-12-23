@@ -379,6 +379,43 @@ app.get("/api/admin-check", (req, res) => {
   res.json({ admin: !!(req.session && req.session.admin) });
 });
 
+app.patch("/api/admin/campaigns/:id/status", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const allowed = ["Approved", "Denied", "Pending", "Rejected"];
+    if (!status || !allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    let filter;
+
+    // Try ObjectId first
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      filter = { _id: new mongoose.Types.ObjectId(id) };
+    } else {
+      // Fall back to legacy Id field
+      filter = { Id: String(id) };
+    }
+
+    const updated = await db.collection("campaigns").findOneAndUpdate(
+      filter,
+      { $set: { Status: status } },
+      { returnDocument: "after" }
+    );
+
+    if (!updated.value) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+
+    return res.json({ success: true, campaign: updated.value });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error", error: String(err.message || err) });
+  }
+});
+
+
 // ==================== ADMIN: USERS LIST ====================
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
