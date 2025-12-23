@@ -39,7 +39,10 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
 
 // ==================== APP ====================
 const app = express();
-app.set("trust proxy", 1); // important on Render/behind proxy
+
+process.on("unhandledRejection", (err) => {
+  console.error("UNHANDLED REJECTION:", err);
+});
 
 // ==================== CORS (must be before routes) ====================
 const allowedOrigins = [
@@ -99,17 +102,21 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // ==================== PRODUCTION-READY SESSION ====================
-const MongoStore = require("connect-mongo").default;
+const MongoStorePkg = require("connect-mongo");
+const MongoStore = MongoStorePkg.default || MongoStorePkg;
 
-app.set("trust proxy", 1);
-
+// ✅ Reuse the already-connected Mongoose/Mongo client
 app.use(session({
-  name: "connect.sid",          // ✅ single cookie name (or change to "joyfund.sid")
+  name: "connect.sid",
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   proxy: true,
-  store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }),
+  store: MongoStore.create({
+    client: db.getClient(),          // ✅ key fix: no separate mongoUrl auth
+    dbName: "joyfund",               // optional but nice
+    collectionName: "sessions"
+  }),
   cookie: {
     httpOnly: true,
     secure: true,
