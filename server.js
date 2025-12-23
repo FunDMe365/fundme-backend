@@ -379,6 +379,78 @@ app.get("/api/admin-check", (req, res) => {
   res.json({ admin: !!(req.session && req.session.admin) });
 });
 
+// ==================== ADMIN: USERS LIST ====================
+app.get("/api/admin/users", requireAdmin, async (req, res) => {
+  try {
+    // Your Users collection uses capital "Users"
+    const users = await db.collection("Users")
+      .find({})
+      .sort({ JoinDate: -1 })
+      .limit(1000)
+      .toArray();
+
+    // Optional: compute ID status based on ID_Verifications approvals
+    const emails = users
+      .map(u => (u.Email || "").toString().trim().toLowerCase())
+      .filter(Boolean);
+
+    const approved = await db.collection("ID_Verifications")
+      .find({ email: { $in: emails }, Status: "Approved" })
+      .project({ email: 1 })
+      .toArray();
+
+    const approvedSet = new Set(approved.map(x => (x.email || "").toLowerCase()));
+
+    const normalized = users.map(u => ({
+      _id: u._id,
+      name: u.Name || "",
+      email: u.Email || "",
+      joinDate: u.JoinDate || null,
+      identityStatus: approvedSet.has((u.Email || "").toLowerCase()) ? "Approved" : "Not Approved"
+    }));
+
+    return res.json({ success: true, users: normalized });
+  } catch (err) {
+    console.error("GET /api/admin/users error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load users" });
+  }
+});
+
+// ==================== ADMIN: WAITLIST LIST ====================
+app.get("/api/admin/waitlist", requireAdmin, async (req, res) => {
+  try {
+    // Your canonical merged collection is "waitlist" (lowercase)
+    const waitlist = await db.collection("waitlist")
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(1000)
+      .toArray();
+
+    return res.json({ success: true, waitlist });
+  } catch (err) {
+    console.error("GET /api/admin/waitlist error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load waitlist" });
+  }
+});
+
+
+// ==================== ADMIN: VOLUNTEERS LIST ====================
+app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
+  try {
+    const volunteers = await db.collection("Volunteers")
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(1000)
+      .toArray();
+
+    return res.json({ success: true, volunteers });
+  } catch (err) {
+    console.error("GET /api/admin/volunteers error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load volunteers" });
+  }
+});
+
+
 const { ObjectId } = require("mongodb");
 
 // Normalize campaign fields so the admin page always gets consistent keys
