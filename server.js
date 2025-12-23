@@ -383,38 +383,46 @@ app.get("/api/admin-check", (req, res) => {
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
     const users = await db.collection("Users").aggregate([
-      // Join latest ID verification by email (your ID_Verifications uses lowercase email)
+      // Normalize email to lowercase safely (handles null/missing)
+      {
+        $addFields: {
+          _emailLower: {
+            $toLower: { $ifNull: ["$Email", ""] }
+          }
+        }
+      },
+
+      // Lookup latest ID verification by lowercased email safely
       {
         $lookup: {
           from: "ID_Verifications",
-          let: { em: "$Email" }, // Users collection stores Email with capital E
+          let: { em: "$_emailLower" },
           pipeline: [
             {
+              $addFields: {
+                _emailLower: { $toLower: { $ifNull: ["$email", ""] } }
+              }
+            },
+            {
               $match: {
-                $expr: {
-                  // compare lowercase(email) to lowercase(Email)
-                  $eq: [
-                    { $toLower: "$email" },
-                    { $toLower: "$$em" }
-                  ]
-                }
+                $expr: { $eq: ["$_emailLower", "$$em"] }
               }
             },
             { $sort: { createdAt: -1, CreatedAt: -1, _id: -1 } },
-            { $limit: 1 }
+            { $limit: 1 },
+            { $project: { _emailLower: 0 } }
           ],
           as: "verification"
         }
       },
 
-      // Normalize to the exact keys your admin.html uses
+      // Output EXACT keys admin.html expects
       {
         $project: {
           _id: 1,
           joinDate: { $ifNull: ["$JoinDate", "$joinDate"] },
           name: { $ifNull: ["$Name", "$name"] },
           email: { $ifNull: ["$Email", "$email"] },
-
           identityStatus: {
             $ifNull: [
               { $arrayElemAt: ["$verification.Status", 0] },
@@ -422,9 +430,11 @@ app.get("/api/admin/users", requireAdmin, async (req, res) => {
             ]
           },
 
-          // never send password fields
+          // remove sensitive + temp fields
           PasswordHash: 0,
-          password: 0
+          password: 0,
+          verification: 0,
+          _emailLower: 0
         }
       },
 
@@ -433,7 +443,7 @@ app.get("/api/admin/users", requireAdmin, async (req, res) => {
 
     return res.json({ success: true, users });
   } catch (err) {
-    console.error("❌ /api/admin/users error:", err);
+    console.error("❌ /api/admin/users error (details):", err); // IMPORTANT
     return res.status(500).json({ success: false, message: "Failed to load users" });
   }
 });
