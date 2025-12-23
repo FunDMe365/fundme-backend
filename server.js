@@ -395,11 +395,19 @@ app.get("/api/admin/users", requireAdmin, async (req, res) => {
 
       let identityStatus = "Not Submitted";
       if (email) {
-        const v = await db.collection("ID_Verifications")
-          .find({ email })
-          .sort({ createdAt: -1, CreatedAt: -1, _id: -1 })
-          .limit(1)
-          .toArray();
+       // case-insensitive exact match (handles old docs using Email, and casing differences)
+const emailExactI = new RegExp("^" + email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
+
+const v = await db.collection("ID_Verifications")
+  .find({
+    $or: [
+      { email: emailExactI },
+      { Email: emailExactI }
+    ]
+  })
+  .sort({ ReviewedAt: -1, createdAt: -1, CreatedAt: -1, _id: -1 })
+  .limit(1)
+  .toArray();
 
         const latest = v[0];
         if (latest) identityStatus = latest.Status ?? latest.status ?? "Pending";
