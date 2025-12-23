@@ -394,34 +394,38 @@ app.get("/api/admin/users", requireAdmin, async (req, res) => {
       const email = String(u.Email ?? u.email ?? "").trim().toLowerCase();
 
       let identityStatus = "Not Submitted";
-      if (email) {
-       // case-insensitive exact match (handles old docs using Email, and casing differences)
-const emailExactI = new RegExp("^" + email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
+let idvId = null;
+let idvStatus = "Not Submitted";
 
-const v = await db.collection("ID_Verifications")
-  .find({
-    $or: [
-      { email: emailExactI },
-      { Email: emailExactI }
-    ]
-  })
-  .sort({ ReviewedAt: -1, createdAt: -1, CreatedAt: -1, _id: -1 })
-  .limit(1)
-  .toArray();
+if (email) {
+  const emailExactI = new RegExp("^" + email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
 
-        const latest = v[0];
-        if (latest) identityStatus = latest.Status ?? latest.status ?? "Pending";
-      }
+  const v = await db.collection("ID_Verifications")
+    .find({ $or: [{ email: emailExactI }, { Email: emailExactI }] })
+    .sort({ ReviewedAt: -1, createdAt: -1, CreatedAt: -1, _id: -1 })
+    .limit(1)
+    .toArray();
 
-      // ✅ Return EXACT keys admin.html expects
-      return {
-        _id: String(u._id),
-        joinDate: u.JoinDate ?? u.joinDate ?? null,
-        name: u.Name ?? u.name ?? "—",
-        email: u.Email ?? u.email ?? "—",
-        identityStatus
-      };
-    }));
+  const latest = v[0];
+  if (latest) {
+    idvId = String(latest._id);
+    idvStatus = latest.Status ?? latest.status ?? "Pending";
+    identityStatus = idvStatus;
+  }
+}
+
+return {
+  _id: String(u._id),
+  joinDate: u.JoinDate ?? u.joinDate ?? null,
+  name: u.Name ?? u.name ?? "—",
+  email: u.Email ?? u.email ?? "—",
+  identityStatus,
+
+  // ✅ add these for buttons
+  idvId,
+  idvStatus
+	};
+  }));
 
     return res.json({ success: true, users });
   } catch (err) {
