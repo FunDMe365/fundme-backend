@@ -382,7 +382,7 @@ app.get("/api/admin-check", (req, res) => {
 // ==================== ADMIN: USERS LIST ====================
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
-    const users = await db.collection("users").aggregate([
+    const users = await db.collection("Users").aggregate([
       // Bring in latest verification by userId (ObjectId)
       {
         $lookup: {
@@ -551,17 +551,20 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid status" });
     }
 
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, message: "Invalid campaign id" });
-    }
+    // Match either Mongo _id or your legacy Id field
+    const filter = ObjectId.isValid(id)
+      ? { $or: [{ _id: new ObjectId(id) }, { Id: id }] }
+      : { Id: id };
 
     const result = await db.collection("Campaigns").findOneAndUpdate(
-      { _id: new ObjectId(id) },
+      filter,
       { $set: { Status: status, ReviewedAt: new Date(), ReviewedBy: "admin" } },
       { returnDocument: "after" }
     );
 
-    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
+    if (!result?.value) {
+      return res.status(404).json({ success: false, message: "Not found" });
+    }
 
     res.json({ success: true, campaign: normalizeCampaign(result.value) });
   } catch (err) {
