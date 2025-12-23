@@ -207,16 +207,19 @@ app.post("/api/signup", async (req, res) => {
       return res.status(400).json({ error: "Missing fields" });
     }
 
-    const usersCollection = db.db(DB_NAME).collection("Users");
-    const existing = await usersCollection.findOne({
-      Email: { $regex: `^${email}$`, $options: "i" }
-    });
+    const usersCollection = db.collection("Users"); // ✅ FIXED (no db.db)
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanName = String(name).trim();
+
+    const existing = await usersCollection.findOne({ Email: cleanEmail });
     if (existing) return res.status(400).json({ error: "Email already exists" });
 
-    const hashed = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(String(password), 10);
+
     const newUser = {
-      Name: name,
-      Email: email,
+      Name: cleanName,
+      Email: cleanEmail,
       PasswordHash: hashed,
       JoinDate: new Date()
     };
