@@ -65,13 +65,32 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions)); // ✅ this is the fix
 
+async function getIdentityStatus(email) {
+  if (!email) return "Not Submitted";
+
+  const cleanEmail = String(email).trim().toLowerCase();
+  const emailExactI = new RegExp("^" + cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
+
+  const latest = await db.collection("ID_Verifications")
+    .find({ $or: [{ email: emailExactI }, { Email: emailExactI }] })
+    .sort({ ReviewedAt: -1, createdAt: -1, CreatedAt: -1, _id: -1 })
+    .limit(1)
+    .toArray();
+
+  const row = latest[0];
+  if (!row) return "Not Submitted";
+  return row.Status ?? row.status ?? "Pending";
+}
+
 async function isIdentityApproved(email) {
   if (!email) return false;
+
   const cleanEmail = String(email).trim().toLowerCase();
+  const emailExactI = new RegExp("^" + cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
 
   const row = await db.collection("ID_Verifications").findOne({
-    email: cleanEmail,
-    Status: "Approved"
+    Status: "Approved",
+    $or: [{ email: emailExactI }, { Email: emailExactI }]
   });
 
   return !!row;
@@ -186,9 +205,12 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
     // ✅ Otherwise: normal campaign donation flow (optional)
     // If you don’t want campaign donations here, you can remove this block.
     // If you DO, make sure this lookup matches your schema.
-    const campaign = await Campaign.findById(campaignId).lean();
-    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
-
+const campaign = await db.collection("Campaigns").findOne({
+  $or: [
+    { _id: ObjectId.isValid(campaignId) ? new ObjectId(campaignId) : campaignId },
+    { Id: campaignId }
+  ]
+});
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
@@ -350,19 +372,31 @@ app.post("/api/signout", (req, res) => {
 app.get("/api/check-session", async (req, res) => {
   try {
     if (!req.session.user) {
-      return res.json({ loggedIn: false, user: null, identityVerified: false });
+      return res.json({
+        loggedIn: false,
+        user: null,
+        identityVerified: false,
+        identityStatus: "Not Submitted"
+      });
     }
 
-    const identityVerified = await isIdentityApproved(req.session.user.email);
+    const identityStatus = await getIdentityStatus(req.session.user.email);
+    const identityVerified = identityStatus === "Approved";
 
     return res.json({
       loggedIn: true,
       user: req.session.user,
-      identityVerified
+      identityVerified,
+      identityStatus
     });
   } catch (err) {
     console.error("check-session error:", err);
-    return res.json({ loggedIn: false, user: null, identityVerified: false });
+    return res.json({
+      loggedIn: false,
+      user: null,
+      identityVerified: false,
+      identityStatus: "Not Submitted"
+    });
   }
 });
 
