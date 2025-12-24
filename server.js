@@ -142,33 +142,52 @@ const upload = multer({ storage });
 const stripe = Stripe(STRIPE_SECRET_KEY);
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
-    const campaignId = req.params.campaignId;
+    // ✅ IMPORTANT: Stripe secret key MUST start with "sk_"
+    if (!STRIPE_SECRET_KEY || !STRIPE_SECRET_KEY.startsWith("sk_")) {
+      console.error("❌ STRIPE_SECRET_KEY is missing or invalid (must start with sk_)");
+      return res.status(500).json({ error: "Stripe secret key not configured" });
+    }
 
-    // amount in dollars from frontend
+    const campaignId = String(req.params.campaignId || "").trim();
+
+    // Amount comes from frontend in dollars
     const amount = Number(req.body.amount);
     if (!amount || !isFinite(amount) || amount < 1) {
-      return res.status(400).json({ error: "Invalid donation amount" });
+      return res.status(400).json({ error: "Invalid amount" });
     }
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      return res.status(500).json({ error: "STRIPE_SECRET_KEY is not set on the backend" });
-    }
-    //verify campaign exists & approved
-    const campaign = await db.collection("Campaigns").findOne({
-      $or: [
-        { Id: String(campaignId) },                 // your custom Id field
-        { _id: new (require("mongodb").ObjectId)(campaignId) } // mongo _id
-      ],
-      Status: "Approved"
-    }).catch(() => null);
+    // Use your real domain(s) for redirects
+    const successUrl = "https://fundasmile.net/donation-success.html?session_id={CHECKOUT_SESSION_ID}";
+    const cancelUrl = "https://fundasmile.net/donation-cancelled.html";
 
-    if (!campaign) {
-      return res.status(404).json({ error: "Campaign not found or not approved" });
+    // ✅ Special case: mission donation (no MongoDB lookup)
+    if (campaignId.toLowerCase() === "mission") {
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        payment_method_types: ["card"],
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: { name: "JOYFUND Mission" },
+              unit_amount: Math.round(amount * 100),
+            },
+            quantity: 1,
+          },
+        ],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        metadata: { type: "mission" },
+      });
+
+      return res.json({ url: session.url });
     }
 
-    const baseSuccessUrl = req.body.successUrl || "https://fundasmile.net/thankyou.html";
-    const successUrl = `${baseSuccessUrl}${baseSuccessUrl.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`;
-    const cancelUrl  = req.body.cancelUrl  || "https://fundasmile.net/campaigns.html";
+    // ✅ Otherwise: normal campaign donation flow (optional)
+    // If you don’t want campaign donations here, you can remove this block.
+    // If you DO, make sure this lookup matches your schema.
+    const campaign = await Campaign.findById(campaignId).lean();
+    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
@@ -177,30 +196,24 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
         {
           price_data: {
             currency: "usd",
-            product_data: {
-              name: campaign.title || "JoyFund Donation",
-              description: "Donation to support a JoyFund campaign",
-              images: campaign.ImageURL ? [campaign.ImageURL] : undefined
-            },
-            unit_amount: Math.round(amount * 100) // cents
+            product_data: { name: campaign.title || "JOYFUND Campaign" },
+            unit_amount: Math.round(amount * 100),
           },
-          quantity: 1
-        }
+          quantity: 1,
+        },
       ],
       success_url: successUrl,
       cancel_url: cancelUrl,
-      metadata: {
-        campaignId: String(campaignId),
-        campaignTitle: String(campaign.title || "")
-      }
+      metadata: { type: "campaign", campaignId: String(campaign._id) },
     });
 
-    return res.json({ sessionId: session.id });
+    return res.json({ url: session.url });
   } catch (err) {
-    console.error("Stripe checkout error:", err);
+    console.error("❌ Stripe checkout error:", err?.message || err, err);
     return res.status(500).json({ error: "Failed to create checkout session" });
   }
 });
+
 // ==================== MAILJET ====================
 const Mailjet = require("node-mailjet");
 const mailjetClient =
