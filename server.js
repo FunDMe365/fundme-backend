@@ -40,7 +40,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
 
 // ==================== APP ====================
 const app = express();
-
+app.set("trust proxy", 1);
 process.on("unhandledRejection", (err) => {
   console.error("UNHANDLED REJECTION:", err);
 });
@@ -843,12 +843,19 @@ app.post("/api/logout", (req, res) => {
 // ==================== ID VERIFICATION ====================
 app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
   try {
-    const { name, email } = req.body;
-    if (!req.file || !name || !email) {
+    // must be logged in
+    const user = req.session?.user;
+    if (!user?.email) {
+      return res.status(401).json({ success: false, message: "Not logged in" });
+    }
+
+    const email = String(user.email).trim().toLowerCase();
+    const name = String(user.name || "").trim(); // optional
+
+    if (!req.file) {
       return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
-    // If you're uploading from buffer, you must use upload_stream as well.
     const cloudRes = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         { folder: "joyfund/id-verifications", use_filename: true, unique_filename: true },
@@ -858,28 +865,17 @@ app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
     });
 
     await db.collection("ID_Verifications").insertOne({
-  name: String(name).trim(),
-  email: String(email).trim().toLowerCase(),
-  url: cloudRes.secure_url,
-  Status: "Pending",              // ✅ add this
-  createdAt: new Date()
-});
+      name,
+      email,
+      url: cloudRes.secure_url,
+      Status: "Pending",
+      createdAt: new Date()
+    });
 
-
-    res.json({ success: true, url: cloudRes.secure_url });
+    return res.json({ success: true, url: cloudRes.secure_url });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-app.get("/api/id-verifications", async (req, res) => {
-  try {
-    const rows = await db.collection("ID_Verifications").find({}).toArray();
-    res.json({ success: true, data: rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    return res.status(500).json({ success: false, message: err.message });
   }
 });
 
