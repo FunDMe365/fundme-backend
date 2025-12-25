@@ -238,23 +238,59 @@ const campaign = await db.collection("Campaigns").findOne({
 
 // ==================== MAILJET ====================
 const Mailjet = require("node-mailjet");
-const mailjetClient =
-  MAILJET_API_KEY && MAILJET_API_SECRET ? Mailjet.connect(MAILJET_API_KEY, MAILJET_API_SECRET) : null;
 
-async function sendMailjetEmail(subject, htmlContent, toEmail) {
-  if (!mailjetClient) return;
+const mailjetClient =
+  process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET
+    ? Mailjet.connect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET)
+    : null;
+
+const FROM_EMAIL = process.env.MAILJET_SENDER_EMAIL || "admin@joyfund.net";
+const FROM_NAME = process.env.MAILJET_SENDER_NAME || "JoyFund INC";
+const ADMIN_EMAIL = process.env.NOTIFY_EMAIL; // keep using your existing NOTIFY_EMAIL
+
+async function sendMailjet({ toEmail, toName, subject, html }) {
+  if (!mailjetClient) {
+    console.warn("⚠️ Mailjet not configured (missing API key/secret).");
+    return;
+  }
+  if (!toEmail) return;
+
   try {
     await mailjetClient.post("send", { version: "v3.1" }).request({
       Messages: [{
-        From: { Email: process.env.MAILJET_SENDER_EMAIL || "admin@joyfund.net", Name: "JoyFund INC" },
-        To: [{ Email: toEmail || process.env.NOTIFY_EMAIL }],
+        From: { Email: FROM_EMAIL, Name: FROM_NAME },
+        To: [{ Email: toEmail, Name: toName || "" }],
         Subject: subject,
-        HTMLPart: htmlContent
+        HTMLPart: html
       }]
     });
   } catch (err) {
     console.error("Mailjet error:", err);
   }
+}
+
+// one call = sends admin + user confirmation
+async function sendSubmissionEmails({ type, userEmail, userName, adminHtml, userHtml, adminSubject, userSubject }) {
+  const tasks = [];
+
+  // Admin copy
+  tasks.push(sendMailjet({
+    toEmail: ADMIN_EMAIL,
+    subject: adminSubject || `New ${type} submission`,
+    html: adminHtml
+  }));
+
+  // User copy
+  if (userEmail) {
+    tasks.push(sendMailjet({
+      toEmail: userEmail,
+      toName: userName || "",
+      subject: userSubject || `We received your ${type}`,
+      html: userHtml
+    }));
+  }
+
+  await Promise.allSettled(tasks);
 }
 
 // ==================== LIVE VISITOR TRACKING ====================
@@ -816,16 +852,33 @@ app.post("/api/waitlist", async (req, res) => {
     const row = { name, email, reason, createdAt: new Date() };
 
     await db.collection(WAITLIST_COLLECTION).insertOne(row);
-    await sendMailjetEmail(
-      "New Waitlist Submission",
-      `<p>${name} (${email}) joined the waitlist. Reason: ${reason || "N/A"}</p>`,
-      process.env.NOTIFY_EMAIL
-    );
 
-    res.json({ success: true });
+    await sendSubmissionEmails({
+      type: "Waitlist",
+      userEmail: email,
+      userName: name,
+      adminSubject: "New Waitlist Submission",
+      userSubject: "You’re on the JoyFund waitlist!",
+      adminHtml: `
+        <h2>New Waitlist Submission</h2>
+        <p><b>Name:</b> ${name || "—"}</p>
+        <p><b>Email:</b> ${email || "—"}</p>
+        <p><b>Reason:</b> ${reason || "—"}</p>
+        <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+      `,
+      userHtml: `
+        <h2>Welcome to JoyFund 💙💗</h2>
+        <p>Hi ${name || ""},</p>
+        <p>Thanks for joining our waitlist — we received your submission and you’re officially on the list.</p>
+        <p>We’ll email you as we roll out updates and launch announcements.</p>
+        <p>— JoyFund Team</p>
+      `
+    });
+
+    return res.json({ success: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    console.error("waitlist error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -835,12 +888,27 @@ app.post("/api/volunteer", async (req, res) => {
     const row = { name, email, role, availability, createdAt: new Date() };
 
     await db.collection("Volunteers").insertOne(row);
-    await sendMailjetEmail(
-      "New Volunteer Submission",
-      `<p>${name} (${email}) signed up as volunteer for ${role}.</p>`,
-      process.env.NOTIFY_EMAIL
-    );
-
+   await sendSubmissionEmails({
+  type: "Volunteer",
+  userEmail: email,
+  userName: name,
+  adminSubject: "New Volunteer Submission",
+  userSubject: "We received your volunteer submission",
+  adminHtml: `
+    <h2>New Volunteer Submission</h2>
+    <p><b>Name:</b> ${name || "—"}</p>
+    <p><b>Email:</b> ${email || "—"}</p>
+    <p><b>Role:</b> ${role || "—"}</p>
+    <p><b>Availability:</b> ${availability || "—"}</p>
+    <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+  `,
+  userHtml: `
+    <h2>Thanks for volunteering with JoyFund 💙💗</h2>
+    <p>Hi ${name || ""},</p>
+    <p>We received your volunteer submission. Our team will review it and reach out with next steps.</p>
+    <p>— JoyFund Team</p>
+  `
+});
     res.json({ success: true });
   } catch (err) {
     console.error(err);
