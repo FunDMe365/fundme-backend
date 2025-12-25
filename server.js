@@ -12,6 +12,7 @@ const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
 const cors = require("cors");
 const fs = require("fs");
+const { ObjectId } = require("mongodb");
 
 const mongoose = require("./db");
 const db = mongoose.connection;
@@ -211,6 +212,10 @@ const campaign = await db.collection("Campaigns").findOne({
     { Id: campaignId }
   ]
 });
+
+if (!campaign) {
+  return res.status(404).json({ error: "Campaign not found" });
+}
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
@@ -218,7 +223,7 @@ const campaign = await db.collection("Campaigns").findOne({
         {
           price_data: {
             currency: "usd",
-            product_data: { name: campaign.title || "JOYFUND Campaign" },
+            product_data: { name: campaign.title || campaign.Title || "JOYFUND Campaign" },
             unit_amount: Math.round(amount * 100),
           },
           quantity: 1,
@@ -244,9 +249,18 @@ const mailjetClient =
     ? Mailjet.connect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET)
     : null;
 
-const FROM_EMAIL = process.env.MAILJET_SENDER_EMAIL || "admin@joyfund.net";
-const FROM_NAME = process.env.MAILJET_SENDER_NAME || "JoyFund INC";
-const ADMIN_EMAIL = process.env.NOTIFY_EMAIL; // keep using your existing NOTIFY_EMAIL
+const FROM_EMAIL =
+  process.env.EMAIL_FROM ||
+  process.env.MAILJET_SENDER_EMAIL ||
+  "admin@joyfund.net";
+
+const FROM_NAME =
+  process.env.MAILJET_SENDER_NAME || "JoyFund INC";
+
+const ADMIN_EMAIL =
+  process.env.ADMIN_EMAIL ||
+  process.env.NOTIFY_EMAIL ||
+  process.env.EMAIL_TO;
 
 async function sendMailjet({ toEmail, toName, subject, html }) {
   if (!mailjetClient) {
@@ -255,14 +269,24 @@ async function sendMailjet({ toEmail, toName, subject, html }) {
   }
   if (!toEmail) return;
 
+  console.log("📧 Mailjet sending:", {
+    from: FROM_EMAIL,
+    toEmail,
+    subject,
+    hasHtml: !!html,
+    mailjetConfigured: !!mailjetClient
+  });
+
   try {
     await mailjetClient.post("send", { version: "v3.1" }).request({
-      Messages: [{
-        From: { Email: FROM_EMAIL, Name: FROM_NAME },
-        To: [{ Email: toEmail, Name: toName || "" }],
-        Subject: subject,
-        HTMLPart: html
-      }]
+      Messages: [
+        {
+          From: { Email: FROM_EMAIL, Name: FROM_NAME },
+          To: [{ Email: toEmail, Name: toName || "" }],
+          Subject: subject,
+          HTMLPart: html
+        }
+      ]
     });
   } catch (err) {
     console.error("Mailjet error:", err);
@@ -270,24 +294,36 @@ async function sendMailjet({ toEmail, toName, subject, html }) {
 }
 
 // one call = sends admin + user confirmation
-async function sendSubmissionEmails({ type, userEmail, userName, adminHtml, userHtml, adminSubject, userSubject }) {
+async function sendSubmissionEmails({
+  type,
+  userEmail,
+  userName,
+  adminHtml,
+  userHtml,
+  adminSubject,
+  userSubject
+}) {
   const tasks = [];
 
   // Admin copy
-  tasks.push(sendMailjet({
-    toEmail: ADMIN_EMAIL,
-    subject: adminSubject || `New ${type} submission`,
-    html: adminHtml
-  }));
+  tasks.push(
+    sendMailjet({
+      toEmail: ADMIN_EMAIL,
+      subject: adminSubject || `New ${type} submission`,
+      html: adminHtml
+    })
+  );
 
   // User copy
   if (userEmail) {
-    tasks.push(sendMailjet({
-      toEmail: userEmail,
-      toName: userName || "",
-      subject: userSubject || `We received your ${type}`,
-      html: userHtml
-    }));
+    tasks.push(
+      sendMailjet({
+        toEmail: userEmail,
+        toName: userName || "",
+        subject: userSubject || `We received your ${type}`,
+        html: userHtml
+      })
+    );
   }
 
   await Promise.allSettled(tasks);
@@ -557,8 +593,6 @@ app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
 });
 
 
-const { ObjectId } = require("mongodb");
-
 // Normalize campaign fields so the admin page always gets consistent keys
 function normalizeCampaign(doc) {
   return {
@@ -782,6 +816,28 @@ app.post("/api/create-campaign", requireVerifiedIdentity, upload.single("image")
 
     await db.collection("Campaigns").insertOne(doc);
 
+console.log("📧 Campaign submission email sending:", { email, from: FROM_EMAIL, admin: ADMIN_EMAIL });
+
+await sendSubmissionEmails({
+  type: "Campaign",
+  userEmail: email,
+  userName: "", // optional
+  adminSubject: "New Campaign Submitted",
+  userSubject: "Your JoyFund campaign is under review",
+  adminHtml: `
+    <h2>New Campaign Submitted</h2>
+    <p><b>Title:</b> ${title}</p>
+    <p><b>Email:</b> ${email}</p>
+    <p><b>Goal:</b> ${goal}</p>
+  `,
+  userHtml: `
+    <h2>Your campaign was submitted 💙💗</h2>
+    <p>We received your campaign and it is now under review.</p>
+    <p>— JoyFund Team</p>
+  `
+});
+
+
     return res.json({ success: true, campaign: doc });
   } catch (err) {
     console.error("create-campaign error:", err);
@@ -828,9 +884,29 @@ app.post("/api/donation", async (req, res) => {
     if (!name || !email || !amount) return res.status(400).json({ success: false });
 
     await db.collection("Donations").insertOne({ name, email, amount, campaignId, date: new Date() });
+
+    await sendSubmissionEmails({
+      type: "Donation",
+      userEmail: email,
+      userName: name,
+      adminSubject: "New Donation Received",
+      userSubject: "Thank you for your JoyFund donation 💙💗",
+      adminHtml: `
+        <h2>New Donation</h2>
+        <p><b>Name:</b> ${name}</p>
+        <p><b>Email:</b> ${email}</p>
+        <p><b>Amount:</b> $${amount}</p>
+      `,
+      userHtml: `
+        <h2>Thank you for your donation!</h2>
+        <p>Hi ${name},</p>
+        <p>We are deeply grateful for your $${amount} support.</p>
+      `
+    });
+
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error("donation error:", err);
     res.status(500).json({ success: false });
   }
 });
@@ -922,15 +998,30 @@ app.post("/api/street-team", async (req, res) => {
     const row = { name, email, city, hoursAvailable, createdAt: new Date() };
 
     await db.collection("StreetTeam").insertOne(row);
-    await sendMailjetEmail(
-      "New Street Team Submission",
-      `<p>${name} (${email}) joined street team in ${city}.</p>`,
-      process.env.NOTIFY_EMAIL
-    );
+
+    await sendSubmissionEmails({
+      type: "Street Team",
+      userEmail: email,
+      userName: name,
+      adminSubject: "New Street Team Submission",
+      userSubject: "Thanks for joining the JoyFund Street Team!",
+      adminHtml: `
+        <h2>New Street Team Submission</h2>
+        <p><b>Name:</b> ${name}</p>
+        <p><b>Email:</b> ${email}</p>
+        <p><b>City:</b> ${city}</p>
+        <p><b>Hours Available:</b> ${hoursAvailable}</p>
+      `,
+      userHtml: `
+        <h2>Welcome to the JoyFund Street Team 💙💗</h2>
+        <p>Hi ${name},</p>
+        <p>We received your submission and will be in touch soon.</p>
+      `
+    });
 
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error("street-team error:", err);
     res.status(500).json({ success: false });
   }
 });
@@ -980,12 +1071,35 @@ app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
     });
 
     await db.collection("ID_Verifications").insertOne({
-      name,
-      email,
-      url: cloudRes.secure_url,
-      Status: "Pending",
-      createdAt: new Date()
-    });
+  name,
+  email,
+  url: cloudRes.secure_url,
+  Status: "Pending",
+  createdAt: new Date()
+});
+
+await sendSubmissionEmails({
+  type: "Identity Verification",
+  userEmail: email,
+  userName: name,
+  adminSubject: "New Identity Verification Uploaded",
+  userSubject: "Your ID has been received",
+  adminHtml: `
+    <h2>New ID Verification</h2>
+    <p><b>User:</b> ${email}</p>
+    <p><b>Name:</b> ${name || "—"}</p>
+    <p><b>File:</b> <a href="${cloudRes.secure_url}">View upload</a></p>
+    <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+  `,
+  userHtml: `
+    <h2>Thanks for verifying your identity 💙💗</h2>
+    <p>Hi ${name || ""},</p>
+    <p>We received your ID and will review it shortly.</p>
+    <p>If we need anything else, we’ll reach out by email.</p>
+    <p>— JoyFund Team</p>
+  `
+});
+	
 
     return res.json({ success: true, url: cloudRes.secure_url });
   } catch (err) {
