@@ -926,6 +926,48 @@ app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
   }
 });
 
+// ==================== ID VERIFICATION: CURRENT USER (DASHBOARD) ====================
+app.get("/api/id-verification/me", async (req, res) => {
+  try {
+    const email = req.session?.user?.email;
+    if (!email) return res.status(401).json({ success: false, message: "Not logged in" });
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const emailExactI = new RegExp("^" + cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
+
+    const latest = await db.collection("ID_Verifications")
+      .find({ $or: [{ email: emailExactI }, { Email: emailExactI }] })
+      .sort({ ReviewedAt: -1, createdAt: -1, CreatedAt: -1, _id: -1 })
+      .limit(1)
+      .toArray();
+
+    const row = latest[0] || null;
+
+    // normalize photo url field names
+    const rawPhoto =
+      row?.IDPhotoURL ||
+      row?.idPhotoUrl ||
+      row?.photoUrl ||
+      row?.url ||
+      row?.fileUrl ||
+      row?.FileURL ||
+      row?.IdFileUrl ||
+      row?.idFile ||
+      "";
+
+    return res.json({
+      success: true,
+      verification: row,
+      status: row?.Status || row?.status || "Pending",
+      photoUrl: rawPhoto
+    });
+  } catch (err) {
+    console.error("id-verification/me error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
 // ==================== STATIC FILES ====================
 app.use(express.static("public"));
 
