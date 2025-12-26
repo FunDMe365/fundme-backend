@@ -989,6 +989,78 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
+// ==================== UPDATE CAMPAIGN (owner only) ====================
+async function updateCampaignHandler(req, res) {
+  try {
+    // must be logged in
+    const sessionEmail = req.session?.user?.email;
+    if (!sessionEmail) {
+      return res.status(401).json({ success: false, message: "Not logged in" });
+    }
+    const ownerEmail = String(sessionEmail).trim().toLowerCase();
+
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ success: false, message: "Missing id" });
+
+    // allow only specific fields to be updated
+    const {
+      title,
+      goal,
+      description,
+      category,
+      imageUrl
+    } = req.body || {};
+
+    const $set = {};
+    if (typeof title === "string") $set.title = title.trim();
+    if (typeof goal === "string" || typeof goal === "number") $set.Goal = String(goal).trim();
+    if (typeof description === "string") $set.Description = description.trim();
+    if (typeof category === "string") $set.Category = category.trim();
+    if (typeof imageUrl === "string" && imageUrl.trim()) $set.ImageURL = imageUrl.trim();
+
+    if (Object.keys($set).length === 0) {
+      return res.status(400).json({ success: false, message: "No fields to update" });
+    }
+
+    $set.UpdatedAt = new Date().toISOString();
+
+    // match Mongo _id OR legacy Id, but enforce ownership by email
+    const or = [{ Id: id }];
+    if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
+
+    const filter = {
+      $and: [
+        { $or: or },
+        { $or: [{ Email: ownerEmail }, { email: ownerEmail }] } // ownership check
+      ]
+    };
+
+    const result = await db.collection("Campaigns").findOneAndUpdate(
+      filter,
+      { $set },
+      { returnDocument: "after" }
+    );
+
+    if (!result?.value) {
+      return res.status(404).json({
+        success: false,
+        message: "Campaign not found or you do not have permission to edit it"
+      });
+    }
+
+    return res.json({ success: true, campaign: result.value });
+  } catch (err) {
+    console.error("update campaign error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+// Accept any of the frontend paths you tried:
+app.put("/api/update-campaign/:id", updateCampaignHandler);
+app.put("/api/campaign/:id", updateCampaignHandler);
+app.put("/api/campaigns/:id", updateCampaignHandler);
+
+
 // ==================== DONATIONS ====================
 app.post("/api/donation", async (req, res) => {
   try {
