@@ -1082,19 +1082,18 @@ if (req.file) {
 if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
 
 
-    const ownerEmailExactI = new RegExp(
+    const ownerRegex = new RegExp(
   "^" + ownerEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$",
   "i"
 );
 
-const ownerRegex = new RegExp(
-  "^" + ownerEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$",
-  "i"
-);
-
-{ $or: [{ Email: ownerRegex }, { email: ownerRegex }] }
+const filter = {
+  $and: [
+    { $or: or },
+    { $or: [{ Email: ownerRegex }, { email: ownerRegex }] }
   ]
 };
+
 
 
     const result = await db.collection("Campaigns").findOneAndUpdate(
