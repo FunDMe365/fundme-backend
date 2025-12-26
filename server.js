@@ -478,6 +478,49 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
+// ==================== DELETE ACCOUNT ====================
+// Deletes the currently logged-in user's account (and logs them out)
+app.delete("/api/delete-account", async (req, res) => {
+  try {
+    const userEmail = req.session?.user?.email;
+    if (!userEmail) {
+      return res.status(401).json({ ok: false, error: "Not logged in" });
+    }
+
+    const email = String(userEmail).trim().toLowerCase();
+
+    // Delete the user record
+    const result = await db.collection("Users").deleteOne({ Email: email });
+
+    // Optional: also delete related data (uncomment if you want)
+    // await db.collection("Campaigns").deleteMany({ Email: email });
+    // await db.collection("Donations").deleteMany({ email }); // if your Donations store email lowercase
+    // await db.collection("ID_Verifications").deleteMany({ email });
+
+    // Destroy session + clear cookie
+    req.session.destroy((err) => {
+      if (err) {
+        console.error("delete-account session destroy error:", err);
+        return res.status(500).json({ ok: false, error: "Failed to logout after deletion" });
+      }
+
+      res.clearCookie("connect.sid", {
+        path: "/",
+        secure: true,
+        sameSite: "none"
+      });
+
+      return res.json({
+        ok: true,
+        deleted: result.deletedCount === 1
+      });
+    });
+  } catch (err) {
+    console.error("DELETE /api/delete-account error:", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 // Sign out the current user
 app.post("/api/signout", (req, res) => {
   req.session.destroy(err => {
