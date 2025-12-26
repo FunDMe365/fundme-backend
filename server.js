@@ -193,7 +193,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
         },
         quantity: 1,
       }],
-      success_url: `${FRONTEND_URL}/thankyou.html`,
+      success_url: `${FRONTEND_URL}/thankyou.html?session_id={CHECKOUT_SESSION_ID}`,
 	  cancel_url: `${FRONTEND_URL}/index.html`,
 
       metadata: {
