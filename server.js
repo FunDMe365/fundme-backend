@@ -1075,14 +1075,23 @@ async function updateCampaignHandler(req, res) {
     $set.UpdatedAt = new Date().toISOString();
 
     // match many possible id shapes
-   // match many possible id shapes
-const idVariants = [{ Id: id }, { id: id }, { _id: id }];
+const idVariants = [{ Id: id }, { id: id }];
+
+// Only add _id as ObjectId (Mongo _id is usually ObjectId, not a string)
 if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
+// ownership match (case-insensitive; supports Email/email/OwnerEmail/ownerEmail)
 const filter = {
   $and: [
     { $or: idVariants },
-    { $or: [{ Email: ownerEmail }, { email: ownerEmail }] }
+    {
+      $or: [
+        { Email: ownerRegex },
+        { email: ownerRegex },
+        { OwnerEmail: ownerRegex },
+        { ownerEmail: ownerRegex }
+      ]
+    }
   ]
 };
 
@@ -1172,10 +1181,11 @@ app.get("/api/debug-campaign/:id", async (req, res) => {
   try {
     const id = String(req.params.id || "").trim();
 
-    const idVariants = [{ Id: id }, { id: id }, { _id: id }];
+    const idVariants = [{ Id: id }, { id: id }];
 if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
 const c = await db.collection("Campaigns").findOne({ $or: idVariants });
+
 
     return res.json({
       sessionEmail: req.session?.user?.email || null,
