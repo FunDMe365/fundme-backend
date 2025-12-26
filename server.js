@@ -27,7 +27,7 @@ const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;
 const DB_NAME = "joyfund";
 
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "mk_1S3ksM0qKIo9Xb6efUvOzm2B";
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
@@ -162,82 +162,51 @@ const upload = multer({ storage });
 const stripe = Stripe(STRIPE_SECRET_KEY);
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
-    // ✅ IMPORTANT: Stripe secret key MUST start with "sk_"
-    if (!STRIPE_SECRET_KEY || !STRIPE_SECRET_KEY.startsWith("sk_")) {
-      console.error("❌ STRIPE_SECRET_KEY is missing or invalid (must start with sk_)");
-      return res.status(500).json({ error: "Stripe secret key not configured" });
+    const campaignId = req.params.campaignId;
+    const rawAmount = Number(req.body.amount);
+    const target = Math.round(rawAmount * 100) / 100; // force 2 decimals
+
+    if (!target || !isFinite(target) || target < 1) {
+      return res.status(400).json({ error: "Invalid donation amount" });
     }
 
-    const campaignId = String(req.params.campaignId || "").trim();
+    // 🎯 Stripe Fee Coverage Logic
+    const stripePercent = 0.029;
+    const stripeFlat = 0.30;
 
-    // Amount comes from frontend in dollars
-    const amount = Number(req.body.amount);
-    if (!amount || !isFinite(amount) || amount < 1) {
-      return res.status(400).json({ error: "Invalid amount" });
-    }
+    const totalToCharge =
+      (target + stripeFlat) / (1 - stripePercent);
 
-    // Use your real domain(s) for redirects
-    const successUrl = "https://fundasmile.net/donation-success.html?session_id={CHECKOUT_SESSION_ID}";
-    const cancelUrl = "https://fundasmile.net/donation-cancelled.html";
+    const finalAmount = Math.max(50, Math.round(totalToCharge * 100)); // minimum $0.50
 
-    // ✅ Special case: mission donation (no MongoDB lookup)
-    if (campaignId.toLowerCase() === "mission") {
-      const session = await stripe.checkout.sessions.create({
-        mode: "payment",
-        payment_method_types: ["card"],
-        line_items: [
-          {
-            price_data: {
-              currency: "usd",
-              product_data: { name: "JOYFUND Mission" },
-              unit_amount: Math.round(amount * 100),
-            },
-            quantity: 1,
-          },
-        ],
-        success_url: successUrl,
-        cancel_url: cancelUrl,
-        metadata: { type: "mission" },
-      });
-
-      return res.json({ url: session.url });
-    }
-
-    // ✅ Otherwise: normal campaign donation flow (optional)
-    // If you don’t want campaign donations here, you can remove this block.
-    // If you DO, make sure this lookup matches your schema.
-const campaign = await db.collection("Campaigns").findOne({
-  $or: [
-    { _id: ObjectId.isValid(campaignId) ? new ObjectId(campaignId) : campaignId },
-    { Id: campaignId }
-  ]
-});
-
-if (!campaign) {
-  return res.status(404).json({ error: "Campaign not found" });
-}
     const session = await stripe.checkout.sessions.create({
-      mode: "payment",
       payment_method_types: ["card"],
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: { name: campaign.title || campaign.Title || "JOYFUND Campaign" },
-            unit_amount: Math.round(amount * 100),
+      mode: "payment",
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: "JoyFund Donation",
+            description: "Your donation helps cover platform processing fees so JoyFund receives the full amount ❤️"
           },
-          quantity: 1,
+          unit_amount: finalAmount,
         },
-      ],
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      metadata: { type: "campaign", campaignId: String(campaign._id) },
+        quantity: 1,
+      }],
+      success_url: `${FRONTEND_URL}/thankyou.html`,
+	  cancel_url: `${FRONTEND_URL}/index.html`,
+
+      metadata: {
+        campaignId,
+        originalDonation: target.toFixed(2),
+      }
     });
 
-    return res.json({ url: session.url });
+    res.json({ sessionId: session.id });
+
   } catch (err) {
-    console.error("❌ Stripe checkout error:", err?.message || err, err);
-    return res.status(500).json({ error: "Failed to create checkout session" });
+    console.error("Stripe Error:", err);
+    res.status(500).json({ error: "Failed to create checkout session" });
   }
 });
 
