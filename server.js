@@ -273,7 +273,7 @@ function htmlToText(html = "") {
     .trim();
 }
 
-async function sendMailjet({ toEmail, toName, subject, html }) {
+async function sendMailjet({ toEmail, toName, subject, html, headers = {} }) {
   if (!mailjetClient) {
     console.warn("Mailjet not configured. Skipping email.");
     return;
@@ -293,7 +293,9 @@ async function sendMailjet({ toEmail, toName, subject, html }) {
         Subject: subject,
         TextPart: text,
         HTMLPart: html,
-        CustomID: "joyfund"
+        CustomID: "joyfund",
+        Headers: headers
+
       }]
     });
   } catch (err) {
@@ -323,23 +325,30 @@ async function sendSubmissionEmails({
 
   // Admin copy
   tasks.push(
-    sendMailjet({
-      toEmail: ADMIN_EMAIL,
-      subject: adminSubject || `New ${type} submission`,
-      html: adminHtml + EMAIL_FOOTER
-    })
-  );
+  sendMailjet({
+    toEmail: ADMIN_EMAIL,
+    subject: adminSubject || `New ${type} submission`,
+    html: adminHtml + EMAIL_FOOTER,
+    headers: {
+      "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+    }
+  })
+);
 
   // User copy
-  if (userEmail) {
-    tasks.push(
-      sendMailjet({
-        toEmail: userEmail,
-        toName: userName || "",
-        subject: userSubject || `We received your ${type}`,
-        html: userHtml + EMAIL_FOOTER
-      })
-    );
+  tasks.push(
+  sendMailjet({
+    toEmail: userEmail,
+    toName: userName || "",
+    subject: userSubject || `We received your ${type}`,
+    html: userHtml + EMAIL_FOOTER,
+    headers: {
+      "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+    }
+  })
+ );
   }
 
   await Promise.allSettled(tasks);
