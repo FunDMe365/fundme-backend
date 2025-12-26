@@ -1084,19 +1084,15 @@ async function updateCampaignHandler(req, res) {
     if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
 
     // ownership match (case-insensitive)
-    const filter = {
-      $and: [
-        { $or: or },
-        {
-          $or: [
-            { Email: ownerRegex },
-            { email: ownerRegex },
-            { OwnerEmail: ownerRegex },
-            { ownerEmail: ownerRegex }
-          ]
-        }
-      ]
-    };
+    const or = [{ Id: id }, { id: id }, { _id: id }];
+if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
+
+const filter = {
+  $and: [
+    { $or: or },
+    { Email: ownerEmail } // exact match (your debug confirms this is correct)
+  ]
+};
 
     const result = await db.collection("Campaigns").findOneAndUpdate(
       filter,
