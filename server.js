@@ -822,15 +822,14 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     }
 
     // ✅ Match ObjectId _id, string _id, or legacy Id field
-    const or = [{ Id: id }, { _id: id }]; // also match string _id
-    if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
+    const idVariants = [{ Id: id }, { id: id }, { _id: id }];
+if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
-
-    const result = await db.collection("Campaigns").findOneAndUpdate(
-      { $or: or },
-      { $set: { Status: status, ReviewedAt: new Date(), ReviewedBy: "admin" } },
-      { returnDocument: "after" }
-    );
+const result = await db.collection("Campaigns").findOneAndUpdate(
+  { $or: idVariants },
+  { $set: { Status: status, ReviewedAt: new Date(), ReviewedBy: "admin" } },
+  { returnDocument: "after" }
+);
 
     if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
 
@@ -1076,21 +1075,18 @@ async function updateCampaignHandler(req, res) {
     $set.UpdatedAt = new Date().toISOString();
 
     // match many possible id shapes
-    const or = [
-      { Id: id },
-      { id: id },
-      { _id: id } // string _id
-    ];
+   const idVariants = [{ Id: id }, { id: id }, { _id: id }];
+
     if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
 
     // ownership match (case-insensitive)
-    const or = [{ Id: id }, { id: id }, { _id: id }];
-if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
+    const idVariants = [{ Id: id }, { id: id }, { _id: id }];
+if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
 const filter = {
   $and: [
-    { $or: or },
-    { Email: ownerEmail } // exact match (your debug confirms this is correct)
+    { $or: idVariants },
+    { Email: ownerEmail }
   ]
 };
 
@@ -1180,10 +1176,10 @@ app.get("/api/debug-campaign/:id", async (req, res) => {
   try {
     const id = String(req.params.id || "").trim();
 
-    const or = [{ Id: id }, { id: id }, { _id: id }];
-    if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
+    const idVariants = [{ Id: id }, { id: id }, { _id: id }];
+if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
-    const c = await db.collection("Campaigns").findOne({ $or: or });
+const c = await db.collection("Campaigns").findOne({ $or: idVariants });
 
     return res.json({
       sessionEmail: req.session?.user?.email || null,
