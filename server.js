@@ -147,15 +147,42 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 
       if (!exists && session.payment_status === "paid") {
         await db.collection("Donations").insertOne({
-          stripeSessionId: session.id,
-          campaignId: session.metadata?.campaignId || null,
-          originalDonation: session.metadata?.originalDonation || null,
-          chargedAmount: (session.amount_total || 0) / 100,
-          currency: session.currency,
-          email,
-          createdAt: new Date(),
-          source: "stripe_webhook"
-        });
+  stripeSessionId: sessionId,
+  campaignId,
+  originalDonation,
+  chargedAmount,
+  currency: session.currency,
+  createdAt: new Date(),
+  source: "stripe_checkout"
+});
+``` :contentReference[oaicite:3]{index=3}
+
+### Replace it with this (copy/paste)
+```js
+const email = session.customer_details?.email || session.customer_email || null;
+const name = session.customer_details?.name || null;
+
+const originalNum = Number(originalDonation);
+const originalAmount = Number.isFinite(originalNum) ? originalNum : null;
+
+await db.collection("Donations").insertOne({
+  stripeSessionId: sessionId,
+  campaignId,
+
+  // ✅ legacy fields (admin/dashboard expects these)
+  date: new Date(),
+  name,
+  email,
+  amount: originalAmount ?? chargedAmount,
+
+  // ✅ keep stripe fields too
+  originalDonation,
+  chargedAmount,
+  currency: session.currency,
+  createdAt: new Date(),
+  source: "stripe_checkout"
+});
+
 
         console.log("✅ Donation recorded via webhook:", session.id);
       } else {
@@ -639,6 +666,21 @@ app.post("/api/admin-logout", (req, res) => {
   req.session.destroy(err =>
     err ? res.status(500).json({ success: false }) : res.json({ success: true })
   );
+});
+
+app.get("/api/admin/donations", requireAdmin, async (req, res) => {
+  try {
+    const donations = await db.collection("Donations")
+      .find({})
+      .sort({ createdAt: -1, date: -1, _id: -1 })
+      .limit(2000)
+      .toArray();
+
+    res.json({ success: true, donations });
+  } catch (err) {
+    console.error("GET /api/admin/donations error:", err);
+    res.status(500).json({ success: false, message: "Failed to load donations" });
+  }
 });
 
 app.get("/api/admin-check", (req, res) => {
@@ -1181,6 +1223,7 @@ app.post("/api/donation", async (req, res) => {
 
     await db.collection("Donations").insertOne({ name, email, amount, campaignId, date: new Date() });
 
+
     await sendSubmissionEmails({
       type: "Donation",
       userEmail: email,
@@ -1209,13 +1252,30 @@ app.post("/api/donation", async (req, res) => {
 
 app.get("/api/donations", async (req, res) => {
   try {
-    const rows = await db.collection("Donations").find({}).toArray();
+    const sessionEmail = req.session?.user?.email;
+    const email = sessionEmail ? String(sessionEmail).trim().toLowerCase() : null;
+
+    const filter = email
+      ? {
+          $or: [
+            { email: email },
+            { Email: email }
+          ]
+        }
+      : {};
+
+    const rows = await db.collection("Donations")
+      .find(filter)
+      .sort({ createdAt: 1, date: 1, _id: 1 })
+      .toArray();
+
     res.json({ success: true, donations: rows });
   } catch (err) {
-    console.error(err);
+    console.error("GET /api/donations error:", err);
     res.status(500).json({ success: false });
   }
 });
+
 
 // ==================== PUBLIC: WAITLIST COUNT ====================
 // Used on homepage for social proof: "X people have already joined"
