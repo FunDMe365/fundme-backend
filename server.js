@@ -129,7 +129,7 @@ const MongoStore = MongoStorePkg.default || MongoStorePkg;
 // ✅ Reuse the already-connected Mongoose/Mongo client
 app.use(session({
   name: "connect.sid",
-  secret: process.env.SESSION_SECRET,
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   proxy: true,
