@@ -1082,7 +1082,7 @@ if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 const filter = {
   $and: [
     { $or: idVariants },
-    { Email: ownerEmail }
+    { $or: [{ Email: ownerEmail }, { email: ownerEmail }] }
   ]
 };
 
