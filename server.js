@@ -210,6 +210,57 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   }
 });
 
+// ✅ Confirm Stripe payment + record donation ONLY if paid
+app.post("/api/confirm-donation", async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) return res.status(400).json({ ok: false, error: "Missing sessionId" });
+
+    // Retrieve session from Stripe (expand payment_intent for more detail if needed)
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    // Stripe marks paid checkouts with payment_status === "paid"
+    if (session.payment_status !== "paid") {
+      return res.json({ ok: false, recorded: false, status: session.payment_status });
+    }
+
+    // ✅ Idempotent insert (prevents duplicates on refresh)
+    const existing = await db.collection("Donations").findOne({ stripeSessionId: sessionId });
+    if (existing) {
+      return res.json({ ok: true, recorded: false, message: "Already recorded" });
+    }
+
+    // Pull info from metadata you already attach in create-checkout-session
+    const campaignId = session?.metadata?.campaignId || null;
+    const originalDonation = session?.metadata?.originalDonation || null;
+
+    // Amount Stripe charged (this includes fee coverage since you’re doing that)
+    const chargedAmount = (session.amount_total || 0) / 100;
+
+    await db.collection("Donations").insertOne({
+      stripeSessionId: sessionId,
+      campaignId,
+      originalDonation,          // what donor intended (from metadata)
+      chargedAmount,             // what Stripe charged
+      currency: session.currency,
+      createdAt: new Date(),
+      source: "stripe_checkout"
+    });
+
+    return res.json({
+      ok: true,
+      recorded: true,
+      campaignId,
+      originalDonation,
+      chargedAmount,
+      currency: session.currency
+    });
+  } catch (err) {
+    console.error("confirm-donation error:", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 // ==================== MAILJET ====================
 const Mailjet = require("node-mailjet");
 
