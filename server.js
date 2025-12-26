@@ -623,12 +623,29 @@ function normalizeIdv(doc) {
   };
 }
 
+// ==================== ADMIN: STREET TEAM LIST ====================
+app.get("/api/admin/street-team", requireAdmin, async (req, res) => {
+  try {
+    const streetTeam = await db.collection("StreetTeam")
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(1000)
+      .toArray();
+
+    return res.json({ success: true, streetTeam });
+  } catch (err) {
+    console.error("GET /api/admin/street-team error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load street team" });
+  }
+});
+
 // ==================== ADMIN STATS (counts) ====================
 app.get("/api/admin/stats", requireAdmin, async (req, res) => {
   try {
-   const [users, volunteers, waitlist] = await Promise.all([
+   const [users, volunteers, streetTeam, waitlist] = await Promise.all([
   db.collection("Users").countDocuments({}),
   db.collection("Volunteers").countDocuments({}),
+  db.collection("StreetTeam").countDocuments({}),
   db.collection(WAITLIST_COLLECTION).countDocuments({})
 ]);
 
@@ -644,6 +661,7 @@ const recentWaitlistArr = await db.collection(WAITLIST_COLLECTION)
       success: true,
       users,
       volunteers,
+	  streetTeam,
       waitlist,
       recentWaitlist
     });
