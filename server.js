@@ -822,7 +822,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     }
 
     // ✅ Match ObjectId _id, string _id, or legacy Id field
-    const idVariants = [{ Id: id }, { id: id }, { _id: id }];
+    
 if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
 const result = await db.collection("Campaigns").findOneAndUpdate(
@@ -1077,10 +1077,9 @@ async function updateCampaignHandler(req, res) {
     // match many possible id shapes
    const idVariants = [{ Id: id }, { id: id }, { _id: id }];
 
-    if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
-
-    // ownership match (case-insensitive)
     const idVariants = [{ Id: id }, { id: id }, { _id: id }];
+if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
+
 if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
 const filter = {
