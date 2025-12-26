@@ -921,6 +921,18 @@ app.get("/api/donations", async (req, res) => {
   }
 });
 
+// ==================== PUBLIC: WAITLIST COUNT ====================
+// Used on homepage for social proof: "X people have already joined"
+app.get("/api/waitlist-count", async (req, res) => {
+  try {
+    const count = await db.collection(WAITLIST_COLLECTION).countDocuments({});
+    return res.json({ success: true, count });
+  } catch (err) {
+    console.error("waitlist-count error:", err);
+    return res.status(500).json({ success: false, message: "Failed to get waitlist count" });
+  }
+});
+
 // ==================== WAITLIST / VOLUNTEERS / STREET TEAM ====================
 app.post("/api/waitlist", async (req, res) => {
   try {
