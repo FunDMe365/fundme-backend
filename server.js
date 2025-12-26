@@ -1075,11 +1075,8 @@ async function updateCampaignHandler(req, res) {
     $set.UpdatedAt = new Date().toISOString();
 
     // match many possible id shapes
-   const idVariants = [{ Id: id }, { id: id }, { _id: id }];
-
-    const idVariants = [{ Id: id }, { id: id }, { _id: id }];
-if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
-
+   // match many possible id shapes
+const idVariants = [{ Id: id }, { id: id }, { _id: id }];
 if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
 const filter = {
