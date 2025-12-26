@@ -1028,7 +1028,7 @@ app.get("/api/my-campaigns", async (req, res) => {
   }
 });
 
-// ==================== UPDATE CAMPAIGN (owner only) ====================
+
 // ==================== UPDATE CAMPAIGN (owner only) ====================
 async function updateCampaignHandler(req, res) {
   try {
@@ -1046,7 +1046,6 @@ async function updateCampaignHandler(req, res) {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ success: false, message: "Missing id" });
 
-    // fields from FormData (multer populates req.body)
     const { title, goal, description, category, imageUrl } = req.body || {};
 
     const $set = {};
@@ -1056,7 +1055,6 @@ async function updateCampaignHandler(req, res) {
     if (typeof category === "string") $set.Category = category.trim();
     if (typeof imageUrl === "string" && imageUrl.trim()) $set.ImageURL = imageUrl.trim();
 
-    // If a new image file was uploaded, upload to Cloudinary and update ImageURL
     if (req.file) {
       const cloudRes = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
@@ -1074,64 +1072,40 @@ async function updateCampaignHandler(req, res) {
 
     $set.UpdatedAt = new Date().toISOString();
 
-    // match many possible id shapes
-const idVariants = [{ Id: id }, { id: id }];
+    // 1) Find campaign by id
+    const idVariants = [{ Id: id }, { id: id }];
+    if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
-// Only add _id as ObjectId (Mongo _id is usually ObjectId, not a string)
-if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
+    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
 
-// ownership match (case-insensitive; supports Email/email/OwnerEmail/ownerEmail)
-const filter = {
-  $and: [
-    { $or: idVariants },
-    {
-      $or: [
-        { Email: ownerRegex },
-        { email: ownerRegex },
-        { OwnerEmail: ownerRegex },
-        { ownerEmail: ownerRegex }
-      ]
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
     }
-  ]
-};
 
-    // 1) Find campaign by id first (no ownership check yet)
-const idVariants = [{ Id: id }, { id: id }];
-if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
+    // 2) Ownership check (supports Email/email/OwnerEmail/ownerEmail)
+    const ownerFields = [
+      campaign.Email,
+      campaign.email,
+      campaign.OwnerEmail,
+      campaign.ownerEmail
+    ]
+      .filter(Boolean)
+      .map(v => String(v).trim().toLowerCase());
 
-const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
-
-if (!campaign) {
-  return res.status(404).json({ success: false, message: "Campaign not found" });
-}
-
-// 2) Ownership check (handles Email/email/OwnerEmail/ownerEmail)
-const ownerFields = [
-  campaign.Email,
-  campaign.email,
-  campaign.OwnerEmail,
-  campaign.ownerEmail
-].filter(Boolean).map(v => String(v).trim().toLowerCase());
-
-if (!ownerFields.includes(ownerEmail)) {
-  return res.status(403).json({
-    success: false,
-    message: "You do not have permission to edit this campaign",
-    debug: {
-      sessionEmail: ownerEmail,
-      ownerFields
+    if (!ownerFields.some(e => ownerRegex.test(e))) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to edit this campaign",
+        debug: { sessionEmail: ownerEmail, ownerFields }
+      });
     }
-  });
-}
 
-// 3) Update using the campaign’s real _id (most reliable)
-const result = await db.collection("Campaigns").findOneAndUpdate(
-  { _id: campaign._id },
-  { $set },
-  { returnDocument: "after" }
-);
-
-return res.json({ success: true, campaign: result.value });
+    // 3) Update using the campaign’s real _id (most reliable)
+    const result = await db.collection("Campaigns").findOneAndUpdate(
+      { _id: campaign._id },
+      { $set },
+      { returnDocument: "after" }
+    );
 
     return res.json({ success: true, campaign: result.value });
   } catch (err) {
