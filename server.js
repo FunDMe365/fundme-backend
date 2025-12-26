@@ -274,21 +274,32 @@ function htmlToText(html = "") {
 }
 
 async function sendMailjet({ toEmail, toName, subject, html }) {
+  if (!mailjetClient) {
+    console.warn("Mailjet not configured. Skipping email.");
+    return;
+  }
+  if (!toEmail) return;
+
+  const fromEmail = process.env.EMAIL_FROM || FROM_EMAIL;
+  const fromName = process.env.EMAIL_FROM_NAME || FROM_NAME;
   const text = htmlToText(html);
 
-  await mailjetClient.post("send", { version: "v3.1" }).request({
-    Messages: [
-      {
-        From: { Email: process.env.EMAIL_FROM, Name: process.env.EMAIL_FROM_NAME },
-        ReplyTo: { Email: process.env.EMAIL_FROM, Name: process.env.EMAIL_FROM_NAME },
+  try {
+    await mailjetClient.post("send", { version: "v3.1" }).request({
+      Messages: [{
+        From: { Email: fromEmail, Name: fromName },
+        ReplyTo: { Email: fromEmail, Name: fromName },
         To: [{ Email: toEmail, Name: toName || "" }],
         Subject: subject,
         TextPart: text,
         HTMLPart: html,
         CustomID: "joyfund"
-      }
-    ]
-  });
+      }]
+    });
+  } catch (err) {
+    console.error("Mailjet send error:", err);
+    // don't throw
+  }
 }
 
 const EMAIL_FOOTER = `
@@ -996,42 +1007,52 @@ app.post("/api/waitlist", async (req, res) => {
 app.post("/api/volunteer", async (req, res) => {
   try {
     const { name, email, role, reason } = req.body;
-    const row = { name, email, role, reason, createdAt: new Date() };
 
+    if (!name || !email || !reason) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    const row = { name, email, role: role || "Volunteer", reason, createdAt: new Date() };
     await db.collection("Volunteers").insertOne(row);
-   await sendSubmissionEmails({
-  type: "Volunteer",
-  userEmail: email,
-  userName: name,
-  adminSubject: "New Volunteer Submission",
-  userSubject: "We received your volunteer submission",
-  adminHtml: `
-    <h2>New Volunteer Submission</h2>
-    <p><b>Name:</b> ${name || "—"}</p>
-    <p><b>Email:</b> ${email || "—"}</p>
-    <p><b>Role:</b> ${role || "—"}</p>
-    <p><b>Availability:</b> ${availability || "—"}</p>
-    <p><b>Date:</b> ${new Date().toLocaleString()}</p>
-  `,
-  userHtml: `
-    <h2>Thanks for volunteering with JoyFund 💙💗</h2>
-    <p>Hi ${name || ""},</p>
-    <p>We received your volunteer submission. Our team will review it and reach out with next steps.</p>
-    <p>— JoyFund Team</p>
-  `
-});
-    res.json({ success: true });
+
+    await sendSubmissionEmails({
+      type: "Volunteer",
+      userEmail: email,
+      userName: name,
+      adminSubject: "New Volunteer Submission",
+      userSubject: "We received your volunteer submission",
+      adminHtml: `
+        <h2>New Volunteer Submission</h2>
+        <p><b>Name:</b> ${name || "—"}</p>
+        <p><b>Email:</b> ${email || "—"}</p>
+        <p><b>Role:</b> ${role || "—"}</p>
+        <p><b>Reason:</b> ${reason || "—"}</p>
+        <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+      `,
+      userHtml: `
+        <h2>Thanks for volunteering with JoyFund 💙💗</h2>
+        <p>Hi ${name || ""},</p>
+        <p>We received your volunteer submission. Our team will review it and reach out with next steps.</p>
+        <p>— JoyFund Team</p>
+      `
+    });
+
+    return res.json({ success: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    console.error("POST /api/volunteer error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
 app.post("/api/street-team", async (req, res) => {
   try {
     const { name, email, city, reason } = req.body;
-    const row = { name, email, city, reason, createdAt: new Date() };
 
+    if (!name || !email || !city || !reason) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    const row = { name, email, city, reason, createdAt: new Date() };
     await db.collection("StreetTeam").insertOne(row);
 
     await sendSubmissionEmails({
@@ -1039,25 +1060,27 @@ app.post("/api/street-team", async (req, res) => {
       userEmail: email,
       userName: name,
       adminSubject: "New Street Team Submission",
-      userSubject: "Thanks for joining the JoyFund Street Team!",
+      userSubject: "We received your Street Team submission",
       adminHtml: `
         <h2>New Street Team Submission</h2>
-        <p><b>Name:</b> ${name}</p>
-        <p><b>Email:</b> ${email}</p>
-        <p><b>City:</b> ${city}</p>
-        <p><b>Hours Available:</b> ${hoursAvailable}</p>
+        <p><b>Name:</b> ${name || "—"}</p>
+        <p><b>Email:</b> ${email || "—"}</p>
+        <p><b>City:</b> ${city || "—"}</p>
+        <p><b>Reason:</b> ${reason || "—"}</p>
+        <p><b>Date:</b> ${new Date().toLocaleString()}</p>
       `,
       userHtml: `
-        <h2>Welcome to the JoyFund Street Team 💙💗</h2>
-        <p>Hi ${name},</p>
-        <p>We received your submission and will be in touch soon.</p>
+        <h2>Thanks for joining the JoyFund Street Team 💙💗</h2>
+        <p>Hi ${name || ""},</p>
+        <p>We received your Street Team submission. Our team will review it and reach out with next steps.</p>
+        <p>— JoyFund Team</p>
       `
     });
 
-    res.json({ success: true });
+    return res.json({ success: true });
   } catch (err) {
-    console.error("street-team error:", err);
-    res.status(500).json({ success: false });
+    console.error("POST /api/street-team error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
