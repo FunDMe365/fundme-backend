@@ -262,36 +262,41 @@ const ADMIN_EMAIL =
   process.env.NOTIFY_EMAIL ||
   process.env.EMAIL_TO;
 
-async function sendMailjet({ toEmail, toName, subject, html }) {
-  if (!mailjetClient) {
-    console.warn("⚠️ Mailjet not configured (missing API key/secret).");
-    return;
-  }
-  if (!toEmail) return;
-
-  console.log("📧 Mailjet sending:", {
-    from: FROM_EMAIL,
-    toEmail,
-    subject,
-    hasHtml: !!html,
-    mailjetConfigured: !!mailjetClient
-  });
-
-  try {
-    await mailjetClient.post("send", { version: "v3.1" }).request({
-      Messages: [
-        {
-          From: { Email: FROM_EMAIL, Name: FROM_NAME },
-          To: [{ Email: toEmail, Name: toName || "" }],
-          Subject: subject,
-          HTMLPart: html
-        }
-      ]
-    });
-  } catch (err) {
-    console.error("Mailjet error:", err);
-  }
+function htmlToText(html = "") {
+  return String(html)
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<\/(p|div|h1|h2|h3|li)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
+
+async function sendMailjet({ toEmail, toName, subject, html }) {
+  const text = htmlToText(html);
+
+  await mailjetClient.post("send", { version: "v3.1" }).request({
+    Messages: [
+      {
+        From: { Email: process.env.EMAIL_FROM, Name: process.env.EMAIL_FROM_NAME },
+        ReplyTo: { Email: process.env.EMAIL_FROM, Name: process.env.EMAIL_FROM_NAME },
+        To: [{ Email: toEmail, Name: toName || "" }],
+        Subject: subject,
+        TextPart: text,
+        HTMLPart: html,
+        CustomID: "joyfund"
+      }
+    ]
+  });
+}
+
+const EMAIL_FOOTER = `
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0;" />
+<p style="font-size:12px;color:#888;margin-top:20px;">
+  Don’t want to receive JoyFund updates? Reply with “unsubscribe”.
+</p>
+`;
 
 // one call = sends admin + user confirmation
 async function sendSubmissionEmails({
@@ -310,7 +315,7 @@ async function sendSubmissionEmails({
     sendMailjet({
       toEmail: ADMIN_EMAIL,
       subject: adminSubject || `New ${type} submission`,
-      html: adminHtml
+      html: adminHtml + EMAIL_FOOTER
     })
   );
 
@@ -321,7 +326,7 @@ async function sendSubmissionEmails({
         toEmail: userEmail,
         toName: userName || "",
         subject: userSubject || `We received your ${type}`,
-        html: userHtml
+        html: userHtml + EMAIL_FOOTER
       })
     );
   }
@@ -991,7 +996,7 @@ app.post("/api/waitlist", async (req, res) => {
 app.post("/api/volunteer", async (req, res) => {
   try {
     const { name, email, role, reason } = req.body;
-    const row = { name, email, role, availability, createdAt: new Date() };
+    const row = { name, email, role, reason, createdAt: new Date() };
 
     await db.collection("Volunteers").insertOne(row);
    await sendSubmissionEmails({
@@ -1025,7 +1030,7 @@ app.post("/api/volunteer", async (req, res) => {
 app.post("/api/street-team", async (req, res) => {
   try {
     const { name, email, city, reason } = req.body;
-    const row = { name, email, city, hoursAvailable, createdAt: new Date() };
+    const row = { name, email, city, reason, createdAt: new Date() };
 
     await db.collection("StreetTeam").insertOne(row);
 
