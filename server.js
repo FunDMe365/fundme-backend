@@ -1180,6 +1180,39 @@ app.get("/api/waitlist-count", async (req, res) => {
   }
 });
 
+app.get("/api/debug-campaign/:id", async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+
+    const or = [{ Id: id }, { id: id }, { _id: id }];
+    if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
+
+    const c = await db.collection("Campaigns").findOne({ $or: or });
+
+    return res.json({
+      sessionEmail: req.session?.user?.email || null,
+      found: !!c,
+      campaign: c
+        ? {
+            _id: String(c._id),
+            Id: c.Id || null,
+            id: c.id || null,
+            Email: c.Email || null,
+            email: c.email || null,
+            OwnerEmail: c.OwnerEmail || null,
+            ownerEmail: c.ownerEmail || null,
+            title: c.title || c.Title || null,
+            status: c.Status || c.status || null
+          }
+        : null
+    });
+  } catch (err) {
+    console.error("debug-campaign error:", err);
+    return res.status(500).json({ ok: false, error: "server error" });
+  }
+});
+
+
 // ==================== WAITLIST / VOLUNTEERS / STREET TEAM ====================
 app.post("/api/waitlist", async (req, res) => {
   try {
