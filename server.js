@@ -592,6 +592,39 @@ app.get("/api/admin-check", (req, res) => {
   res.json({ admin: !!(req.session && req.session.admin) });
 });
 
+// ✅ ONE-TIME MAINTENANCE: normalize campaign owner emails to lowercase
+app.post("/api/admin/normalize-campaign-emails", async (req, res) => {
+  try {
+    // Simple protection: require a secret header
+    const key = req.headers["x-admin-key"];
+    if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+
+    // Normalize both Email and email fields (some old docs may use either)
+    const r1 = await db.collection("Campaigns").updateMany(
+      { Email: { $type: "string" } },
+      [{ $set: { Email: { $toLower: "$Email" } } }]
+    );
+
+    const r2 = await db.collection("Campaigns").updateMany(
+      { email: { $type: "string" } },
+      [{ $set: { email: { $toLower: "$email" } } }]
+    );
+
+    return res.json({
+      ok: true,
+      matchedEmail: r1.matchedCount,
+      modifiedEmail: r1.modifiedCount,
+      matchedemail: r2.matchedCount,
+      modifiedemail: r2.modifiedCount
+    });
+  } catch (err) {
+    console.error("normalize-campaign-emails error:", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 // ==================== ADMIN: USERS LIST ====================
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
