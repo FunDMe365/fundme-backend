@@ -1054,10 +1054,12 @@ if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
   "i"
 );
 
-const filter = {
-  $and: [
-    { $or: or },
-    { $or: [{ Email: ownerEmailExactI }, { email: ownerEmailExactI }] } // ✅ case-insensitive
+const ownerRegex = new RegExp(
+  "^" + ownerEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$",
+  "i"
+);
+
+{ $or: [{ Email: ownerRegex }, { email: ownerRegex }] }
   ]
 };
 
