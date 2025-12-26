@@ -489,15 +489,19 @@ app.delete("/api/delete-account", async (req, res) => {
 
     const email = String(userEmail).trim().toLowerCase();
 
-    // Delete the user record
-    const result = await db.collection("Users").deleteOne({ Email: email });
+    // ✅ delete campaigns owned by this account
+    const campaignsResult = await db.collection("Campaigns").deleteMany({
+      $or: [
+        { Email: email },
+        { email: email },
+        { Email: { $regex: `^${email}$`, $options: "i" } }
+      ]
+    });
 
-    // Optional: also delete related data (uncomment if you want)
-    // await db.collection("Campaigns").deleteMany({ Email: email });
-    // await db.collection("Donations").deleteMany({ email }); // if your Donations store email lowercase
-    // await db.collection("ID_Verifications").deleteMany({ email });
+    // delete user
+    const userResult = await db.collection("Users").deleteOne({ Email: email });
 
-    // Destroy session + clear cookie
+    // logout
     req.session.destroy((err) => {
       if (err) {
         console.error("delete-account session destroy error:", err);
@@ -512,7 +516,8 @@ app.delete("/api/delete-account", async (req, res) => {
 
       return res.json({
         ok: true,
-        deleted: result.deletedCount === 1
+        deleted: userResult.deletedCount === 1,
+        campaignsDeleted: campaignsResult.deletedCount
       });
     });
   } catch (err) {
