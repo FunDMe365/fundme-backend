@@ -1030,26 +1030,25 @@ app.get("/api/my-campaigns", async (req, res) => {
 });
 
 // ==================== UPDATE CAMPAIGN (owner only) ====================
+// ==================== UPDATE CAMPAIGN (owner only) ====================
 async function updateCampaignHandler(req, res) {
   try {
-    // must be logged in
     const sessionEmail = req.session?.user?.email;
     if (!sessionEmail) {
       return res.status(401).json({ success: false, message: "Not logged in" });
     }
+
     const ownerEmail = String(sessionEmail).trim().toLowerCase();
+    const ownerRegex = new RegExp(
+      "^" + ownerEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$",
+      "i"
+    );
 
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ success: false, message: "Missing id" });
 
-    // allow only specific fields to be updated
-    const {
-      title,
-      goal,
-      description,
-      category,
-      imageUrl
-    } = req.body || {};
+    // fields from FormData (multer populates req.body)
+    const { title, goal, description, category, imageUrl } = req.body || {};
 
     const $set = {};
     if (typeof title === "string") $set.title = title.trim();
@@ -1057,19 +1056,18 @@ async function updateCampaignHandler(req, res) {
     if (typeof description === "string") $set.Description = description.trim();
     if (typeof category === "string") $set.Category = category.trim();
     if (typeof imageUrl === "string" && imageUrl.trim()) $set.ImageURL = imageUrl.trim();
-	
-	// If a new image file was uploaded, upload to Cloudinary and update ImageURL
-if (req.file) {
-  const cloudRes = await new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder: "joyfund/campaigns", use_filename: true, unique_filename: true },
-      (err, result) => (err ? reject(err) : resolve(result))
-    );
-    stream.end(req.file.buffer);
-  });
 
-  $set.ImageURL = cloudRes.secure_url; // ✅ THIS was missing
-}
+    // If a new image file was uploaded, upload to Cloudinary and update ImageURL
+    if (req.file) {
+      const cloudRes = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "joyfund/campaigns", use_filename: true, unique_filename: true },
+          (err, result) => (err ? reject(err) : resolve(result))
+        );
+        stream.end(req.file.buffer);
+      });
+      $set.ImageURL = cloudRes.secure_url;
+    }
 
     if (Object.keys($set).length === 0) {
       return res.status(400).json({ success: false, message: "No fields to update" });
@@ -1077,24 +1075,28 @@ if (req.file) {
 
     $set.UpdatedAt = new Date().toISOString();
 
-    // match Mongo _id OR legacy Id, but enforce ownership by email
-    const or = [{ Id: id }, { _id: id }]; // include string _id
-if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
+    // match many possible id shapes
+    const or = [
+      { Id: id },
+      { id: id },
+      { _id: id } // string _id
+    ];
+    if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
 
-
-    const ownerRegex = new RegExp(
-  "^" + ownerEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$",
-  "i"
-);
-
-const filter = {
-  $and: [
-    { $or: or },
-    { $or: [{ Email: ownerRegex }, { email: ownerRegex }] }
-  ]
-};
-
-
+    // ownership match (case-insensitive)
+    const filter = {
+      $and: [
+        { $or: or },
+        {
+          $or: [
+            { Email: ownerRegex },
+            { email: ownerRegex },
+            { OwnerEmail: ownerRegex },
+            { ownerEmail: ownerRegex }
+          ]
+        }
+      ]
+    };
 
     const result = await db.collection("Campaigns").findOneAndUpdate(
       filter,
@@ -1116,7 +1118,7 @@ const filter = {
   }
 }
 
-// Accept any of the frontend paths you tried:
+// IMPORTANT: must use multer for FormData
 app.put("/api/update-campaign/:id", upload.single("image"), updateCampaignHandler);
 app.put("/api/campaign/:id", upload.single("image"), updateCampaignHandler);
 app.put("/api/campaigns/:id", upload.single("image"), updateCampaignHandler);
