@@ -789,8 +789,9 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     }
 
     // ✅ Match ObjectId _id, string _id, or legacy Id field
-    const or = [{ _id: id }, { Id: id }];
+    const or = [{ Id: id }, { _id: id }]; // also match string _id
     if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
+
 
     const result = await db.collection("Campaigns").findOneAndUpdate(
       { $or: or },
@@ -899,11 +900,17 @@ app.get("/api/campaigns", async (req, res) => {
 // ==================== CAMPAIGNS ====================
 app.post("/api/create-campaign", requireVerifiedIdentity, upload.single("image"), async (req, res) => {
   try {
-    const { title, goal, description, category, email } = req.body;
+    const { title, goal, description, category } = req.body;
 
-    if (!title || !goal || !description || !category || !email || !req.file) {
-      return res.status(400).json({ success: false, message: "Missing fields" });
-    }
+const sessionEmail = req.session?.user?.email;
+if (!sessionEmail) {
+  return res.status(401).json({ success: false, message: "Not logged in" });
+}
+const email = String(sessionEmail).trim().toLowerCase();
+
+if (!title || !goal || !description || !category || !req.file) {
+  return res.status(400).json({ success: false, message: "Missing fields" });
+}
 
     // Upload to Cloudinary
     const cloudRes = await new Promise((resolve, reject) => {
@@ -1028,7 +1035,7 @@ if (req.file) {
     stream.end(req.file.buffer);
   });
 
-  $set.ImageURL = cloudRes.secure_url;
+  $set.ImageURL = cloudRes.secure_url; // ✅ THIS was missing
 }
 
     if (Object.keys($set).length === 0) {
@@ -1038,8 +1045,9 @@ if (req.file) {
     $set.UpdatedAt = new Date().toISOString();
 
     // match Mongo _id OR legacy Id, but enforce ownership by email
-    const or = [{ Id: id }];
-    if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
+    const or = [{ Id: id }, { _id: id }]; // include string _id
+if (ObjectId.isValid(id)) or.unshift({ _id: new ObjectId(id) });
+
 
     const filter = {
       $and: [
