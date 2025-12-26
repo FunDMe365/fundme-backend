@@ -116,11 +116,64 @@ async function requireVerifiedIdentity(req, res, next) {
   }
 }
 
+// ==================== STRIPE ====================
+const stripe = Stripe(STRIPE_SECRET_KEY);
 
+// ==================== STRIPE WEBHOOK (REQUIRED FOR RELIABLE DONATION SAVES) ====================
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("❌ Stripe webhook signature failed:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  try {
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+
+      // Optional: get email if available
+      const email = session.customer_details?.email || null;
+
+      // Idempotency: don’t insert twice
+      const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
+
+      if (!exists && session.payment_status === "paid") {
+        await db.collection("Donations").insertOne({
+          stripeSessionId: session.id,
+          campaignId: session.metadata?.campaignId || null,
+          originalDonation: session.metadata?.originalDonation || null,
+          chargedAmount: (session.amount_total || 0) / 100,
+          currency: session.currency,
+          email,
+          createdAt: new Date(),
+          source: "stripe_webhook"
+        });
+
+        console.log("✅ Donation recorded via webhook:", session.id);
+      } else {
+        console.log("ℹ️ Donation already recorded or not paid:", session.id, session.payment_status);
+      }
+    }
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("❌ Webhook handler error:", err);
+    return res.status(500).json({ received: false });
+  }
+});
 
 // ==================== MIDDLEWARE ====================
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
 
 // ==================== PRODUCTION-READY SESSION ====================
 const MongoStorePkg = require("connect-mongo");
@@ -159,7 +212,7 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // ==================== STRIPE CHECKOUT (DONATIONS) ====================
-const stripe = Stripe(STRIPE_SECRET_KEY);
+// (stripe already initialized above — do NOT redeclare it)
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const campaignId = req.params.campaignId;
