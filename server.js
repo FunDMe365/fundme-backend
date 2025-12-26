@@ -990,7 +990,7 @@ app.post("/api/waitlist", async (req, res) => {
 
 app.post("/api/volunteer", async (req, res) => {
   try {
-    const { name, email, role, availability } = req.body;
+    const { name, email, role, reason } = req.body;
     const row = { name, email, role, availability, createdAt: new Date() };
 
     await db.collection("Volunteers").insertOne(row);
@@ -1024,7 +1024,7 @@ app.post("/api/volunteer", async (req, res) => {
 
 app.post("/api/street-team", async (req, res) => {
   try {
-    const { name, email, city, hoursAvailable } = req.body;
+    const { name, email, city, reason } = req.body;
     const row = { name, email, city, hoursAvailable, createdAt: new Date() };
 
     await db.collection("StreetTeam").insertOne(row);
