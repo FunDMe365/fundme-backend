@@ -325,30 +325,31 @@ async function sendSubmissionEmails({
 
   // Admin copy
   tasks.push(
-  sendMailjet({
-    toEmail: ADMIN_EMAIL,
-    subject: adminSubject || `New ${type} submission`,
-    html: adminHtml + EMAIL_FOOTER,
-    headers: {
-      "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
-      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
-    }
-  })
-);
+    sendMailjet({
+      toEmail: ADMIN_EMAIL,
+      subject: adminSubject || `New ${type} submission`,
+      html: (adminHtml || "") + EMAIL_FOOTER,
+      headers: {
+        "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+      }
+    })
+  );
 
   // User copy
-  tasks.push(
-  sendMailjet({
-    toEmail: userEmail,
-    toName: userName || "",
-    subject: userSubject || `We received your ${type}`,
-    html: userHtml + EMAIL_FOOTER,
-    headers: {
-      "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
-      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
-    }
-  })
- );
+  if (userEmail) {
+    tasks.push(
+      sendMailjet({
+        toEmail: userEmail,
+        toName: userName || "",
+        subject: userSubject || `We received your ${type}`,
+        html: (userHtml || "") + EMAIL_FOOTER,
+        headers: {
+          "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+        }
+      })
+    );
   }
 
   await Promise.allSettled(tasks);
