@@ -1017,6 +1017,19 @@ async function updateCampaignHandler(req, res) {
     if (typeof description === "string") $set.Description = description.trim();
     if (typeof category === "string") $set.Category = category.trim();
     if (typeof imageUrl === "string" && imageUrl.trim()) $set.ImageURL = imageUrl.trim();
+	
+	// If a new image file was uploaded, upload to Cloudinary and update ImageURL
+if (req.file) {
+  const cloudRes = await new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "joyfund/campaigns", use_filename: true, unique_filename: true },
+      (err, result) => (err ? reject(err) : resolve(result))
+    );
+    stream.end(req.file.buffer);
+  });
+
+  $set.ImageURL = cloudRes.secure_url;
+}
 
     if (Object.keys($set).length === 0) {
       return res.status(400).json({ success: false, message: "No fields to update" });
@@ -1056,9 +1069,9 @@ async function updateCampaignHandler(req, res) {
 }
 
 // Accept any of the frontend paths you tried:
-app.put("/api/update-campaign/:id", updateCampaignHandler);
-app.put("/api/campaign/:id", updateCampaignHandler);
-app.put("/api/campaigns/:id", updateCampaignHandler);
+app.put("/api/update-campaign/:id", upload.single("image"), updateCampaignHandler);
+app.put("/api/campaign/:id", upload.single("image"), updateCampaignHandler);
+app.put("/api/campaigns/:id", upload.single("image"), updateCampaignHandler);
 
 
 // ==================== DONATIONS ====================
