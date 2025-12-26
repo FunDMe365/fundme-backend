@@ -139,50 +139,36 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
 
-      // Optional: get email if available
-      const email = session.customer_details?.email || null;
-
       // Idempotency: don’t insert twice
       const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
 
       if (!exists && session.payment_status === "paid") {
+        const email = session.customer_details?.email || null;
+        const name = session.customer_details?.name || null;
+        const chargedAmount = (session.amount_total || 0) / 100;
+        const originalDonation = session.metadata?.originalDonation || null;
+        const campaignId = session.metadata?.campaignId || null;
+
+        const originalNum = Number(originalDonation);
+        const originalAmount = Number.isFinite(originalNum) ? originalNum : null;
+
         await db.collection("Donations").insertOne({
-  stripeSessionId: sessionId,
-  campaignId,
-  originalDonation,
-  chargedAmount,
-  currency: session.currency,
-  createdAt: new Date(),
-  source: "stripe_checkout"
-});
-``` :contentReference[oaicite:3]{index=3}
+          stripeSessionId: session.id,
+          campaignId,
 
-### Replace it with this (copy/paste)
-```js
-const email = session.customer_details?.email || session.customer_email || null;
-const name = session.customer_details?.name || null;
+          // legacy fields for admin/dashboard
+          date: new Date(),
+          name,
+          email,
+          amount: originalAmount ?? chargedAmount,
 
-const originalNum = Number(originalDonation);
-const originalAmount = Number.isFinite(originalNum) ? originalNum : null;
-
-await db.collection("Donations").insertOne({
-  stripeSessionId: sessionId,
-  campaignId,
-
-  // ✅ legacy fields (admin/dashboard expects these)
-  date: new Date(),
-  name,
-  email,
-  amount: originalAmount ?? chargedAmount,
-
-  // ✅ keep stripe fields too
-  originalDonation,
-  chargedAmount,
-  currency: session.currency,
-  createdAt: new Date(),
-  source: "stripe_checkout"
-});
-
+          // stripe fields
+          originalDonation,
+          chargedAmount,
+          currency: session.currency,
+          createdAt: new Date(),
+          source: "stripe_webhook"
+        });
 
         console.log("✅ Donation recorded via webhook:", session.id);
       } else {
