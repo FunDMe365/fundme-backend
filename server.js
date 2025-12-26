@@ -822,8 +822,8 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     }
 
     // ✅ Match ObjectId _id, string _id, or legacy Id field
-    
-if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
+    const idVariants = [{ Id: id }, { id: id }];
+    if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
 const result = await db.collection("Campaigns").findOneAndUpdate(
   { $or: idVariants },
@@ -1095,18 +1095,43 @@ const filter = {
   ]
 };
 
-    const result = await db.collection("Campaigns").findOneAndUpdate(
-      filter,
-      { $set },
-      { returnDocument: "after" }
-    );
+    // 1) Find campaign by id first (no ownership check yet)
+const idVariants = [{ Id: id }, { id: id }];
+if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
-    if (!result?.value) {
-      return res.status(404).json({
-        success: false,
-        message: "Campaign not found or you do not have permission to edit it"
-      });
+const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+
+if (!campaign) {
+  return res.status(404).json({ success: false, message: "Campaign not found" });
+}
+
+// 2) Ownership check (handles Email/email/OwnerEmail/ownerEmail)
+const ownerFields = [
+  campaign.Email,
+  campaign.email,
+  campaign.OwnerEmail,
+  campaign.ownerEmail
+].filter(Boolean).map(v => String(v).trim().toLowerCase());
+
+if (!ownerFields.includes(ownerEmail)) {
+  return res.status(403).json({
+    success: false,
+    message: "You do not have permission to edit this campaign",
+    debug: {
+      sessionEmail: ownerEmail,
+      ownerFields
     }
+  });
+}
+
+// 3) Update using the campaign’s real _id (most reliable)
+const result = await db.collection("Campaigns").findOneAndUpdate(
+  { _id: campaign._id },
+  { $set },
+  { returnDocument: "after" }
+);
+
+return res.json({ success: true, campaign: result.value });
 
     return res.json({ success: true, campaign: result.value });
   } catch (err) {
