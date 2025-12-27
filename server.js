@@ -193,22 +193,18 @@ const MongoStorePkg = require("connect-mongo");
 const MongoStore = MongoStorePkg.default || MongoStorePkg;
 
 // ✅ Reuse the already-connected Mongoose/Mongo client
+app.set("trust proxy", 1);
+
 app.use(session({
-  name: "connect.sid",
-  secret: SESSION_SECRET,
+  name: "joyfund.sid",
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  proxy: true,
-  store: MongoStore.create({
-    client: db.getClient(),          // ✅ key fix: no separate mongoUrl auth
-    dbName: "joyfund",               // optional but nice
-    collectionName: "sessions"
-  }),
   cookie: {
-    httpOnly: true,
     secure: true,
     sameSite: "none",
-    maxAge: 1000 * 60 * 60 * 24 * 14
+    httpOnly: true,
+    domain: ".fundasmile.net"   // ✅ works for BOTH fundasmile.net + www.fundasmile.net
   }
 }));
 
@@ -574,11 +570,13 @@ app.delete("/api/delete-account", async (req, res) => {
         return res.status(500).json({ ok: false, error: "Failed to logout after deletion" });
       }
 
-      res.clearCookie("connect.sid", {
-        path: "/",
-        secure: true,
-        sameSite: "none"
-      });
+      res.clearCookie("joyfund.sid", {
+  path: "/",
+  secure: true,
+  sameSite: "none",
+  domain: ".fundasmile.net"
+});
+
 
       return res.json({
         ok: true,
@@ -596,10 +594,17 @@ app.delete("/api/delete-account", async (req, res) => {
 app.post("/api/signout", (req, res) => {
   req.session.destroy(err => {
     if (err) return res.status(500).json({ success: false });
+
+    res.clearCookie("joyfund.sid", {
+      path: "/",
+      secure: true,
+      sameSite: "none",
+      domain: ".fundasmile.net"
+    });
+
     res.json({ success: true });
   });
 });
-
 // Check if the user is logged in
 app.get("/api/check-session", async (req, res) => {
   try {
@@ -1433,11 +1438,12 @@ app.post("/api/logout", (req, res) => {
       if (err) return res.status(500).json({ ok: false, error: "Logout failed" });
 
       // IMPORTANT: clear the same cookie name/path your session uses
-      res.clearCookie("connect.sid", {
-        path: "/",
-        secure: true,
-        sameSite: "none"
-      });
+      res.clearCookie("joyfund.sid", {
+  path: "/",
+  secure: true,
+  sameSite: "none",
+  domain: ".fundasmile.net"
+});
 
       return res.json({ ok: true });
     });
