@@ -60,7 +60,8 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type", "Authorization"],
+  exposedHeaders: ["set-cookie"]
 };
 
 app.use(cors(corsOptions));
@@ -200,11 +201,19 @@ app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
+
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    dbName: "joyfund",
+    collectionName: "sessions"
+  }),
+
   cookie: {
     secure: true,
     sameSite: "none",
     httpOnly: true,
-    domain: ".fundasmile.net"   // ✅ works for BOTH fundasmile.net + www.fundasmile.net
+    domain: ".fundasmile.net",
+    path: "/"
   }
 }));
 
@@ -218,7 +227,15 @@ if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
 }
 
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    const ok = /^image\/(jpeg|png|gif|webp)$/.test(file.mimetype);
+    if (!ok) return cb(new Error("Only JPG/PNG/GIF/WEBP images are allowed."));
+    cb(null, true);
+  }
+});
 
 // ==================== STRIPE CHECKOUT (DONATIONS) ====================
 // (stripe already initialized above — do NOT redeclare it)
@@ -1140,6 +1157,14 @@ async function updateCampaignHandler(req, res) {
     if (typeof description === "string") $set.Description = description.trim();
     if (typeof category === "string") $set.Category = category.trim();
     if (typeof imageUrl === "string" && imageUrl.trim()) $set.ImageURL = imageUrl.trim();
+	
+	if (req.file) {
+  console.log("UPLOAD DEBUG:", {
+    originalname: req.file.originalname,
+    mimetype: req.file.mimetype,
+    size: req.file.size
+  });
+}
 
     if (req.file) {
       const cloudRes = await new Promise((resolve, reject) => {
@@ -1195,10 +1220,13 @@ async function updateCampaignHandler(req, res) {
 
     return res.json({ success: true, campaign: result.value });
   } catch (err) {
-    console.error("update campaign error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
+  console.error("update campaign error:", err);
+  return res.status(500).json({
+    success: false,
+    message: err?.message || "Server error"
+  });
 }
+}  // ✅ CLOSE updateCampaignHandler HERE
 
 // IMPORTANT: must use multer for FormData
 app.put("/api/update-campaign/:id", upload.single("image"), updateCampaignHandler);
@@ -1554,6 +1582,14 @@ app.get("/api/id-verification/me", async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+app.use((err, req, res, next) => {
+  if (err && (err.message?.includes("Only JPG") || err.code === "LIMIT_FILE_SIZE")) {
+    return res.status(400).json({ success: false, message: err.message || "Invalid upload" });
+  }
+  return next(err);
+});
+
 
 
 // ==================== STATIC FILES ====================
