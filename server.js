@@ -203,7 +203,7 @@ app.use(session({
   saveUninitialized: false,
 
   store: MongoStore.create({
-    mongoUrl: process.env.MONGO_URI,
+    client: mongoose.connection.getClient(),   // <-- THIS FIXES THE AUTH ERROR
     dbName: "joyfund",
     collectionName: "sessions"
   }),
