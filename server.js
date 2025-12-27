@@ -498,6 +498,27 @@ app.post("/api/signup", async (req, res) => {
     };
 
     await usersCollection.insertOne(newUser);
+	
+	await sendSubmissionEmails({
+  type: "Signup",
+  userEmail: cleanEmail,
+  userName: cleanName,
+  adminSubject: "New User Signup",
+  userSubject: "Welcome to JoyFund 💙💗",
+  adminHtml: `
+    <h2>New User Signup</h2>
+    <p><b>Name:</b> ${cleanName}</p>
+    <p><b>Email:</b> ${cleanEmail}</p>
+    <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+  `,
+  userHtml: `
+    <h2>Welcome to JoyFund 💙💗</h2>
+    <p>Hi ${cleanName},</p>
+    <p>Your account has been created successfully.</p>
+    <p>You can log in anytime and start exploring campaigns or create one of your own.</p>
+    <p>— JoyFund Team</p>
+  `
+});
 
     req.session.user = {
       name: newUser.Name,
