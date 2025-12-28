@@ -149,6 +149,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         const chargedAmount = (session.amount_total || 0) / 100;
         const originalDonation = session.metadata?.originalDonation || null;
         const campaignId = session.metadata?.campaignId || null;
+		const campaignTitle = session.metadata?.campaignTitle || null;
 
         const originalNum = Number(originalDonation);
         const originalAmount = Number.isFinite(originalNum) ? originalNum : null;
@@ -239,23 +240,54 @@ const upload = multer({
 
 // ==================== STRIPE CHECKOUT (DONATIONS) ====================
 // (stripe already initialized above — do NOT redeclare it)
+// ==================== STRIPE CHECKOUT (CAMPAIGN DONATIONS) ====================
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
-    const campaignId = req.params.campaignId;
+    const campaignId = String(req.params.campaignId || "").trim();
     const rawAmount = Number(req.body.amount);
     const target = Math.round(rawAmount * 100) / 100; // force 2 decimals
+
+    if (!campaignId) {
+      return res.status(400).json({ error: "Missing campaignId" });
+    }
 
     if (!target || !isFinite(target) || target < 1) {
       return res.status(400).json({ error: "Invalid donation amount" });
     }
 
-    // 🎯 Stripe Fee Coverage Logic
+    // ✅ Find campaign by Mongo _id OR legacy Id field
+    const idVariants = [{ Id: campaignId }, { id: campaignId }];
+    if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
+
+    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+    if (!campaign) {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+
+    const campaignTitle = String(campaign.title || campaign.Title || "JoyFund Campaign").trim();
+    const campaignDesc = String(campaign.Description || campaign.description || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .slice(0, 250);
+
+    // ✅ Use frontend-provided URLs safely (avoid open redirects)
+    const successUrlRaw = String(req.body.successUrl || "").trim();
+    const cancelUrlRaw  = String(req.body.cancelUrl || "").trim();
+
+    const safeSuccessUrl = successUrlRaw.startsWith(FRONTEND_URL)
+      ? successUrlRaw
+      : `${FRONTEND_URL}/thankyou.html`;
+
+    // If cancelUrl is the current campaign page, allow it; otherwise fallback to campaigns page
+    const safeCancelUrl = cancelUrlRaw.startsWith(FRONTEND_URL)
+      ? cancelUrlRaw
+      : `${FRONTEND_URL}/campaigns.html`;
+
+    // 🎯 Stripe Fee Coverage Logic (keep your existing approach)
     const stripePercent = 0.029;
     const stripeFlat = 0.30;
 
-    const totalToCharge =
-      (target + stripeFlat) / (1 - stripePercent);
-
+    const totalToCharge = (target + stripeFlat) / (1 - stripePercent);
     const finalAmount = Math.max(50, Math.round(totalToCharge * 100)); // minimum $0.50
 
     const session = await stripe.checkout.sessions.create({
@@ -265,27 +297,31 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
         price_data: {
           currency: "usd",
           product_data: {
-            name: "JoyFund Donation",
-            description: "Your donation helps cover platform processing fees so JoyFund receives the full amount ❤️"
+            // ✅ This is what fixes “general donation”
+            name: `Donation to: ${campaignTitle}`,
+            description: campaignDesc || "Campaign donation via JoyFund ❤️"
           },
           unit_amount: finalAmount,
         },
         quantity: 1,
       }],
-      success_url: `${FRONTEND_URL}/thankyou.html?session_id={CHECKOUT_SESSION_ID}`,
-	  cancel_url: `${FRONTEND_URL}/index.html`,
+
+      // ✅ Use the safe URLs
+      success_url: `${safeSuccessUrl}${safeSuccessUrl.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: safeCancelUrl,
 
       metadata: {
+        donationType: "campaign",
         campaignId,
+        campaignTitle,
         originalDonation: target.toFixed(2),
       }
     });
 
-    res.json({ sessionId: session.id });
-
+    return res.json({ sessionId: session.id });
   } catch (err) {
     console.error("Stripe Error:", err);
-    res.status(500).json({ error: "Failed to create checkout session" });
+    return res.status(500).json({ error: "Failed to create checkout session" });
   }
 });
 
