@@ -290,33 +290,38 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       ? cancelUrlRaw
       : `${FRONTEND_URL}/campaigns.html`;
 
-    // Stripe fee coverage logic (your existing approach)
+       // ✅ Charge enough to cover BOTH: JoyFund 5% + Stripe fees
+    // target = amount the donor wants the campaign to receive (you already validated this)
+    const donation = target;
+
+    const joyfundFeeRate = 0.05;
     const stripePercent = 0.029;
-    const stripeFlat = 0.30;
+    const stripeFixed = 0.30;
 
-    const totalToCharge = (target + stripeFlat) / (1 - stripePercent);
-    const finalAmount = Math.max(50, Math.round(totalToCharge * 100)); // minimum $0.50
+    // Total charged so that: (total - StripeFee - JoyFundFee) ≈ donation
+    const totalCharge =
+      (donation * (1 + joyfundFeeRate) + stripeFixed) / (1 - stripePercent);
 
+    // Stripe needs cents (integer)
+    const unitAmount = Math.max(50, Math.round(totalCharge * 100));
+
+    // ✅ Create Stripe session using unitAmount
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
       mode: "payment",
+      payment_method_types: ["card"],
       line_items: [{
         price_data: {
           currency: "usd",
           product_data: {
-            name: donationType === "mission"
-              ? "JoyFund Mission Donation"
-              : `Donation to: ${campaignTitle}`,
+            name: campaignTitle,
             description: campaignDesc
           },
-          unit_amount: finalAmount,
+          unit_amount: unitAmount
         },
-        quantity: 1,
+        quantity: 1
       }],
-
       success_url: `${safeSuccessUrl}${safeSuccessUrl.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: safeCancelUrl,
-
       metadata: {
         donationType,
         campaignId,
