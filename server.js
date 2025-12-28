@@ -723,6 +723,84 @@ app.get("/api/check-session", async (req, res) => {
   }
 });
 
+//=====================DONATION SUMMARY============
+app.get("/api/dashboard/donations-summary", async (req, res) => {
+  try {
+    const userEmail = req.session?.user?.email;
+    if (!userEmail) return res.status(401).json({ ok: false, error: "Not logged in" });
+
+    const email = String(userEmail).trim().toLowerCase();
+    const emailI = new RegExp("^" + email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
+
+    // 1) Find campaigns owned by this user
+    const ownedCampaigns = await db.collection("Campaigns").find({
+      $or: [{ Email: emailI }, { email: emailI }]
+    }, {
+      projection: { _id: 1, Id: 1, id: 1, Title: 1, title: 1 }
+    }).toArray();
+
+    // Build list of possible campaignId values that donations might store
+    const ownedIds = new Set();
+    for (const c of ownedCampaigns) {
+      if (c?._id) ownedIds.add(String(c._id));
+      if (c?.Id) ownedIds.add(String(c.Id));
+      if (c?.id) ownedIds.add(String(c.id));
+    }
+
+    if (ownedIds.size === 0) {
+      return res.json({ ok: true, totalRaised: 0, breakdown: [] });
+    }
+
+    // 2) Pull donations made TO those campaigns
+    const donationsToYou = await db.collection("Donations").find({
+      campaignId: { $in: Array.from(ownedIds) }
+    }).toArray();
+
+    // 3) Sum totals using originalDonation (what donor intended your campaign to receive)
+    const getOriginal = (d) => {
+      const n = Number(d.originalDonation ?? d.amount ?? d.Amount ?? 0);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const byCampaign = new Map();
+
+    for (const d of donationsToYou) {
+      const cid = String(d.campaignId || "");
+      const amt = getOriginal(d);
+      const title = d.campaignTitle || d.Title || "Untitled Campaign";
+
+      const prev = byCampaign.get(cid) || {
+        campaignId: cid,
+        campaignTitle: title,
+        total: 0,
+        count: 0,
+        lastDate: null
+      };
+
+      prev.total += amt;
+      prev.count += 1;
+
+      const dt = d.createdAt || d.CreatedAt || d.date || d.Date || null;
+      const parsed = dt ? new Date(dt) : null;
+      if (parsed && !isNaN(parsed.getTime())) {
+        if (!prev.lastDate || parsed > new Date(prev.lastDate)) prev.lastDate = parsed.toISOString();
+      }
+
+      if (title && title !== "Untitled Campaign") prev.campaignTitle = title;
+
+      byCampaign.set(cid, prev);
+    }
+
+    const breakdown = Array.from(byCampaign.values()).sort((a, b) => b.total - a.total);
+    const totalRaised = breakdown.reduce((s, x) => s + (Number(x.total) || 0), 0);
+
+    return res.json({ ok: true, totalRaised, breakdown });
+  } catch (err) {
+    console.error("GET /api/dashboard/donations-summary error:", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 
 // ==================== ADMIN ====================
 function requireAdmin(req, res, next) {
