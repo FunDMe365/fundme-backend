@@ -238,9 +238,7 @@ const upload = multer({
   }
 });
 
-// ==================== STRIPE CHECKOUT (DONATIONS) ====================
-// (stripe already initialized above — do NOT redeclare it)
-// ==================== STRIPE CHECKOUT (CAMPAIGN DONATIONS) ====================
+// ==================== STRIPE CHECKOUT (CAMPAIGN DONATIONS + MISSION GENERAL) ====================
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
     const campaignId = String(req.params.campaignId || "").trim();
@@ -255,20 +253,30 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       return res.status(400).json({ error: "Invalid donation amount" });
     }
 
-    // ✅ Find campaign by Mongo _id OR legacy Id field
-    const idVariants = [{ Id: campaignId }, { id: campaignId }];
-    if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
+    // ✅ Default info (MISSION general donation)
+    let donationType = "mission";
+    let campaignTitle = "JoyFund Mission (General Donation)";
+    let campaignDesc = "General donation supporting JoyFund’s mission.";
 
-    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
-    if (!campaign) {
-      return res.status(404).json({ error: "Campaign not found" });
+    // ✅ Only look up real campaigns if NOT mission
+    if (campaignId !== "mission") {
+      donationType = "campaign";
+
+      // Find campaign by Mongo _id OR legacy Id field
+      const idVariants = [{ Id: campaignId }, { id: campaignId }];
+      if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
+
+      const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+      if (!campaign) {
+        return res.status(404).json({ error: "Campaign not found" });
+      }
+
+      campaignTitle = String(campaign.title || campaign.Title || "JoyFund Campaign").trim();
+      campaignDesc = String(campaign.Description || campaign.description || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, 250) || "Campaign donation via JoyFund ❤️";
     }
-
-    const campaignTitle = String(campaign.title || campaign.Title || "JoyFund Campaign").trim();
-    const campaignDesc = String(campaign.Description || campaign.description || "")
-      .trim()
-      .replace(/\s+/g, " ")
-      .slice(0, 250);
 
     // ✅ Use frontend-provided URLs safely (avoid open redirects)
     const successUrlRaw = String(req.body.successUrl || "").trim();
@@ -278,12 +286,11 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       ? successUrlRaw
       : `${FRONTEND_URL}/thankyou.html`;
 
-    // If cancelUrl is the current campaign page, allow it; otherwise fallback to campaigns page
     const safeCancelUrl = cancelUrlRaw.startsWith(FRONTEND_URL)
       ? cancelUrlRaw
       : `${FRONTEND_URL}/campaigns.html`;
 
-    // 🎯 Stripe Fee Coverage Logic (keep your existing approach)
+    // Stripe fee coverage logic (your existing approach)
     const stripePercent = 0.029;
     const stripeFlat = 0.30;
 
@@ -297,21 +304,21 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
         price_data: {
           currency: "usd",
           product_data: {
-            // ✅ This is what fixes “general donation”
-            name: `Donation to: ${campaignTitle}`,
-            description: campaignDesc || "Campaign donation via JoyFund ❤️"
+            name: donationType === "mission"
+              ? "JoyFund Mission Donation"
+              : `Donation to: ${campaignTitle}`,
+            description: campaignDesc
           },
           unit_amount: finalAmount,
         },
         quantity: 1,
       }],
 
-      // ✅ Use the safe URLs
       success_url: `${safeSuccessUrl}${safeSuccessUrl.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: safeCancelUrl,
 
       metadata: {
-        donationType: "campaign",
+        donationType,
         campaignId,
         campaignTitle,
         originalDonation: target.toFixed(2),
