@@ -1528,104 +1528,6 @@ app.get("/api/admin/joyboost/requests", requireAdmin, async (req, res) => {
   }
 });
 
-// ==================== ADMIN: UPDATE JOYBOOST REQUEST STATUS ====================
-app.patch("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { status } = req.body || {};
-
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, message: "Invalid request id" });
-    }
-
-    const allowed = ["Pending", "Approved", "Denied"];
-    if (!allowed.includes(status)) {
-      return res.status(400).json({ success: false, message: "Invalid status" });
-    }
-
-    // 1) Update request status in Mongo
-    const result = await db.collection(JOYBOOST_REQUESTS).findOneAndUpdate(
-      { _id: new ObjectId(id) },
-      { $set: { status, reviewedAt: new Date(), reviewedBy: "admin" } },
-      { returnDocument: "after" }
-    );
-
-    const reqDoc = result?.value;
-    if (!reqDoc) return res.status(404).json({ success: false, message: "Not found" });
-
-    // 2) If approved: create payment link + email it
-    if (status === "Approved") {
-      if (!process.env.STRIPE_SECRET_KEY) {
-        return res.status(500).json({ success: false, message: "Missing STRIPE_SECRET_KEY" });
-      }
-      if (!process.env.FRONTEND_URL) {
-        return res.status(500).json({ success: false, message: "Missing FRONTEND_URL" });
-      }
-
-      // Choose an amount (edit this if you already store it somewhere else)
-      const amountDollars =
-        Number(reqDoc.requestedAmount ?? reqDoc.amountRequested ?? reqDoc.amount ?? 0);
-
-      if (!Number.isFinite(amountDollars) || amountDollars <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: "This request has no valid requested amount. Add requestedAmount to the request first."
-        });
-      }
-
-      // Create a one-time Stripe Checkout link
-      const session = await stripe.checkout.sessions.create({
-        mode: "payment",
-        payment_method_types: ["card"],
-        line_items: [
-          {
-            price_data: {
-              currency: "usd",
-              product_data: {
-                name: "JoyBoost Approval",
-                description: "Complete your JoyBoost approval payment"
-              },
-              unit_amount: Math.round(amountDollars * 100)
-            },
-            quantity: 1
-          }
-        ],
-        metadata: {
-          type: "joyboost",
-          joyboostRequestId: String(reqDoc._id)
-        },
-        success_url: `${process.env.FRONTEND_URL}/joyboost-approved-success.html?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${process.env.FRONTEND_URL}/joyboost.html?canceled=1`
-      });
-
-      // Store the link on the request (optional but helpful)
-      await db.collection(JOYBOOST_REQUESTS).updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { paymentLink: session.url, paymentLinkCreatedAt: new Date() } }
-      );
-
-      // Send the email with the link
-      await sendMailjet({
-        toEmail: reqDoc.email,
-        toName: reqDoc.name || "Friend",
-        subject: "Your JoyBoost request was approved 💛",
-        html: `
-          <p>Hi ${reqDoc.name || ""},</p>
-          <p>Your JoyBoost request has been <b>approved</b>.</p>
-          <p>To continue, please complete your payment here:</p>
-          <p><a href="${session.url}" target="_blank" rel="noopener">Complete Payment</a></p>
-          <p>— JoyFund</p>
-        `
-      });
-    }
-
-    return res.json({ success: true, request: reqDoc });
-  } catch (err) {
-    console.error("PATCH /api/admin/joyboost/requests/:id/status error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
 // ==================== ADMIN: ACTIVATE/UPDATE JOYBOOST SETTINGS ====================
 app.post("/api/admin/joyboost/activate", requireAdmin, async (req, res) => {
   try {
@@ -1716,97 +1618,97 @@ app.patch("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, r
       return res.status(400).json({ success: false, message: "Invalid status" });
     }
 
+    // 1) Update request status
     const result = await db.collection(JOYBOOST_REQUESTS).findOneAndUpdate(
       { _id: new ObjectId(id) },
       {
         $set: {
           status,
           denialReason: status === "Denied" ? reason : "",
-          reviewedAt: now(),
+          reviewedAt: new Date(),
           reviewedBy: "admin"
         }
       },
       { returnDocument: "after" }
     );
 
-    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
+    const reqDoc = result?.value;
+    if (!reqDoc) return res.status(404).json({ success: false, message: "Not found" });
 
-    // Optional: email applicant when Approved/Denied
-    const reqDoc = result.value;
-    // =====================
-// APPROVED → CREATE STRIPE PAYMENT LINK + EMAIL USER
-// =====================
-if (status === "Approved" && reqDoc?.email) {
-	// ✅ Don't send a new link if we already sent one
-if (reqDoc.paymentUrl) {
-  return res.json({
-    success: true,
-    request: reqDoc,
-    message: "Payment link already sent",
-    paymentUrl: reqDoc.paymentUrl
-  });
-}
+    // 2) If approved: create Stripe payment link + email it
+    if (status === "Approved" && reqDoc.email) {
+      // If Mailjet isn't configured, you'll see this in Render logs
+      console.log("JOYBOOST APPROVE: attempting email to", reqDoc.email);
 
+      // Amount: set in env if you want; defaults to $50
+      const amountCents = Number(process.env.JOYBOOST_APPROVAL_AMOUNT_CENTS || 5000);
 
-  const session = await stripe.checkout.sessions.create({
-    mode: "payment",
+      // Don’t generate a new link if we already generated one
+      if (!reqDoc.paymentUrl) {
+        const session = await stripe.checkout.sessions.create({
+          mode: "payment",
+          payment_method_types: ["card"],
+          line_items: [{
+            price_data: {
+              currency: "usd",
+              product_data: { name: "JoyBoost Activation" },
+              unit_amount: amountCents
+            },
+            quantity: 1
+          }],
+          customer_email: reqDoc.email,
+          metadata: {
+            type: "joyboost",
+            joyboostRequestId: String(reqDoc._id),
+            campaignId: String(reqDoc.campaignId || ""),
+            userEmail: String(reqDoc.email || "")
+          },
+          success_url: `${FRONTEND_URL}/joyboost-success.html?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${FRONTEND_URL}/joyboost.html?canceled=1`
+        });
 
-    line_items: [{
-      price_data: {
-        currency: "usd",
-        product_data: { name: "JoyBoost Activation" },
-        unit_amount: 5000,   // $50 – change later if needed
-      },
-      quantity: 1
-    }],
+        const paymentUrl = session.url;
 
-    customer_email: reqDoc.email,
+        await db.collection(JOYBOOST_REQUESTS).updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              paymentUrl,
+              paymentLinkSentAt: new Date(),
+              stripeSessionId: session.id
+            }
+          }
+        );
 
-    metadata: {
-      type: "joyboost",
-      joyboostRequestId: String(reqDoc._id),
-      campaignId: reqDoc.campaignId,
-      userEmail: reqDoc.email
-    },
+        // Send approval email (Mailjet)
+        await sendMailjet({
+          toEmail: reqDoc.email,
+          toName: reqDoc.name || "",
+          subject: "Your JoyBoost request was approved 🎉",
+          html: `
+            <p>Hi ${reqDoc.name || ""},</p>
+            <p>Your JoyBoost request has been <b>approved</b>!</p>
+            <p>To activate JoyBoost, please complete your secure payment here:</p>
+            <p><a href="${paymentUrl}" target="_blank" rel="noopener">${paymentUrl}</a></p>
+            <p>— JoyFund</p>
+          `
+        });
 
-    success_url: `${FRONTEND_URL}/joyboost-success.html?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${FRONTEND_URL}/joyboost.html?canceled=1`
-  });
-
-  const paymentUrl = session.url;
-
-  await db.collection(JOYBOOST_REQUESTS).updateOne(
-    { _id: reqDoc._id },
-    {
-      $set: {
-        paymentUrl,
-        paymentLinkSentAt: new Date(),
-        stripeSessionId: session.id
+        console.log("JOYBOOST APPROVE: email attempted + paymentUrl saved");
+      } else {
+        console.log("JOYBOOST APPROVE: paymentUrl already exists, not regenerating");
       }
     }
-  );
 
-  await sendMailjet({
-    toEmail: reqDoc.email,
-    toName: reqDoc.name || "",
-    subject: "Your JoyBoost request was approved 🎉",
-    html: `
-      <p>Hi ${reqDoc.name || ""},</p>
-      <p>Your JoyBoost request has been approved!</p>
-      <p>To activate JoyBoost, please complete your secure payment here:</p>
-      <p><a href="${paymentUrl}">${paymentUrl}</a></p>
-      <p>— JoyFund</p>
-    `
-  });
-}
+    // 3) Return updated request
+    const updated = await db.collection(JOYBOOST_REQUESTS).findOne({ _id: new ObjectId(id) });
+    return res.json({ success: true, request: updated });
 
-    return res.json({ success: true, request: result.value });
   } catch (err) {
     console.error("PATCH /api/admin/joyboost/requests/:id/status error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
 
 // ==================== PUBLIC: ACTIVE CAMPAIGNS (SEARCH/LIST) ====================
 app.get("/api/campaigns", async (req, res) => {
