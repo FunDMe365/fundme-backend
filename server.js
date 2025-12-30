@@ -1161,11 +1161,21 @@ function requireAdmin(req, res, next) {
 
 app.post("/api/admin-login", (req, res) => {
   const { username, password } = req.body;
+
   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
     req.session.admin = true;
-    return res.json({ success: true });
+
+    // ✅ Force session write before responding (same fix as signin/signup)
+    return req.session.save((err) => {
+      if (err) {
+        console.error("Session save error (admin-login):", err);
+        return res.status(500).json({ success: false, message: "Session failed to save" });
+      }
+      return res.json({ success: true });
+    });
   }
-  res.status(401).json({ success: false, message: "Invalid credentials" });
+
+  return res.status(401).json({ success: false, message: "Invalid credentials" });
 });
 
 app.post("/api/admin-logout", (req, res) => {
