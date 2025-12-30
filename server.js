@@ -3,6 +3,8 @@ require("dotenv").config();
 
 const express = require("express");
 const bodyParser = require("body-parser");
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
@@ -304,10 +306,6 @@ if (session.mode === "payment" && session.metadata?.type === "joyboost") {
     return res.status(500).json({ received: false });
   }
 });
-
-// ==================== MIDDLEWARE ====================
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
 
 
 // ==================== PRODUCTION-READY SESSION ====================
@@ -953,6 +951,9 @@ app.post("/api/joyboost/checkout", async (req, res) => {
 });
 
 // ==================== JOYBOOST: APPLY ====================
+console.log("🔥 HIT /api/joyboost/apply");
+console.log("📦 BODY:", req.body);
+
 app.post("/api/joyboost/apply", async (req, res) => {
   try {
     const { name, email, campaignId, goal, joy, notes } = req.body || {};
