@@ -1711,7 +1711,7 @@ if (reqDoc.paymentUrl) {
   }
 });
 
-app.POST("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, res) => {
+app.post("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, res) => {
   try {
     const id = String(req.params.id || "").trim();
     if (!ObjectId.isValid(id)) {
