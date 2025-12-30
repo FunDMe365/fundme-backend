@@ -184,8 +184,45 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
   }
 
   try {
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
+  // 1) Checkout completed (donations + JoyBoost signups)
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+	
+	// 2) Subscription canceled (turn JoyBoost OFF)
+if (event.type === "customer.subscription.deleted") {
+  const sub = event.data.object;
+
+  await db.collection("Users").updateOne(
+    { joyboostSubscriptionId: sub.id },
+    { $set: { joyboostActive: false, joyboostCanceledAt: new Date() } }
+  );
+
+  console.log("🛑 JoyBoost canceled:", sub.id);
+}
+
+
+	  // ================== JOYBOOST SUBSCRIPTION ==================
+if (session.mode === "subscription" && session.metadata?.product === "joyboost") {
+  const userId = session.metadata.userId;
+  const customerEmail = session.customer_details?.email || session.customer_email || null;
+  const subscriptionId = session.subscription;
+
+  if (userId) {
+    await db.collection("Users").updateOne(
+      { _id: ObjectId.isValid(userId) ? new ObjectId(userId) : userId },
+      {
+        $set: {
+          joyboostActive: true,
+          joyboostSubscriptionId: subscriptionId,
+          joyboostStartedAt: new Date()
+        }
+      }
+    );
+  }
+
+  console.log("✅ JoyBoost activated for user:", userId);
+  return res.json({ received: true });
+}
 
       // Idempotency: don’t insert twice
       const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
@@ -826,6 +863,46 @@ app.get("/api/check-session", async (req, res) => {
       identityVerified: false,
       identityStatus: "Not Submitted"
     });
+  }
+});
+
+//=====================JOYBOOST SUBSCRRIPTION CHECKOUT=============
+
+app.post("/api/joyboost/checkout", async (req, res) => {
+  try {
+    const { userId, email } = req.body; // you can pass these from frontend
+
+    if (!process.env.JOYBOOST_PRICE_ID) {
+      return res.status(500).json({ error: "Missing JOYBOOST_PRICE_ID in env" });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      line_items: [
+        {
+          price: process.env.JOYBOOST_PRICE_ID,
+          quantity: 1,
+        },
+      ],
+
+      // Optional but helpful
+      customer_email: email || undefined,
+
+      // Put identifiers so your webhook can map payments -> your user
+      client_reference_id: userId || undefined,
+      metadata: {
+        userId: userId || "",
+        product: "joyboost",
+      },
+
+      success_url: `${process.env.FRONTEND_URL}/joyboost-success.html?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL}/joyboost.html?canceled=1`,
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("JoyBoost checkout error:", err);
+    res.status(500).json({ error: err.message || "Stripe error" });
   }
 });
 
