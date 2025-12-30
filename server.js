@@ -49,6 +49,19 @@ process.on("unhandledRejection", (err) => {
   console.error("UNHANDLED REJECTION:", err);
 });
 
+app.get("/api/_debug/admin-env", (req, res) => {
+  const u = process.env.ADMIN_USERNAME || "";
+  const p = process.env.ADMIN_PASSWORD || "";
+  res.json({
+    adminUser_set: !!u,
+    adminUser_len: u.length,
+    adminPass_set: !!p,
+    adminPass_len: p.length,
+    node_env: process.env.NODE_ENV || null
+  });
+});
+
+
 // ==================== CORS (must be before routes) ====================
 const allowedOrigins = [
   "https://fundasmile.net",
