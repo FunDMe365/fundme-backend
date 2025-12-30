@@ -1191,7 +1191,6 @@ app.get("/api/admin/donations", requireAdmin, async (req, res) => {
 
 app.get("/api/admin-check", (req, res) => {
   res.json({ admin: !!(req.session && req.session.admin) });
-{ "admin": true }
 });
 
 // ✅ ONE-TIME MAINTENANCE: normalize campaign owner emails to lowercase
