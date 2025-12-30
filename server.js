@@ -132,6 +132,37 @@ function daysBetween(a, b) {
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
 
+// ==================== JOYBOOST: RESOLVE CAMPAIGN BY ANY ID ====================
+async function findCampaignByAnyId(campaignIdRaw) {
+  const campaignId = String(campaignIdRaw || "").trim();
+  if (!campaignId) return null;
+
+  const idVariants = [{ Id: campaignId }, { id: campaignId }];
+  if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
+
+  return db.collection("Campaigns").findOne({ $or: idVariants });
+}
+
+function normalizeJoyBoostSetting(doc) {
+  if (!doc) return null;
+  return {
+    _id: String(doc._id),
+    campaignId: doc.campaignId,
+    isActive: !!doc.isActive,
+    featured: !!doc.featured,
+    seoTitle: doc.seoTitle || "",
+    seoDescription: doc.seoDescription || "",
+    shareBlurb: doc.shareBlurb || "",
+    tags: Array.isArray(doc.tags) ? doc.tags : [],
+    rewrittenIntro: doc.rewrittenIntro || "",
+    campaignTitle: doc.campaignTitle || "",
+    campaignOwnerEmail: doc.campaignOwnerEmail || "",
+    updatedAt: doc.updatedAt || null,
+    createdAt: doc.createdAt || null,
+    lastCheckinSentAt: doc.lastCheckinSentAt || null
+  };
+}
+
 
 // ==================== STRIPE ====================
 const stripe = Stripe(STRIPE_SECRET_KEY);
@@ -540,32 +571,42 @@ cron.schedule("0 10 * * *", async () => { // daily at 10:00 server time
       });
 
       if (!recentDonation) {
-        // We need campaign owner email; if you store it in campaigns collection, fetch it.
-        // If you don't have a canonical campaigns collection, tell me what collection holds it and we’ll wire it in.
-        // For now, send to ADMIN so nothing breaks.
+        // Get owner email from JoyBoost settings (preferred), fallback to Campaigns
+        let toEmail = String(jb.campaignOwnerEmail || "").trim().toLowerCase();
+        let toName = "Campaign Owner";
+
+        if (!toEmail) {
+          const campaign = await findCampaignByAnyId(campaignId);
+          toEmail = String(campaign?.Email ?? campaign?.email ?? "").trim().toLowerCase();
+        }
+
+        if (!toEmail) {
+          toEmail = ADMIN_EMAIL; // fallback so you still get notified
+          toName = "JoyFund Admin";
+        }
+
         await sendMailjet({
-          toEmail: ADMIN_EMAIL,
-          toName: "JoyFund Admin",
-          subject: `JoyBoost Check-in Needed: ${campaignId}`,
+          toEmail,
+          toName,
+          subject: `JoyBoost Check-in Needed: ${jb.campaignTitle || campaignId}`,
           html: `
-            <p>JoyBoost campaign <b>${campaignId}</b> has no donations in the last 7 days.</p>
+            <p>Your JoyBoost campaign <b>${jb.campaignTitle || campaignId}</b> has no donations in the last 7 days.</p>
             <p>Suggested next step: refresh the story headline + repost the share blurb.</p>
+            ${jb.shareBlurb ? `<hr /><p><b>Suggested share blurb:</b><br/>${jb.shareBlurb}</p>` : ""}
           `
         });
 
+        // ✅ mark as sent so you don't spam
         await db.collection(JOYBOOST_SETTINGS).updateOne(
           { campaignId },
           { $set: { lastCheckinSentAt: now() } }
         );
       }
     }
-
-    console.log("✅ JoyBoost daily check-in completed");
   } catch (err) {
-    console.error("❌ JoyBoost daily check-in error:", err);
+    console.error("JOYBOOST DAILY CHECK-IN error:", err);
   }
 });
-
 
 // ==================== LIVE VISITOR TRACKING ====================
 const liveVisitors = {};
@@ -907,9 +948,18 @@ app.get("/api/joyboost/momentum/:campaignId", async (req, res) => {
     });
 
     const totalDonations = await db.collection("Donations").aggregate([
-      { $match: { campaignId } },
-      { $group: { _id: "$campaignId", sum: { $sum: "$originalDonation" } } }
-    ]).toArray();
+  { $match: { campaignId } },
+  {
+    $group: {
+      _id: "$campaignId",
+      sum: {
+        $sum: {
+          $convert: { input: "$originalDonation", to: "double", onError: 0, onNull: 0 }
+        }
+      }
+    }
+  }
+]).toArray();
 
     return res.json({
       success: true,
@@ -1363,11 +1413,19 @@ app.get("/api/admin/joyboost/requests", requireAdmin, async (req, res) => {
   }
 });
 
-// ==================== ADMIN: ACTIVATE JOYBOOST ====================
+// ==================== ADMIN: ACTIVATE/UPDATE JOYBOOST SETTINGS ====================
 app.post("/api/admin/joyboost/activate", requireAdmin, async (req, res) => {
   try {
     const { campaignId, isActive, featured, seoTitle, seoDescription, shareBlurb, tags, rewrittenIntro } = req.body || {};
     if (!campaignId) return res.status(400).json({ success: false, message: "Missing campaignId" });
+
+    const campaign = await findCampaignByAnyId(campaignId);
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: "Campaign not found for campaignId" });
+    }
+
+    const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
+    const campaignTitle = String(campaign.title ?? campaign.Title ?? "").trim();
 
     const update = {
       campaignId: String(campaignId).trim(),
@@ -1376,9 +1434,16 @@ app.post("/api/admin/joyboost/activate", requireAdmin, async (req, res) => {
       seoTitle: String(seoTitle || "").trim(),
       seoDescription: String(seoDescription || "").trim(),
       shareBlurb: String(shareBlurb || "").trim(),
-      tags: Array.isArray(tags) ? tags.map(t => String(t).trim()).filter(Boolean) : String(tags || "").split(",").map(s => s.trim()).filter(Boolean),
+      tags: Array.isArray(tags)
+        ? tags.map(t => String(t).trim()).filter(Boolean)
+        : String(tags || "").split(",").map(s => s.trim()).filter(Boolean),
       rewrittenIntro: String(rewrittenIntro || "").trim(),
-      updatedAt: now(),
+
+      // ✅ store helpful campaign context
+      campaignOwnerEmail: ownerEmail,
+      campaignTitle: campaignTitle,
+
+      updatedAt: now()
     };
 
     await db.collection(JOYBOOST_SETTINGS).updateOne(
@@ -1390,6 +1455,104 @@ app.post("/api/admin/joyboost/activate", requireAdmin, async (req, res) => {
     return res.json({ success: true });
   } catch (err) {
     console.error("POST /api/admin/joyboost/activate error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== ADMIN: JOYBOOST SETTINGS LIST ====================
+app.get("/api/admin/joyboost/settings", requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection(JOYBOOST_SETTINGS)
+      .find({})
+      .sort({ featured: -1, isActive: -1, updatedAt: -1, createdAt: -1 })
+      .limit(2000)
+      .toArray();
+
+    return res.json({ success: true, settings: rows.map(normalizeJoyBoostSetting) });
+  } catch (err) {
+    console.error("GET /api/admin/joyboost/settings error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load settings" });
+  }
+});
+
+app.get("/api/admin/joyboost/settings/:campaignId", requireAdmin, async (req, res) => {
+  try {
+    const campaignId = String(req.params.campaignId || "").trim();
+    const row = await db.collection(JOYBOOST_SETTINGS).findOne({ campaignId });
+    return res.json({ success: true, setting: normalizeJoyBoostSetting(row) });
+  } catch (err) {
+    console.error("GET /api/admin/joyboost/settings/:campaignId error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load setting" });
+  }
+});
+
+// ==================== ADMIN: UPDATE JOYBOOST REQUEST STATUS ====================
+// status: Pending | Approved | Denied
+app.patch("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid request id" });
+    }
+
+    const status = String(req.body.status || "").trim();
+    const reason = String(req.body.reason || "").trim();
+
+    const allowed = ["Pending", "Approved", "Denied"];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    const result = await db.collection(JOYBOOST_REQUESTS).findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          status,
+          denialReason: status === "Denied" ? reason : "",
+          reviewedAt: now(),
+          reviewedBy: "admin"
+        }
+      },
+      { returnDocument: "after" }
+    );
+
+    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
+
+    // Optional: email applicant when Approved/Denied
+    const reqDoc = result.value;
+    if (reqDoc?.email && (status === "Approved" || status === "Denied")) {
+      const subject =
+        status === "Approved"
+          ? "Your JoyBoost request was approved 💛"
+          : "Update on your JoyBoost request";
+
+      const body =
+        status === "Approved"
+          ? `
+            <p>Hi ${reqDoc.name || ""},</p>
+            <p>Your JoyBoost request for campaign <b>${reqDoc.campaignId}</b> was approved.</p>
+            <p>We’ll follow up with the next steps shortly.</p>
+            <p>— JoyFund</p>
+          `
+          : `
+            <p>Hi ${reqDoc.name || ""},</p>
+            <p>Thanks for applying for JoyBoost. At this time we weren’t able to approve your request.</p>
+            ${reason ? `<p><b>Reason:</b> ${reason}</p>` : ""}
+            <p>You’re welcome to apply again after updating your campaign.</p>
+            <p>— JoyFund</p>
+          `;
+
+      await sendMailjet({
+        toEmail: String(reqDoc.email).trim().toLowerCase(),
+        toName: reqDoc.name || "",
+        subject,
+        html: body
+      });
+    }
+
+    return res.json({ success: true, request: result.value });
+  } catch (err) {
+    console.error("PATCH /api/admin/joyboost/requests/:id/status error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
