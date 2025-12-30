@@ -1175,12 +1175,21 @@ function requireAdmin(req, res, next) {
 }
 
 app.post("/api/admin-login", (req, res) => {
-  const { username, password } = req.body;
+  console.log("ADMIN LOGIN HIT", {
+    bodyKeys: Object.keys(req.body || {}),
+    username_len: (req.body?.username || "").length,
+    password_len: (req.body?.password || "").length
+  });
 
-  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+  const username = (req.body.username || "").trim();
+  const password = (req.body.password || "").trim();
+
+  const adminUser = (process.env.ADMIN_USERNAME || "").trim();
+  const adminPass = (process.env.ADMIN_PASSWORD || "").trim();
+
+  if (username === adminUser && password === adminPass) {
     req.session.admin = true;
 
-    // ✅ Force session write before responding (same fix as signin/signup)
     return req.session.save((err) => {
       if (err) {
         console.error("Session save error (admin-login):", err);
@@ -1190,34 +1199,7 @@ app.post("/api/admin-login", (req, res) => {
     });
   }
 
-  return res.status(401).json({ success: false, message: "Invalid credentials" });
-});
-console.log("ADMIN LOGIN HIT", {
-  bodyKeys: Object.keys(req.body || {}),
-  username_len: (req.body?.username || "").length,
-  password_len: (req.body?.password || "").length
-});
-
-
-app.post("/api/admin-logout", (req, res) => {
-  req.session.destroy(err =>
-    err ? res.status(500).json({ success: false }) : res.json({ success: true })
-  );
-});
-
-app.get("/api/admin/donations", requireAdmin, async (req, res) => {
-  try {
-    const donations = await db.collection("Donations")
-      .find({})
-      .sort({ createdAt: -1, date: -1, _id: -1 })
-      .limit(2000)
-      .toArray();
-
-    res.json({ success: true, donations });
-  } catch (err) {
-    console.error("GET /api/admin/donations error:", err);
-    res.status(500).json({ success: false, message: "Failed to load donations" });
-  }
+  return res.status(401).json({ success: false, message: "Invalid admin username or password" });
 });
 
 app.get("/api/admin-check", (req, res) => {
