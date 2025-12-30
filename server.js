@@ -1604,6 +1604,8 @@ app.get("/api/admin/joyboost/settings/:campaignId", requireAdmin, async (req, re
 // ==================== ADMIN: UPDATE JOYBOOST REQUEST STATUS ====================
 // status: Pending | Approved | Denied
 app.patch("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, res) => {
+	console.log("✅ JOYBOOST STATUS ROUTE HIT", req.method, req.originalUrl, "body:", req.body, "cookie?", !!req.headers.cookie);
+
   try {
     const id = String(req.params.id || "").trim();
     if (!ObjectId.isValid(id)) {
