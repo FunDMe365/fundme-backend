@@ -294,16 +294,17 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
     // target = amount the donor wants the campaign to receive (you already validated this)
     const donation = target;
 
-    const joyfundFeeRate = 0.05;
-    const stripePercent = 0.029;
-    const stripeFixed = 0.30;
+    const joyfundFeeRate = 0.02;
+const stripePercent = 0.029;
+const stripeFixed = 0.30;
 
-    // Total charged so that: (total - StripeFee - JoyFundFee) ≈ donation
-    const totalCharge =
-      (donation * (1 + joyfundFeeRate) + stripeFixed) / (1 - stripePercent);
+// gross so that after Stripe fee, there’s enough to cover:
+// campaign donation + JoyFund fee
+const totalCharge =
+  (donation * (1 + joyfundFeeRate) + stripeFixed) / (1 - stripePercent);
 
-    // Stripe needs cents (integer)
-    const unitAmount = Math.max(50, Math.round(totalCharge * 100));
+// Use CEIL so the campaign is never shorted due to rounding
+const unitAmount = Math.max(50, Math.ceil(totalCharge * 100));
 
     // ✅ Create Stripe session using unitAmount
     const session = await stripe.checkout.sessions.create({
