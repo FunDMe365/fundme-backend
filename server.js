@@ -304,7 +304,7 @@ app.set("trust proxy", 1);
 
 app.use(session({
   name: "joyfund.sid",
-  secret: process.env.SESSION_SECRET,
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
 
