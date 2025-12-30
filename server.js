@@ -330,12 +330,11 @@ app.use(session({
   }),
 
   cookie: {
-    secure: true,
-    sameSite: "none",
-    httpOnly: true,
-    domain: ".fundasmile.net",
-    path: "/"
-  }
+  secure: true,
+  sameSite: "none",
+  httpOnly: true,
+  path: "/"
+}
 }));
 
 // ==================== CLOUDINARY ====================
@@ -803,6 +802,17 @@ app.post("/api/signin", async (req, res) => {
     console.error("Signin error:", err);
     res.status(500).json({ error: "Signin failed" });
   }
+});
+
+
+app.get("/api/_debug/session", (req, res) => {
+  res.json({
+    hasCookieHeader: !!req.headers.cookie,
+    sidCookiePresent: (req.headers.cookie || "").includes("joyfund.sid="),
+    sessionID: req.sessionID || null,
+    hasSession: !!req.session,
+    isAdmin: !!(req.session && req.session.admin)
+  });
 });
 
 // ==================== DELETE ACCOUNT ====================
