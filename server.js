@@ -184,56 +184,65 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
   }
 
   try {
-  // 1) Checkout completed (donations + JoyBoost signups)
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-	
-	// 2) Subscription canceled (turn JoyBoost OFF)
-if (event.type === "customer.subscription.deleted") {
-  const sub = event.data.object;
+    // ✅ 1) Checkout completed (donations + JoyBoost subscription signups)
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+	  
+	  // ================== JOYBOOST APPROVAL PAYMENT (ONE-TIME) ==================
+if (session.mode === "payment" && session.metadata?.type === "joyboost") {
+  const requestId = session.metadata.joyboostRequestId;
 
-  await db.collection("Users").updateOne(
-    { joyboostSubscriptionId: sub.id },
-    { $set: { joyboostActive: false, joyboostCanceledAt: new Date() } }
-  );
-
-  console.log("🛑 JoyBoost canceled:", sub.id);
-}
-
-
-	  // ================== JOYBOOST SUBSCRIPTION ==================
-if (session.mode === "subscription" && session.metadata?.product === "joyboost") {
-  const userId = session.metadata.userId;
-  const customerEmail = session.customer_details?.email || session.customer_email || null;
-  const subscriptionId = session.subscription;
-
-  if (userId) {
-    await db.collection("Users").updateOne(
-      { _id: ObjectId.isValid(userId) ? new ObjectId(userId) : userId },
+  if (requestId && ObjectId.isValid(requestId)) {
+    await db.collection(JOYBOOST_REQUESTS).updateOne(
+      { _id: new ObjectId(requestId) },
       {
         $set: {
-          joyboostActive: true,
-          joyboostSubscriptionId: subscriptionId,
-          joyboostStartedAt: new Date()
+          paid: true,
+          paidAt: new Date(),
+          paidStripeSessionId: session.id,
+          paidAmount: (session.amount_total || 0) / 100
         }
       }
     );
-  }
 
-  console.log("✅ JoyBoost activated for user:", userId);
-  return res.json({ received: true });
+    console.log("✅ JoyBoost approval payment received for request:", requestId);
+  }
 }
 
-      // Idempotency: don’t insert twice
-      const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
 
-      if (!exists && session.payment_status === "paid") {
+      // ================== JOYBOOST SUBSCRIPTION ==================
+      if (session.mode === "subscription" && session.metadata?.product === "joyboost") {
+        const userId = session.metadata.userId;
+        const subscriptionId = session.subscription;
+
+        if (userId) {
+          await db.collection("Users").updateOne(
+            { _id: ObjectId.isValid(userId) ? new ObjectId(userId) : userId },
+            {
+              $set: {
+                joyboostActive: true,
+                joyboostSubscriptionId: subscriptionId,
+                joyboostStartedAt: new Date()
+              }
+            }
+          );
+        }
+
+        console.log("✅ JoyBoost activated for user:", userId);
+      }
+
+      // ================== DONATION RECORDING ==================
+		if (!(session.metadata?.type === "joyboost")) {
+		const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
+
+		if (!exists && session.payment_status === "paid") {
         const email = session.customer_details?.email || null;
         const name = session.customer_details?.name || null;
         const chargedAmount = (session.amount_total || 0) / 100;
+
         const originalDonation = session.metadata?.originalDonation || null;
         const campaignId = session.metadata?.campaignId || null;
-		const campaignTitle = session.metadata?.campaignTitle || null;
+        const campaignTitle = session.metadata?.campaignTitle || null;
 
         const originalNum = Number(originalDonation);
         const originalAmount = Number.isFinite(originalNum) ? originalNum : null;
@@ -241,14 +250,13 @@ if (session.mode === "subscription" && session.metadata?.product === "joyboost")
         await db.collection("Donations").insertOne({
           stripeSessionId: session.id,
           campaignId,
+          campaignTitle,
 
-          // legacy fields for admin/dashboard
           date: new Date(),
           name,
           email,
           amount: originalAmount ?? chargedAmount,
 
-          // stripe fields
           originalDonation,
           chargedAmount,
           currency: session.currency,
@@ -259,7 +267,20 @@ if (session.mode === "subscription" && session.metadata?.product === "joyboost")
         console.log("✅ Donation recorded via webhook:", session.id);
       } else {
         console.log("ℹ️ Donation already recorded or not paid:", session.id, session.payment_status);
+		  }   // closes: if (!exists && session.payment_status === "paid")
+		}     // closes: if (!(session.metadata?.type === "joyboost"))
       }
+
+    // ✅ 2) Subscription canceled (turn JoyBoost OFF)
+    if (event.type === "customer.subscription.deleted") {
+      const sub = event.data.object;
+
+      await db.collection("Users").updateOne(
+        { joyboostSubscriptionId: sub.id },
+        { $set: { joyboostActive: false, joyboostCanceledAt: new Date() } }
+      );
+
+      console.log("🛑 JoyBoost canceled:", sub.id);
     }
 
     return res.json({ received: true });
@@ -1597,35 +1618,72 @@ app.patch("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, r
 
     // Optional: email applicant when Approved/Denied
     const reqDoc = result.value;
-    if (reqDoc?.email && (status === "Approved" || status === "Denied")) {
-      const subject =
-        status === "Approved"
-          ? "Your JoyBoost request was approved 💛"
-          : "Update on your JoyBoost request";
+    // =====================
+// APPROVED → CREATE STRIPE PAYMENT LINK + EMAIL USER
+// =====================
+if (status === "Approved" && reqDoc?.email) {
+	// ✅ Don't send a new link if we already sent one
+if (reqDoc.paymentUrl) {
+  return res.json({
+    success: true,
+    request: reqDoc,
+    message: "Payment link already sent",
+    paymentUrl: reqDoc.paymentUrl
+  });
+}
 
-      const body =
-        status === "Approved"
-          ? `
-            <p>Hi ${reqDoc.name || ""},</p>
-            <p>Your JoyBoost request for campaign <b>${reqDoc.campaignId}</b> was approved.</p>
-            <p>We’ll follow up with the next steps shortly.</p>
-            <p>— JoyFund</p>
-          `
-          : `
-            <p>Hi ${reqDoc.name || ""},</p>
-            <p>Thanks for applying for JoyBoost. At this time we weren’t able to approve your request.</p>
-            ${reason ? `<p><b>Reason:</b> ${reason}</p>` : ""}
-            <p>You’re welcome to apply again after updating your campaign.</p>
-            <p>— JoyFund</p>
-          `;
 
-      await sendMailjet({
-        toEmail: String(reqDoc.email).trim().toLowerCase(),
-        toName: reqDoc.name || "",
-        subject,
-        html: body
-      });
+  const session = await stripe.checkout.sessions.create({
+    mode: "payment",
+
+    line_items: [{
+      price_data: {
+        currency: "usd",
+        product_data: { name: "JoyBoost Activation" },
+        unit_amount: 5000,   // $50 – change later if needed
+      },
+      quantity: 1
+    }],
+
+    customer_email: reqDoc.email,
+
+    metadata: {
+      type: "joyboost",
+      joyboostRequestId: String(reqDoc._id),
+      campaignId: reqDoc.campaignId,
+      userEmail: reqDoc.email
+    },
+
+    success_url: `${FRONTEND_URL}/joyboost-success.html?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${FRONTEND_URL}/joyboost.html?canceled=1`
+  });
+
+  const paymentUrl = session.url;
+
+  await db.collection(JOYBOOST_REQUESTS).updateOne(
+    { _id: reqDoc._id },
+    {
+      $set: {
+        paymentUrl,
+        paymentLinkSentAt: new Date(),
+        stripeSessionId: session.id
+      }
     }
+  );
+
+  await sendMailjet({
+    toEmail: reqDoc.email,
+    toName: reqDoc.name || "",
+    subject: "Your JoyBoost request was approved 🎉",
+    html: `
+      <p>Hi ${reqDoc.name || ""},</p>
+      <p>Your JoyBoost request has been approved!</p>
+      <p>To activate JoyBoost, please complete your secure payment here:</p>
+      <p><a href="${paymentUrl}">${paymentUrl}</a></p>
+      <p>— JoyFund</p>
+    `
+  });
+}
 
     return res.json({ success: true, request: result.value });
   } catch (err) {
