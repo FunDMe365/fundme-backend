@@ -3,8 +3,6 @@ require("dotenv").config();
 
 const express = require("express");
 const bodyParser = require("body-parser");
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
 const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
@@ -46,6 +44,8 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
 
 // ==================== APP ====================
 const app = express();
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 app.set("trust proxy", 1);
 process.on("unhandledRejection", (err) => {
   console.error("UNHANDLED REJECTION:", err);
@@ -951,9 +951,6 @@ app.post("/api/joyboost/checkout", async (req, res) => {
 });
 
 // ==================== JOYBOOST: APPLY ====================
-console.log("🔥 HIT /api/joyboost/apply");
-console.log("📦 BODY:", req.body);
-
 app.post("/api/joyboost/apply", async (req, res) => {
   try {
     const { name, email, campaignId, goal, joy, notes } = req.body || {};
@@ -1607,112 +1604,6 @@ app.get("/api/admin/joyboost/settings/:campaignId", requireAdmin, async (req, re
 // ==================== ADMIN: UPDATE JOYBOOST REQUEST STATUS ====================
 // status: Pending | Approved | Denied
 app.patch("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, res) => {
-  try {
-    const id = String(req.params.id || "").trim();
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ success: false, message: "Invalid request id" });
-    }
-
-    const status = String(req.body.status || "").trim();
-    const reason = String(req.body.reason || "").trim();
-
-    const allowed = ["Pending", "Approved", "Denied"];
-    if (!allowed.includes(status)) {
-      return res.status(400).json({ success: false, message: "Invalid status" });
-    }
-
-    const result = await db.collection(JOYBOOST_REQUESTS).findOneAndUpdate(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          status,
-          denialReason: status === "Denied" ? reason : "",
-          reviewedAt: now(),
-          reviewedBy: "admin"
-        }
-      },
-      { returnDocument: "after" }
-    );
-
-    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
-
-    // Optional: email applicant when Approved/Denied
-    const reqDoc = result.value;
-    // =====================
-// APPROVED → CREATE STRIPE PAYMENT LINK + EMAIL USER
-// =====================
-if (status === "Approved" && reqDoc?.email) {
-	// ✅ Don't send a new link if we already sent one
-if (reqDoc.paymentUrl) {
-  return res.json({
-    success: true,
-    request: reqDoc,
-    message: "Payment link already sent",
-    paymentUrl: reqDoc.paymentUrl
-  });
-}
-
-
-  const session = await stripe.checkout.sessions.create({
-    mode: "payment",
-
-    line_items: [{
-      price_data: {
-        currency: "usd",
-        product_data: { name: "JoyBoost Activation" },
-        unit_amount: 5000,   // $50 – change later if needed
-      },
-      quantity: 1
-    }],
-
-    customer_email: reqDoc.email,
-
-    metadata: {
-      type: "joyboost",
-      joyboostRequestId: String(reqDoc._id),
-      campaignId: reqDoc.campaignId,
-      userEmail: reqDoc.email
-    },
-
-    success_url: `${FRONTEND_URL}/joyboost-success.html?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${FRONTEND_URL}/joyboost.html?canceled=1`
-  });
-
-  const paymentUrl = session.url;
-
-  await db.collection(JOYBOOST_REQUESTS).updateOne(
-    { _id: reqDoc._id },
-    {
-      $set: {
-        paymentUrl,
-        paymentLinkSentAt: new Date(),
-        stripeSessionId: session.id
-      }
-    }
-  );
-
-  await sendMailjet({
-    toEmail: reqDoc.email,
-    toName: reqDoc.name || "",
-    subject: "Your JoyBoost request was approved 🎉",
-    html: `
-      <p>Hi ${reqDoc.name || ""},</p>
-      <p>Your JoyBoost request has been approved!</p>
-      <p>To activate JoyBoost, please complete your secure payment here:</p>
-      <p><a href="${paymentUrl}">${paymentUrl}</a></p>
-      <p>— JoyFund</p>
-    `
-  });
-}
-
-    return res.json({ success: true, request: result.value });
-  } catch (err) {
-    console.error("PATCH /api/admin/joyboost/requests/:id/status error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-app.post("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, res) => {
   try {
     const id = String(req.params.id || "").trim();
     if (!ObjectId.isValid(id)) {
