@@ -1177,24 +1177,20 @@ function requireAdmin(req, res, next) {
 app.post("/api/admin-login", (req, res) => {
   console.log("ADMIN LOGIN HIT", {
     bodyKeys: Object.keys(req.body || {}),
-    username_len: (req.body?.username || "").length,
-    password_len: (req.body?.password || "").length
+    username_type: typeof req.body?.username,
+    password_type: typeof req.body?.password,
   });
 
-  const username = (req.body.username || "").trim();
-  const password = (req.body.password || "").trim();
+  const username = String(req.body?.username ?? "").trim();
+  const password = String(req.body?.password ?? "").trim();
 
-  const adminUser = (process.env.ADMIN_USERNAME || "").trim();
-  const adminPass = (process.env.ADMIN_PASSWORD || "").trim();
+  const adminUser = String(process.env.ADMIN_USERNAME ?? "").trim();
+  const adminPass = String(process.env.ADMIN_PASSWORD ?? "").trim();
 
   if (username === adminUser && password === adminPass) {
     req.session.admin = true;
-
     return req.session.save((err) => {
-      if (err) {
-        console.error("Session save error (admin-login):", err);
-        return res.status(500).json({ success: false, message: "Session failed to save" });
-      }
+      if (err) return res.status(500).json({ success: false, message: "Session failed to save" });
       return res.json({ success: true });
     });
   }
