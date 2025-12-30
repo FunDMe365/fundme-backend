@@ -38,6 +38,8 @@ const MAILJET_API_SECRET = process.env.MAILJET_API_SECRET;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://fundasmile.net";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "FunDMe$123";
+console.log("ADMIN_USERNAME set?", !!process.env.ADMIN_USERNAME, "len:", (process.env.ADMIN_USERNAME || "").length);
+console.log("ADMIN_PASSWORD set?", !!process.env.ADMIN_PASSWORD, "len:", (process.env.ADMIN_PASSWORD || "").length);
 const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
 
 // ==================== APP ====================
