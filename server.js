@@ -13,6 +13,7 @@ const cloudinary = require("cloudinary").v2;
 const cors = require("cors");
 const fs = require("fs");
 const { ObjectId } = require("mongodb");
+const cron = require("node-cron");
 
 const mongoose = require("./db");
 const db = mongoose.connection;
@@ -116,6 +117,21 @@ async function requireVerifiedIdentity(req, res, next) {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 }
+
+// ==================== JOYBOOST HELPERS ====================
+const JOYBOOST_REQUESTS = "JoyBoost_Requests";
+const JOYBOOST_SETTINGS = "JoyBoost_Settings"; // per-campaign
+const CAMPAIGN_VIEWS = "CampaignViews";
+
+function now() { return new Date(); }
+
+function safeLower(s) { return String(s || "").trim().toLowerCase(); }
+
+function daysBetween(a, b) {
+  const ms = Math.abs(new Date(b).getTime() - new Date(a).getTime());
+  return Math.floor(ms / (1000 * 60 * 60 * 24));
+}
+
 
 // ==================== STRIPE ====================
 const stripe = Stripe(STRIPE_SECRET_KEY);
@@ -503,6 +519,54 @@ async function sendSubmissionEmails({
   await Promise.allSettled(tasks);
 }
 
+// ==================== JOYBOOST: DAILY CHECK-IN ====================
+cron.schedule("0 10 * * *", async () => { // daily at 10:00 server time
+  try {
+    const active = await db.collection(JOYBOOST_SETTINGS).find({ isActive: true }).toArray();
+
+    for (const jb of active) {
+      const campaignId = jb.campaignId;
+
+      // Skip if already sent recently
+      if (jb.lastCheckinSentAt && daysBetween(jb.lastCheckinSentAt, now()) < 7) continue;
+
+      // If no donation in last 7 days, send check-in
+      const since = new Date();
+      since.setDate(since.getDate() - 7);
+
+      const recentDonation = await db.collection("Donations").findOne({
+        campaignId,
+        createdAt: { $gte: since }
+      });
+
+      if (!recentDonation) {
+        // We need campaign owner email; if you store it in campaigns collection, fetch it.
+        // If you don't have a canonical campaigns collection, tell me what collection holds it and we’ll wire it in.
+        // For now, send to ADMIN so nothing breaks.
+        await sendMailjet({
+          toEmail: ADMIN_EMAIL,
+          toName: "JoyFund Admin",
+          subject: `JoyBoost Check-in Needed: ${campaignId}`,
+          html: `
+            <p>JoyBoost campaign <b>${campaignId}</b> has no donations in the last 7 days.</p>
+            <p>Suggested next step: refresh the story headline + repost the share blurb.</p>
+          `
+        });
+
+        await db.collection(JOYBOOST_SETTINGS).updateOne(
+          { campaignId },
+          { $set: { lastCheckinSentAt: now() } }
+        );
+      }
+    }
+
+    console.log("✅ JoyBoost daily check-in completed");
+  } catch (err) {
+    console.error("❌ JoyBoost daily check-in error:", err);
+  }
+});
+
+
 // ==================== LIVE VISITOR TRACKING ====================
 const liveVisitors = {};
 app.post("/api/track-visitor", (req, res) => {
@@ -723,6 +787,144 @@ app.get("/api/check-session", async (req, res) => {
     });
   }
 });
+
+// ==================== JOYBOOST: APPLY ====================
+app.post("/api/joyboost/apply", async (req, res) => {
+  try {
+    const { name, email, campaignId, goal, joy, notes } = req.body || {};
+
+    if (!name || !email || !campaignId || !goal || !joy) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const doc = {
+      name: String(name).trim(),
+      email: safeLower(email),
+      campaignId: String(campaignId).trim(),
+      goal: String(goal).trim(),
+      joy: String(joy).trim(),
+      notes: String(notes || "").trim(),
+      status: "Pending",
+      createdAt: now()
+    };
+
+    await db.collection(JOYBOOST_REQUESTS).insertOne(doc);
+
+    // Notify admin
+    if (typeof sendMailjet === "function") {
+      await sendMailjet({
+        toEmail: ADMIN_EMAIL,
+        toName: "JoyFund Admin",
+        subject: "New JoyBoost Request",
+        html: `
+          <h2>New JoyBoost Request</h2>
+          <p><b>Name:</b> ${doc.name}</p>
+          <p><b>Email:</b> ${doc.email}</p>
+          <p><b>Campaign ID:</b> ${doc.campaignId}</p>
+          <p><b>Main goal:</b> ${doc.goal}</p>
+          <p><b>Joy:</b> ${doc.joy}</p>
+          <p><b>Notes:</b> ${doc.notes || "—"}</p>
+          <p><b>Status:</b> ${doc.status}</p>
+        `
+      });
+    }
+
+    // Confirm requester
+    await sendMailjet({
+      toEmail: doc.email,
+      toName: doc.name,
+      subject: "We received your JoyBoost request 💛",
+      html: `
+        <p>Hi ${doc.name},</p>
+        <p>We received your JoyBoost request for campaign <b>${doc.campaignId}</b>.</p>
+        <p>We’ll review it and email you with next steps.</p>
+        <p>— JoyFund</p>
+      `
+    });
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("POST /api/joyboost/apply error:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ==================== JOYBOOST: FEATURED LIST ====================
+app.get("/api/joyboost/spotlight", async (req, res) => {
+  try {
+    const list = await db.collection(JOYBOOST_SETTINGS)
+      .find({ $or: [{ featured: true }, { isActive: true }] })
+      .sort({ featured: -1, updatedAt: -1, createdAt: -1 })
+      .limit(20)
+      .toArray();
+
+    return res.json({ success: true, spotlight: list });
+  } catch (err) {
+    console.error("GET /api/joyboost/spotlight error:", err);
+    return res.status(500).json({ success: false });
+  }
+});
+
+// ==================== TRACK CAMPAIGN VIEW ====================
+app.post("/api/track-view", async (req, res) => {
+  try {
+    const { campaignId } = req.body || {};
+    if (!campaignId) return res.status(400).json({ ok: false });
+
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").toString().split(",")[0].trim();
+    const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+    await db.collection(CAMPAIGN_VIEWS).updateOne(
+      { campaignId: String(campaignId).trim(), ip, day },
+      { $setOnInsert: { createdAt: now() } },
+      { upsert: true }
+    );
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /api/track-view error:", err);
+    return res.status(500).json({ ok: false });
+  }
+});
+
+// ==================== JOYBOOST: MOMENTUM ====================
+app.get("/api/joyboost/momentum/:campaignId", async (req, res) => {
+  try {
+    const campaignId = String(req.params.campaignId || "").trim();
+    if (!campaignId) return res.status(400).json({ success: false });
+
+    const last14 = new Date();
+    last14.setDate(last14.getDate() - 14);
+
+    const views14 = await db.collection(CAMPAIGN_VIEWS).countDocuments({
+      campaignId,
+      createdAt: { $gte: last14 }
+    });
+
+    const donations14 = await db.collection("Donations").countDocuments({
+      campaignId,
+      createdAt: { $gte: last14 }
+    });
+
+    const totalDonations = await db.collection("Donations").aggregate([
+      { $match: { campaignId } },
+      { $group: { _id: "$campaignId", sum: { $sum: "$originalDonation" } } }
+    ]).toArray();
+
+    return res.json({
+      success: true,
+      campaignId,
+      views14,
+      donations14,
+      totalRaised: Number(totalDonations?.[0]?.sum || 0)
+    });
+  } catch (err) {
+    console.error("GET /api/joyboost/momentum error:", err);
+    return res.status(500).json({ success: false });
+  }
+});
+
+
 
 //=====================DONATION SUMMARY============
 app.get("/api/dashboard/donations-summary", async (req, res) => {
@@ -1145,6 +1347,53 @@ app.patch("/api/admin/id-verifications/:id/deny", requireAdmin, async (req, res)
     res.status(500).json({ success: false, message: "Deny failed" });
   }
 });
+
+// ==================== ADMIN: JOYBOOST REQUESTS ====================
+app.get("/api/admin/joyboost/requests", requireAdmin, async (req, res) => {
+  try {
+    const requests = await db.collection(JOYBOOST_REQUESTS)
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(1000)
+      .toArray();
+    return res.json({ success: true, requests });
+  } catch (err) {
+    console.error("GET /api/admin/joyboost/requests error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load requests" });
+  }
+});
+
+// ==================== ADMIN: ACTIVATE JOYBOOST ====================
+app.post("/api/admin/joyboost/activate", requireAdmin, async (req, res) => {
+  try {
+    const { campaignId, isActive, featured, seoTitle, seoDescription, shareBlurb, tags, rewrittenIntro } = req.body || {};
+    if (!campaignId) return res.status(400).json({ success: false, message: "Missing campaignId" });
+
+    const update = {
+      campaignId: String(campaignId).trim(),
+      isActive: Boolean(isActive),
+      featured: Boolean(featured),
+      seoTitle: String(seoTitle || "").trim(),
+      seoDescription: String(seoDescription || "").trim(),
+      shareBlurb: String(shareBlurb || "").trim(),
+      tags: Array.isArray(tags) ? tags.map(t => String(t).trim()).filter(Boolean) : String(tags || "").split(",").map(s => s.trim()).filter(Boolean),
+      rewrittenIntro: String(rewrittenIntro || "").trim(),
+      updatedAt: now(),
+    };
+
+    await db.collection(JOYBOOST_SETTINGS).updateOne(
+      { campaignId: update.campaignId },
+      { $set: update, $setOnInsert: { createdAt: now() } },
+      { upsert: true }
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("POST /api/admin/joyboost/activate error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 
 // ==================== PUBLIC: ACTIVE CAMPAIGNS (SEARCH/LIST) ====================
 app.get("/api/campaigns", async (req, res) => {
