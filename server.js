@@ -1192,6 +1192,12 @@ app.post("/api/admin-login", (req, res) => {
 
   return res.status(401).json({ success: false, message: "Invalid credentials" });
 });
+console.log("ADMIN LOGIN HIT", {
+  bodyKeys: Object.keys(req.body || {}),
+  username_len: (req.body?.username || "").length,
+  password_len: (req.body?.password || "").length
+});
+
 
 app.post("/api/admin-logout", (req, res) => {
   req.session.destroy(err =>
