@@ -395,8 +395,13 @@ app.get("/api/joyboost/me", requireLogin, async (req, res) => {
     }
 
     if (!user && email) {
-      user = await db.collection("Users").findOne({ email: String(email).toLowerCase() });
-    }
+  const cleanEmail = String(email).trim().toLowerCase();
+  const emailExactI = new RegExp("^" + cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
+
+  user = await db.collection("Users").findOne({
+    $or: [{ Email: emailExactI }, { email: emailExactI }]
+  });
+}
 
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
