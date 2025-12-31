@@ -205,6 +205,41 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
 	  
+// ================== JOYBOOST SUPPORTER SUBSCRIPTION (TIERS) ==================
+if (session.mode === "subscription" && session.metadata?.type === "joyboost_supporter") {
+  const tier = session.metadata?.tier || "unknown";
+  const supporterEmail = session.customer_details?.email || session.customer_email || null;
+  const subscriptionId = session.subscription || null;
+  const customerId = session.customer || null;
+
+  // Upsert so webhook retries don't create duplicates
+  const filter = subscriptionId
+    ? { stripeSubscriptionId: subscriptionId }
+    : { stripeSessionId: session.id };
+
+  await db.collection("JoyBoost_Supporters").updateOne(
+    filter,
+    {
+      $set: {
+        tier,
+        supporterEmail,
+        stripeSessionId: session.id,
+        stripeSubscriptionId: subscriptionId,
+        stripeCustomerId: customerId,
+        status: "active",
+        updatedAt: new Date()
+      },
+      $setOnInsert: {
+        createdAt: new Date()
+      }
+    },
+    { upsert: true }
+  );
+
+  console.log("✅ JoyBoost supporter activated (upsert):", supporterEmail, "tier:", tier);
+}
+
+	  
 
 	  // ================== JOYBOOST APPROVAL PAYMENT (ONE-TIME) ==================
 if (session.mode === "payment" && session.metadata?.type === "joyboost") {
@@ -250,7 +285,7 @@ if (session.mode === "payment" && session.metadata?.type === "joyboost") {
       }
 
       // ================== DONATION RECORDING ==================
-		if (!(session.metadata?.type === "joyboost")) {
+		if (!(session.metadata?.type === "joyboost") && !(session.metadata?.type === "joyboost_supporter")) {
 		const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
 
 		if (!exists && session.payment_status === "paid") {
@@ -289,17 +324,72 @@ if (session.mode === "payment" && session.metadata?.type === "joyboost") {
 		}     // closes: if (!(session.metadata?.type === "joyboost"))
       }
 
-    // ✅ 2) Subscription canceled (turn JoyBoost OFF)
-    if (event.type === "customer.subscription.deleted") {
-      const sub = event.data.object;
+    // ✅ 2) Subscription canceled (turn JoyBoost OFF + Supporters OFF)
+if (event.type === "customer.subscription.deleted") {
+  const sub = event.data.object;
 
-      await db.collection("Users").updateOne(
-        { joyboostSubscriptionId: sub.id },
-        { $set: { joyboostActive: false, joyboostCanceledAt: new Date() } }
-      );
-
-      console.log("🛑 JoyBoost canceled:", sub.id);
+  // Turn OFF JoyBoost membership (if you still use that legacy subscription flow)
+  await db.collection("Users").updateOne(
+    { joyboostSubscriptionId: sub.id },
+    {
+      $set: {
+        joyboostActive: false,
+        joyboostCanceledAt: new Date()
+      }
     }
+  );
+
+  // Turn OFF JoyBoost Supporter tier (tiers/subscriptions)
+  await db.collection("JoyBoost_Supporters").updateOne(
+    { stripeSubscriptionId: sub.id },
+    {
+      $set: {
+        status: "canceled",
+        canceledAt: new Date(),
+        updatedAt: new Date()
+      }
+    }
+  );
+
+  console.log("🛑 Subscription canceled:", sub.id);
+  
+  // ✅ 2b) Subscription updated (track "canceling" status for supporters)
+if (event.type === "customer.subscription.updated") {
+  const sub = event.data.object;
+
+  // If supporter subscription was set to cancel at period end, mark as "canceling"
+  if (sub.cancel_at_period_end === true) {
+    await db.collection("JoyBoost_Supporters").updateOne(
+      { stripeSubscriptionId: sub.id },
+      {
+        $set: {
+          status: "canceling",
+          cancelAtPeriodEnd: true,
+          currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
+          updatedAt: new Date()
+        }
+      }
+    );
+    console.log("⏳ Supporter subscription canceling at period end:", sub.id);
+  }
+
+  // If cancellation was reversed, mark active again
+  if (sub.cancel_at_period_end === false) {
+    await db.collection("JoyBoost_Supporters").updateOne(
+      { stripeSubscriptionId: sub.id },
+      {
+        $set: {
+          status: "active",
+          cancelAtPeriodEnd: false,
+          currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
+          updatedAt: new Date()
+        }
+      }
+    );
+    console.log("✅ Supporter subscription active again:", sub.id);
+  }
+}
+
 
     return res.json({ received: true });
   } catch (err) {
@@ -1125,43 +1215,50 @@ app.get("/api/check-session", async (req, res) => {
   }
 });
 
-//=====================JOYBOOST SUBSCRRIPTION CHECKOUT=============
+//===================== JOYBOOST SUPPORTER TIERS CHECKOUT =====================
+// This is for "Support JoyBoost" (supporters), NOT applicants needing help.
+// Frontend sends: { tier: "bronze" | "silver" | "gold" | "diamond", email?: "" }
 
-app.post("/api/joyboost/checkout", async (req, res) => {
+app.post("/api/joyboost/supporter/checkout", async (req, res) => {
   try {
-    const { userId, email } = req.body; // you can pass these from frontend
+    const tierRaw = String(req.body?.tier || "").trim().toLowerCase();
+    const email = String(req.body?.email || "").trim().toLowerCase();
 
-    if (!process.env.JOYBOOST_PRICE_ID) {
-      return res.status(500).json({ error: "Missing JOYBOOST_PRICE_ID in env" });
+    const tierMap = {
+      bronze: process.env.JOYBOOST_SUPPORTER_BRONZE_PRICE_ID,
+      silver: process.env.JOYBOOST_SUPPORTER_SILVER_PRICE_ID,
+      gold: process.env.JOYBOOST_SUPPORTER_GOLD_PRICE_ID,
+      diamond: process.env.JOYBOOST_SUPPORTER_DIAMOND_PRICE_ID
+    };
+
+    const priceId = tierMap[tierRaw];
+
+    if (!priceId) {
+      return res.status(400).json({
+        error: "Invalid tier. Use bronze, silver, gold, or diamond."
+      });
     }
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      line_items: [
-        {
-          price: process.env.JOYBOOST_PRICE_ID,
-          quantity: 1,
-        },
-      ],
+      payment_method_types: ["card"],
+      line_items: [{ price: priceId, quantity: 1 }],
 
-      // Optional but helpful
       customer_email: email || undefined,
 
-      // Put identifiers so your webhook can map payments -> your user
-      client_reference_id: userId || undefined,
       metadata: {
-        userId: userId || "",
-        product: "joyboost",
+        type: "joyboost_supporter",
+        tier: tierRaw
       },
 
-      success_url: `${process.env.FRONTEND_URL}/joyboost-success.html?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/joyboost.html?canceled=1`,
+      success_url: `${process.env.FRONTEND_URL}/joyboost-supporter-success.html?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL}/joyboost.html?support_canceled=1`
     });
 
-    res.json({ url: session.url });
+    return res.json({ url: session.url });
   } catch (err) {
-    console.error("JoyBoost checkout error:", err);
-    res.status(500).json({ error: err.message || "Stripe error" });
+    console.error("JoyBoost supporter checkout error:", err);
+    return res.status(500).json({ error: err.message || "Stripe error" });
   }
 });
 
