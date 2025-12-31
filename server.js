@@ -205,7 +205,138 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
 	  
-	  // ===============================
+
+	  // ================== JOYBOOST APPROVAL PAYMENT (ONE-TIME) ==================
+if (session.mode === "payment" && session.metadata?.type === "joyboost") {
+  const requestId = session.metadata.joyboostRequestId;
+
+  if (requestId && ObjectId.isValid(requestId)) {
+    await db.collection(JOYBOOST_REQUESTS).updateOne(
+      { _id: new ObjectId(requestId) },
+      {
+        $set: {
+          paid: true,
+          paidAt: new Date(),
+          paidStripeSessionId: session.id,
+          paidAmount: (session.amount_total || 0) / 100
+        }
+      }
+    );
+
+    console.log("✅ JoyBoost approval payment received for request:", requestId);
+  }
+}
+
+
+      // ================== JOYBOOST SUBSCRIPTION ==================
+      if (session.mode === "subscription" && session.metadata?.product === "joyboost") {
+        const userId = session.metadata.userId;
+        const subscriptionId = session.subscription;
+
+        if (userId) {
+          await db.collection("Users").updateOne(
+            { _id: ObjectId.isValid(userId) ? new ObjectId(userId) : userId },
+            {
+              $set: {
+                joyboostActive: true,
+                joyboostSubscriptionId: subscriptionId,
+                joyboostStartedAt: new Date()
+              }
+            }
+          );
+        }
+
+        console.log("✅ JoyBoost activated for user:", userId);
+      }
+
+      // ================== DONATION RECORDING ==================
+		if (!(session.metadata?.type === "joyboost")) {
+		const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
+
+		if (!exists && session.payment_status === "paid") {
+        const email = session.customer_details?.email || null;
+        const name = session.customer_details?.name || null;
+        const chargedAmount = (session.amount_total || 0) / 100;
+
+        const originalDonation = session.metadata?.originalDonation || null;
+        const campaignId = session.metadata?.campaignId || null;
+        const campaignTitle = session.metadata?.campaignTitle || null;
+
+        const originalNum = Number(originalDonation);
+        const originalAmount = Number.isFinite(originalNum) ? originalNum : null;
+
+        await db.collection("Donations").insertOne({
+          stripeSessionId: session.id,
+          campaignId,
+          campaignTitle,
+
+          date: new Date(),
+          name,
+          email,
+          amount: originalAmount ?? chargedAmount,
+
+          originalDonation,
+          chargedAmount,
+          currency: session.currency,
+          createdAt: new Date(),
+          source: "stripe_webhook"
+        });
+
+        console.log("✅ Donation recorded via webhook:", session.id);
+      } else {
+        console.log("ℹ️ Donation already recorded or not paid:", session.id, session.payment_status);
+		  }   // closes: if (!exists && session.payment_status === "paid")
+		}     // closes: if (!(session.metadata?.type === "joyboost"))
+      }
+
+    // ✅ 2) Subscription canceled (turn JoyBoost OFF)
+    if (event.type === "customer.subscription.deleted") {
+      const sub = event.data.object;
+
+      await db.collection("Users").updateOne(
+        { joyboostSubscriptionId: sub.id },
+        { $set: { joyboostActive: false, joyboostCanceledAt: new Date() } }
+      );
+
+      console.log("🛑 JoyBoost canceled:", sub.id);
+    }
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("❌ Webhook handler error:", err);
+    return res.status(500).json({ received: false });
+  }
+});
+
+
+// ==================== PRODUCTION-READY SESSION ====================
+const MongoStorePkg = require("connect-mongo");
+const MongoStore = MongoStorePkg.default || MongoStorePkg;
+
+// ✅ Reuse the already-connected Mongoose/Mongo client
+app.set("trust proxy", 1);
+
+app.use(session({
+  name: "joyfund.sid",
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+
+  store: MongoStore.create({
+    client: mongoose.connection.getClient(),   // <-- THIS FIXES THE AUTH ERROR
+    dbName: "joyfund",
+    collectionName: "sessions"
+  }),
+
+  cookie: {
+  secure: true,
+  sameSite: "none",
+  httpOnly: true,
+  path: "/"
+}
+}));
+
+// ===============================
 // JoyBoost: GET /api/joyboost/me
 // ===============================
 
@@ -342,136 +473,6 @@ app.get("/api/joyboost/me", requireLogin, async (req, res) => {
     return res.status(500).json({ success: false, message: "JoyBoost lookup failed" });
   }
 });
-
-	  // ================== JOYBOOST APPROVAL PAYMENT (ONE-TIME) ==================
-if (session.mode === "payment" && session.metadata?.type === "joyboost") {
-  const requestId = session.metadata.joyboostRequestId;
-
-  if (requestId && ObjectId.isValid(requestId)) {
-    await db.collection(JOYBOOST_REQUESTS).updateOne(
-      { _id: new ObjectId(requestId) },
-      {
-        $set: {
-          paid: true,
-          paidAt: new Date(),
-          paidStripeSessionId: session.id,
-          paidAmount: (session.amount_total || 0) / 100
-        }
-      }
-    );
-
-    console.log("✅ JoyBoost approval payment received for request:", requestId);
-  }
-}
-
-
-      // ================== JOYBOOST SUBSCRIPTION ==================
-      if (session.mode === "subscription" && session.metadata?.product === "joyboost") {
-        const userId = session.metadata.userId;
-        const subscriptionId = session.subscription;
-
-        if (userId) {
-          await db.collection("Users").updateOne(
-            { _id: ObjectId.isValid(userId) ? new ObjectId(userId) : userId },
-            {
-              $set: {
-                joyboostActive: true,
-                joyboostSubscriptionId: subscriptionId,
-                joyboostStartedAt: new Date()
-              }
-            }
-          );
-        }
-
-        console.log("✅ JoyBoost activated for user:", userId);
-      }
-
-      // ================== DONATION RECORDING ==================
-		if (!(session.metadata?.type === "joyboost")) {
-		const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
-
-		if (!exists && session.payment_status === "paid") {
-        const email = session.customer_details?.email || null;
-        const name = session.customer_details?.name || null;
-        const chargedAmount = (session.amount_total || 0) / 100;
-
-        const originalDonation = session.metadata?.originalDonation || null;
-        const campaignId = session.metadata?.campaignId || null;
-        const campaignTitle = session.metadata?.campaignTitle || null;
-
-        const originalNum = Number(originalDonation);
-        const originalAmount = Number.isFinite(originalNum) ? originalNum : null;
-
-        await db.collection("Donations").insertOne({
-          stripeSessionId: session.id,
-          campaignId,
-          campaignTitle,
-
-          date: new Date(),
-          name,
-          email,
-          amount: originalAmount ?? chargedAmount,
-
-          originalDonation,
-          chargedAmount,
-          currency: session.currency,
-          createdAt: new Date(),
-          source: "stripe_webhook"
-        });
-
-        console.log("✅ Donation recorded via webhook:", session.id);
-      } else {
-        console.log("ℹ️ Donation already recorded or not paid:", session.id, session.payment_status);
-		  }   // closes: if (!exists && session.payment_status === "paid")
-		}     // closes: if (!(session.metadata?.type === "joyboost"))
-      }
-
-    // ✅ 2) Subscription canceled (turn JoyBoost OFF)
-    if (event.type === "customer.subscription.deleted") {
-      const sub = event.data.object;
-
-      await db.collection("Users").updateOne(
-        { joyboostSubscriptionId: sub.id },
-        { $set: { joyboostActive: false, joyboostCanceledAt: new Date() } }
-      );
-
-      console.log("🛑 JoyBoost canceled:", sub.id);
-    }
-
-    return res.json({ received: true });
-  } catch (err) {
-    console.error("❌ Webhook handler error:", err);
-    return res.status(500).json({ received: false });
-  }
-});
-
-
-// ==================== PRODUCTION-READY SESSION ====================
-const MongoStorePkg = require("connect-mongo");
-const MongoStore = MongoStorePkg.default || MongoStorePkg;
-
-// ✅ Reuse the already-connected Mongoose/Mongo client
-app.set("trust proxy", 1);
-
-app.use(session({
-  name: "joyfund.sid",
-  secret: SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-
-  store: MongoStore.create({
-    client: mongoose.connection.getClient(),   // <-- THIS FIXES THE AUTH ERROR
-    dbName: "joyfund",
-    collectionName: "sessions"
-  }),
-
-  cookie: {
-  secure: true,
-  sameSite: "none",
-  httpOnly: true,
-  path: "/"
-}
-}));
 
 // ==================== CLOUDINARY ====================
 if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
