@@ -237,47 +237,6 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         console.log("✅ JoyBoost supporter activated (upsert):", supporterEmail, "tier:", tier);
       }
 
-      // ================== JOYBOOST APPROVAL PAYMENT (ONE-TIME) ==================
-      if (session.mode === "payment" && session.metadata?.type === "joyboost") {
-        const requestId = session.metadata.joyboostRequestId;
-
-        if (requestId && ObjectId.isValid(requestId)) {
-          await db.collection(JOYBOOST_REQUESTS).updateOne(
-            { _id: new ObjectId(requestId) },
-            {
-              $set: {
-                paid: true,
-                paidAt: new Date(),
-                paidStripeSessionId: session.id,
-                paidAmount: (session.amount_total || 0) / 100
-              }
-            }
-          );
-
-          console.log("✅ JoyBoost approval payment received for request:", requestId);
-        }
-      }
-
-      // ================== JOYBOOST SUBSCRIPTION (legacy) ==================
-      if (session.mode === "subscription" && session.metadata?.product === "joyboost") {
-        const userId = session.metadata.userId;
-        const subscriptionId = session.subscription;
-
-        if (userId) {
-          await db.collection("Users").updateOne(
-            { _id: ObjectId.isValid(userId) ? new ObjectId(userId) : userId },
-            {
-              $set: {
-                joyboostActive: true,
-                joyboostSubscriptionId: subscriptionId,
-                joyboostStartedAt: new Date()
-              }
-            }
-          );
-        }
-
-        console.log("✅ JoyBoost activated for user:", userId);
-      }
 
       // ================== DONATION RECORDING ==================
       // (Skip JoyBoost payment + JoyBoost supporter subscriptions)
@@ -326,13 +285,6 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     // ✅ 2) Subscription canceled (turn JoyBoost OFF + Supporters OFF)
     if (event.type === "customer.subscription.deleted") {
       const sub = event.data.object;
-
-      // Turn OFF JoyBoost membership (legacy)
-      await db.collection("Users").updateOne(
-        { joyboostSubscriptionId: sub.id },
-        { $set: { joyboostActive: false, joyboostCanceledAt: new Date() } }
-      );
-
       // Turn OFF JoyBoost Supporter tier
       await db.collection("JoyBoost_Supporters").updateOne(
         { stripeSubscriptionId: sub.id },
@@ -445,109 +397,91 @@ function getSessionUserLookup(req) {
   return { userId, email };
 }
 
+// ===============================
+// JoyBoost: GET /api/joyboost/me  (NEW MODEL)
+// Applicants: FREE (no Stripe subscription/payment)
+// Supporters: Stripe subscriptions stored in JoyBoost_Supporters
+// ===============================
 app.get("/api/joyboost/me", requireLogin, async (req, res) => {
   try {
-    // ✅ You must already have these in your server:
-    // - `db` = connected MongoDB database
-    // - `stripe` = Stripe SDK instance
     if (!db) return res.status(500).json({ success: false, message: "DB not ready" });
-    if (!stripe) return res.status(500).json({ success: false, message: "Stripe not configured" });
 
-    const { userId, email } = getSessionUserLookup(req);
+    const { email } = getSessionUserLookup(req);
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    if (!cleanEmail) return res.status(400).json({ success: false, message: "Missing session email" });
 
-    // Find user record
-    let user = null;
+    const emailExactI = new RegExp("^" + cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
 
-    if (userId) {
-      // If you're using Mongo ObjectId, this safely tries it.
-      // If ObjectId isn't in scope in your server, remove ObjectId usage and use your own method.
-      try {
-        user = await db.collection("Users").findOne({ _id: new ObjectId(String(userId)) });
-      } catch {
-        // userId might not be an ObjectId; fallback to string match
-        user = await db.collection("Users").findOne({ _id: String(userId) });
-      }
-    }
+    // Latest applicant request (by email)
+    const latestReqArr = await db.collection(JOYBOOST_REQUESTS)
+      .find({ $or: [{ email: emailExactI }, { Email: emailExactI }] })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(1)
+      .toArray();
 
-    if (!user && email) {
-  const cleanEmail = String(email).trim().toLowerCase();
-  const emailExactI = new RegExp("^" + cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "i");
-
-  user = await db.collection("Users").findOne({
-    $or: [{ Email: emailExactI }, { email: emailExactI }]
-  });
-}
-
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-
-    const subscriptionId = user.joyboostSubscriptionId || null;
-    const customerId = user.joyboostCustomerId || null;
-
-    // Default response if not subscribed
-    let payload = {
-      success: true,
-      status: user.joyboostActive ? "active" : "inactive",
-      active: !!user.joyboostActive,
-      planName: user.joyboostPlan || "JoyBoost",
-      currentPeriodEnd: user.joyboostCurrentPeriodEnd || null,
-      cancelAtPeriodEnd: user.joyboostCancelAtPeriodEnd ?? null,
-      canceledAt: user.joyboostCanceledAt || null,
-      subscriptionId,
-      customerId
+    const reqDoc = latestReqArr[0] || null;
+    const applicant = reqDoc ? {
+      hasApplication: true,
+      id: String(reqDoc._id),
+      name: reqDoc.name || "",
+      email: (reqDoc.email || reqDoc.Email || "").toLowerCase(),
+      campaignId: reqDoc.campaignId || "",
+      status: reqDoc.status || "Pending",
+      denialReason: reqDoc.denialReason || "",
+      createdAt: reqDoc.createdAt || null,
+      approvalEmailSentAt: reqDoc.approvalEmailSentAt || null
+    } : {
+      hasApplication: false,
+      id: "",
+      name: "",
+      email: cleanEmail,
+      campaignId: "",
+      status: "Not Applied",
+      denialReason: "",
+      createdAt: null,
+      approvalEmailSentAt: null
     };
 
-    // If we have Stripe data, pull the truth from Stripe
-    let sub = null;
+    // Supporter status (optional) — stored by webhook when a supporter subscribes
+    const supporterRow = await db.collection("JoyBoost_Supporters")
+      .find({ supporterEmail: emailExactI })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(1)
+      .toArray();
 
-    if (subscriptionId) {
-      sub = await stripe.subscriptions.retrieve(subscriptionId, {
-        expand: ["items.data.price.product"]
-      });
-    } else if (customerId) {
-      // If you only have customerId, fetch latest sub for that customer
-      const subs = await stripe.subscriptions.list({
-        customer: customerId,
-        limit: 10,
-        status: "all",
-        expand: ["data.items.data.price.product"]
-      });
+    const sup = supporterRow[0] || null;
+    const supporter = sup ? {
+      active: sup.status === "active" || sup.status === "canceling",
+      status: sup.status || "inactive",
+      tier: sup.tier || "unknown",
+      cancelAtPeriodEnd: !!sup.cancelAtPeriodEnd,
+      currentPeriodEnd: sup.currentPeriodEnd ? new Date(sup.currentPeriodEnd).toISOString() : null,
+      stripeSubscriptionId: sup.stripeSubscriptionId || null
+    } : {
+      active: false,
+      status: "inactive",
+      tier: null,
+      cancelAtPeriodEnd: false,
+      currentPeriodEnd: null,
+      stripeSubscriptionId: null
+    };
 
-      // Pick the most relevant subscription (active/trialing first, otherwise most recent)
-      const sorted = (subs.data || []).slice().sort((a, b) => (b.created || 0) - (a.created || 0));
-      sub =
-        sorted.find(s => ["active", "trialing", "past_due", "unpaid"].includes(s.status)) ||
-        sorted[0] ||
-        null;
+    // Compatibility fields (old frontend might expect these) — keep them empty so the UI doesn't show payment links
+    return res.json({
+      success: true,
+      model: "new",
+      applicant,
+      supporter,
 
-      // If you found one, you can optionally store it for future speed:
-      // (uncomment if you want)
-      // if (sub?.id && !user.joyboostSubscriptionId) {
-      //   await db.collection("Users").updateOne({ _id: user._id }, { $set: { joyboostSubscriptionId: sub.id } });
-      // }
-    }
-
-    if (sub) {
-      const productName =
-        sub.items?.data?.[0]?.price?.product?.name ||
-        sub.items?.data?.[0]?.price?.nickname ||
-        "JoyBoost";
-
-      payload = {
-        success: true,
-        status: sub.status, // "active", "trialing", "canceled", etc
-        active: sub.status === "active" || sub.status === "trialing",
-        planName: productName,
-        currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null,
-        cancelAtPeriodEnd: !!sub.cancel_at_period_end,
-        canceledAt: sub.canceled_at ? new Date(sub.canceled_at * 1000).toISOString() : null,
-        subscriptionId: sub.id,
-        customerId: sub.customer || customerId || null
-      };
-    }
-
-    return res.json(payload);
+      // Legacy/compat (DO NOT use for applicants)
+      active: false,
+      planName: null,
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: null,
+      canceledAt: null,
+      subscriptionId: null,
+      customerId: null
+    });
   } catch (err) {
     console.error("GET /api/joyboost/me error:", err);
     return res.status(500).json({ success: false, message: "JoyBoost lookup failed" });
@@ -602,10 +536,9 @@ app.get("/api/joyboost/application", requireLogin, async (req, res) => {
       denialReason: reqDoc.denialReason || "",
       createdAt: reqDoc.createdAt || null,
 
-      // Approval + payment link info (your admin route sets these)
-      paymentUrl: reqDoc.paymentUrl || "",
-      stripeSessionId: reqDoc.stripeSessionId || "",
-      paymentLinkSentAt: reqDoc.paymentLinkSentAt || null,
+      paymentUrl: "",
+	  stripeSessionId: "",
+	  paymentLinkSentAt: null,
       approvalEmailSentAt: reqDoc.approvalEmailSentAt || null,
 
       // Payment completion info (your webhook sets these)
@@ -1921,92 +1854,39 @@ app.patch("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, r
     const reqDoc = await db.collection(JOYBOOST_REQUESTS).findOne({ _id: new ObjectId(id) });
     if (!reqDoc) return res.status(404).json({ success: false, message: "Not found" });
 
-    // =========================
-    // OPTION A (STRICT):
-    // Do NOT approve unless a payment link can be created (or already exists) AND the approval email is sent.
-    // =========================
-    let paymentUrl = reqDoc.paymentUrl || null;
-    let stripeSessionId = reqDoc.stripeSessionId || null;
+   // =========================
+// JOYBOOST (FREE APPROVAL):
+// Approvals are FREE for applicants.
+// Do NOT create or send any payment links.
+// =========================
+if (status === "Approved") {
+  const toEmail = String(reqDoc.email || "").trim().toLowerCase();
+  const toName = String(reqDoc.name || "").trim();
 
-    if (status === "Approved") {
-      const toEmail = String(reqDoc.email || "").trim().toLowerCase();
-      const toName = String(reqDoc.name || "").trim();
+  if (!toEmail) {
+    return res.status(400).json({ success: false, message: "Request has no email address" });
+  }
 
-      if (!toEmail) {
-        return res.status(400).json({ success: false, message: "Request has no email address" });
-      }
-
-      if (!FRONTEND_URL) {
-        return res.status(500).json({ success: false, message: "Server missing FRONTEND_URL" });
-      }
-
-      // 1) Ensure we have a payment link
-      if (!paymentUrl) {
-        if (!STRIPE_SECRET_KEY) {
-          return res.status(500).json({ success: false, message: "Server missing STRIPE_SECRET_KEY" });
-        }
-
-        // Fixed JoyBoost activation fee (default $50). Adjust with env if you want.
-        const amountCents = Number(process.env.JOYBOOST_APPROVAL_AMOUNT_CENTS || 5000);
-
-        let session;
-        try {
-          session = await stripe.checkout.sessions.create({
-            mode: "payment",
-            payment_method_types: ["card"],
-            line_items: [{
-              price_data: {
-                currency: "usd",
-                product_data: { name: "JoyBoost Activation" },
-                unit_amount: amountCents
-              },
-              quantity: 1
-            }],
-            customer_email: toEmail,
-            metadata: {
-              type: "joyboost",
-              joyboostRequestId: String(reqDoc._id),
-              campaignId: String(reqDoc.campaignId || ""),
-              userEmail: toEmail
-            },
-            success_url: `${FRONTEND_URL}/joyboost-success.html?session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${FRONTEND_URL}/joyboost.html?canceled=1`
-          });
-        } catch (e) {
-          const msg = String(e?.message || e);
-          console.error("JOYBOOST APPROVE: Stripe session create failed:", msg);
-          return res.status(500).json({ success: false, message: "Failed to create payment link" });
-        }
-
-        paymentUrl = session?.url || null;
-        stripeSessionId = session?.id || null;
-
-        if (!paymentUrl) {
-          console.error("JOYBOOST APPROVE: Stripe returned no session.url");
-          return res.status(500).json({ success: false, message: "Failed to create payment link" });
-        }
-      }
-
-      // 2) Send approval email WITH payment link (required)
-      try {
-        await sendMailjet({
-          toEmail,
-          toName,
-          subject: "Your JoyBoost request was approved 🎉",
-          html: `
-            <p>Hi ${toName || ""},</p>
-            <p>Your JoyBoost request has been <b>approved</b>! 🎉</p>
-            <p>To activate JoyBoost, please complete your secure payment here:</p>
-            <p><a href="${paymentUrl}" target="_blank" rel="noopener">${paymentUrl}</a></p>
-            <p>— JoyFund</p>
-          `
-        });
-      } catch (e) {
-        const msg = String(e?.message || e);
-        console.error("JOYBOOST APPROVE: Mailjet send failed:", msg);
-        return res.status(500).json({ success: false, message: "Failed to send approval email" });
-      }
-    }
+  // Send approval email (NO payment link)
+  try {
+    await sendMailjet({
+      toEmail,
+      toName,
+      subject: "Your JoyBoost request was approved 🎉",
+      html: `
+        <p>Hi ${toName || ""},</p>
+        <p>Your JoyBoost request has been <b>approved</b>! 🎉</p>
+        <p><b>Good news:</b> JoyBoost is free for approved applicants. There is no payment required.</p>
+        <p>We’ll follow up with next steps and timing shortly.</p>
+        <p>— JoyFund</p>
+      `
+    });
+  } catch (e) {
+    const msg = String(e?.message || e);
+    console.error("JOYBOOST APPROVE: Mailjet send failed:", msg);
+    return res.status(500).json({ success: false, message: "Failed to send approval email" });
+  }
+}
 
     // 3) Now update the request status (only after strict approval steps succeed)
     const update = {
@@ -2016,13 +1896,15 @@ app.patch("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, r
       reviewedBy: "admin"
     };
 
-    // Save link info if we generated it or already had it
-    if (status === "Approved") {
-      update.paymentUrl = paymentUrl || reqDoc.paymentUrl || "";
-      update.stripeSessionId = stripeSessionId || reqDoc.stripeSessionId || "";
-      update.paymentLinkSentAt = new Date();
-      update.approvalEmailSentAt = new Date();
-      update.approvalEmailUsedLink = true;
+    // Approved = FREE (clear any old payment fields so dashboard can't show them)
+if (status === "Approved") {
+  update.paymentUrl = "";
+  update.stripeSessionId = "";
+  update.paymentLinkSentAt = null;
+  update.approvalEmailSentAt = new Date();
+  update.approvalEmailUsedLink = false;
+}
+
     }
 
     await db.collection(JOYBOOST_REQUESTS).updateOne(
