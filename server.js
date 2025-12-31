@@ -382,6 +382,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     console.error("❌ Webhook handler error:", err);
     return res.status(500).json({ received: false });
   }
+});
 
 // ==================== PRODUCTION-READY SESSION ====================
 const MongoStorePkg = require("connect-mongo");
