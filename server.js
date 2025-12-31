@@ -205,6 +205,144 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
 	  
+	  // ===============================
+// JoyBoost: GET /api/joyboost/me
+// ===============================
+
+// If you already have a "requireLogin" middleware, use yours.
+// Otherwise, this works with typical express-session setup.
+function requireLogin(req, res, next) {
+  const isLoggedIn =
+    (req.session && (req.session.userId || req.session.user || req.session.userEmail)) ||
+    req.user;
+
+  if (!isLoggedIn) {
+    return res.status(401).json({ success: false, message: "Not logged in" });
+  }
+  next();
+}
+
+// Helper: try to find the logged-in user's ID/email from the session
+function getSessionUserLookup(req) {
+  // Prefer userId if you store it
+  const userId =
+    (req.session && (req.session.userId || req.session.user?._id || req.session.user?.id)) ||
+    (req.user && (req.user._id || req.user.id)) ||
+    null;
+
+  // Sometimes apps store email
+  const email =
+    (req.session && (req.session.userEmail || req.session.user?.email)) ||
+    (req.user && req.user.email) ||
+    null;
+
+  return { userId, email };
+}
+
+app.get("/api/joyboost/me", requireLogin, async (req, res) => {
+  try {
+    // ✅ You must already have these in your server:
+    // - `db` = connected MongoDB database
+    // - `stripe` = Stripe SDK instance
+    if (!db) return res.status(500).json({ success: false, message: "DB not ready" });
+    if (!stripe) return res.status(500).json({ success: false, message: "Stripe not configured" });
+
+    const { userId, email } = getSessionUserLookup(req);
+
+    // Find user record
+    let user = null;
+
+    if (userId) {
+      // If you're using Mongo ObjectId, this safely tries it.
+      // If ObjectId isn't in scope in your server, remove ObjectId usage and use your own method.
+      try {
+        user = await db.collection("Users").findOne({ _id: new ObjectId(String(userId)) });
+      } catch {
+        // userId might not be an ObjectId; fallback to string match
+        user = await db.collection("Users").findOne({ _id: String(userId) });
+      }
+    }
+
+    if (!user && email) {
+      user = await db.collection("Users").findOne({ email: String(email).toLowerCase() });
+    }
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const subscriptionId = user.joyboostSubscriptionId || null;
+    const customerId = user.joyboostCustomerId || null;
+
+    // Default response if not subscribed
+    let payload = {
+      success: true,
+      status: user.joyboostActive ? "active" : "inactive",
+      active: !!user.joyboostActive,
+      planName: user.joyboostPlan || "JoyBoost",
+      currentPeriodEnd: user.joyboostCurrentPeriodEnd || null,
+      cancelAtPeriodEnd: user.joyboostCancelAtPeriodEnd ?? null,
+      canceledAt: user.joyboostCanceledAt || null,
+      subscriptionId,
+      customerId
+    };
+
+    // If we have Stripe data, pull the truth from Stripe
+    let sub = null;
+
+    if (subscriptionId) {
+      sub = await stripe.subscriptions.retrieve(subscriptionId, {
+        expand: ["items.data.price.product"]
+      });
+    } else if (customerId) {
+      // If you only have customerId, fetch latest sub for that customer
+      const subs = await stripe.subscriptions.list({
+        customer: customerId,
+        limit: 10,
+        status: "all",
+        expand: ["data.items.data.price.product"]
+      });
+
+      // Pick the most relevant subscription (active/trialing first, otherwise most recent)
+      const sorted = (subs.data || []).slice().sort((a, b) => (b.created || 0) - (a.created || 0));
+      sub =
+        sorted.find(s => ["active", "trialing", "past_due", "unpaid"].includes(s.status)) ||
+        sorted[0] ||
+        null;
+
+      // If you found one, you can optionally store it for future speed:
+      // (uncomment if you want)
+      // if (sub?.id && !user.joyboostSubscriptionId) {
+      //   await db.collection("Users").updateOne({ _id: user._id }, { $set: { joyboostSubscriptionId: sub.id } });
+      // }
+    }
+
+    if (sub) {
+      const productName =
+        sub.items?.data?.[0]?.price?.product?.name ||
+        sub.items?.data?.[0]?.price?.nickname ||
+        "JoyBoost";
+
+      payload = {
+        success: true,
+        status: sub.status, // "active", "trialing", "canceled", etc
+        active: sub.status === "active" || sub.status === "trialing",
+        planName: productName,
+        currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000).toISOString() : null,
+        cancelAtPeriodEnd: !!sub.cancel_at_period_end,
+        canceledAt: sub.canceled_at ? new Date(sub.canceled_at * 1000).toISOString() : null,
+        subscriptionId: sub.id,
+        customerId: sub.customer || customerId || null
+      };
+    }
+
+    return res.json(payload);
+  } catch (err) {
+    console.error("GET /api/joyboost/me error:", err);
+    return res.status(500).json({ success: false, message: "JoyBoost lookup failed" });
+  }
+});
+
 	  // ================== JOYBOOST APPROVAL PAYMENT (ONE-TIME) ==================
 if (session.mode === "payment" && session.metadata?.type === "joyboost") {
   const requestId = session.metadata.joyboostRequestId;
