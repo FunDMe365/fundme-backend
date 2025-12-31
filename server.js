@@ -1806,6 +1806,28 @@ app.get("/api/admin/joyboost/requests", requireAdmin, async (req, res) => {
   }
 });
 
+// ================== ADMIN: JOYBOOST SUPPORTERS ==================
+app.get("/api/admin/joyboost/supporters", requireAdmin, async (req, res) => {
+  try {
+    const supporters = await db
+      .collection("JoyBoost_Supporters")
+      .find({ status: "active" })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    return res.json({
+      success: true,
+      supporters
+    });
+  } catch (err) {
+    console.error("GET /api/admin/joyboost/supporters error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load JoyBoost supporters"
+    });
+  }
+});
+
 // ==================== ADMIN: ACTIVATE/UPDATE JOYBOOST SETTINGS ====================
 app.post("/api/admin/joyboost/activate", requireAdmin, async (req, res) => {
   try {
