@@ -1905,7 +1905,6 @@ if (status === "Approved") {
   update.approvalEmailUsedLink = false;
 }
 
-    }
 
     await db.collection(JOYBOOST_REQUESTS).updateOne(
       { _id: new ObjectId(id) },
