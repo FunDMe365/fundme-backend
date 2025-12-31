@@ -479,6 +479,77 @@ app.get("/api/joyboost/me", requireLogin, async (req, res) => {
   }
 });
 
+// =======================================
+// JoyBoost: GET /api/joyboost/application
+// Returns the latest JoyBoost application for the logged-in user
+// =======================================
+app.get("/api/joyboost/application", requireLogin, async (req, res) => {
+  try {
+    if (!db) return res.status(500).json({ success: false, message: "DB not ready" });
+
+    const { email } = getSessionUserLookup(req);
+    const cleanEmail = String(email || "").trim().toLowerCase();
+
+    if (!cleanEmail) {
+      return res.status(400).json({ success: false, message: "Missing session email" });
+    }
+
+    const emailExactI = new RegExp(
+      "^" + cleanEmail.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$",
+      "i"
+    );
+
+    // Pull the latest request for this user (by email)
+    const latest = await db.collection(JOYBOOST_REQUESTS)
+      .find({ $or: [{ email: emailExactI }, { Email: emailExactI }] })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(1)
+      .toArray();
+
+    const reqDoc = latest[0];
+
+    // If they never applied
+    if (!reqDoc) {
+      return res.json({
+        success: true,
+        hasApplication: false,
+        application: null
+      });
+    }
+
+    // Normalize for frontend
+    const application = {
+      id: String(reqDoc._id),
+      name: reqDoc.name || "",
+      email: reqDoc.email || reqDoc.Email || "",
+      campaignId: reqDoc.campaignId || "",
+      status: reqDoc.status || "Pending",
+      denialReason: reqDoc.denialReason || "",
+      createdAt: reqDoc.createdAt || null,
+
+      // Approval + payment link info (your admin route sets these)
+      paymentUrl: reqDoc.paymentUrl || "",
+      stripeSessionId: reqDoc.stripeSessionId || "",
+      paymentLinkSentAt: reqDoc.paymentLinkSentAt || null,
+      approvalEmailSentAt: reqDoc.approvalEmailSentAt || null,
+
+      // Payment completion info (your webhook sets these)
+      paid: !!reqDoc.paid,
+      paidAt: reqDoc.paidAt || null,
+      paidAmount: reqDoc.paidAmount || null
+    };
+
+    return res.json({
+      success: true,
+      hasApplication: true,
+      application
+    });
+  } catch (err) {
+    console.error("GET /api/joyboost/application error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ==================== CLOUDINARY ====================
 if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
   cloudinary.config({
