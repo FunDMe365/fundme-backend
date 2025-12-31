@@ -44,6 +44,131 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
 
 // ==================== APP ====================
 const app = express();
+
+// ==================== STRIPE ====================
+const stripe = Stripe(STRIPE_SECRET_KEY);
+
+// ✅ Stripe webhook MUST be before bodyParser.json()
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error("❌ Stripe webhook signature failed:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  try {
+    // ✅ 1) Checkout completed (JoyBoost supporter subscription)
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+
+      if (session.mode === "subscription" && session.metadata?.type === "joyboost_supporter") {
+        const tier = session.metadata?.tier || "unknown";
+        const supporterEmail = (session.customer_details?.email || session.customer_email || "").toLowerCase().trim();
+        const subscriptionId = session.subscription || null;
+        const customerId = session.customer || null;
+
+        const filter = subscriptionId
+          ? { stripeSubscriptionId: subscriptionId }
+          : { stripeSessionId: session.id };
+
+        await db.collection("JoyBoost_Supporters").updateOne(
+          filter,
+          {
+            $set: {
+              tier,
+              supporterEmail,
+              stripeSessionId: session.id,
+              stripeSubscriptionId: subscriptionId,
+              stripeCustomerId: customerId,
+              status: "active",
+              updatedAt: new Date()
+            },
+            $setOnInsert: { createdAt: new Date() }
+          },
+          { upsert: true }
+        );
+
+        // ✅ Also update the site user record so dashboard changes
+        if (supporterEmail) {
+          await db.collection("Users").updateOne(
+            { Email: { $regex: `^${supporterEmail}$`, $options: "i" } },
+            {
+              $set: {
+                joyboostSupporterActive: true,
+                joyboostSupporterTier: tier,
+                joyboostSupporterStatus: "active",
+                joyboostSupporterUpdatedAt: new Date(),
+                stripeCustomerId: customerId,
+                stripeSubscriptionId: subscriptionId
+              }
+            }
+          );
+        }
+
+        console.log("✅ JoyBoost supporter activated:", supporterEmail, "tier:", tier);
+      }
+    }
+
+    // ✅ 2) Subscription canceled
+    if (event.type === "customer.subscription.deleted") {
+      const sub = event.data.object;
+
+      await db.collection("JoyBoost_Supporters").updateOne(
+        { stripeSubscriptionId: sub.id },
+        { $set: { status: "canceled", canceledAt: new Date(), updatedAt: new Date() } }
+      );
+
+      await db.collection("Users").updateMany(
+        { stripeSubscriptionId: sub.id },
+        { $set: { joyboostSupporterActive: false, joyboostSupporterStatus: "canceled", joyboostSupporterUpdatedAt: new Date() } }
+      );
+
+      console.log("🛑 Subscription canceled:", sub.id);
+    }
+
+    // ✅ 3) Subscription updated (active vs canceling)
+    if (event.type === "customer.subscription.updated") {
+      const sub = event.data.object;
+      const status = sub.cancel_at_period_end ? "canceling" : "active";
+
+      await db.collection("JoyBoost_Supporters").updateOne(
+        { stripeSubscriptionId: sub.id },
+        {
+          $set: {
+            status,
+            cancelAtPeriodEnd: !!sub.cancel_at_period_end,
+            currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      await db.collection("Users").updateMany(
+        { stripeSubscriptionId: sub.id },
+        {
+          $set: {
+            joyboostSupporterActive: status === "active" || status === "canceling",
+            joyboostSupporterStatus: status,
+            joyboostSupporterUpdatedAt: new Date()
+          }
+        }
+      );
+
+      console.log("🔁 Supporter subscription updated:", sub.id, status);
+    }
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("❌ Webhook handler error:", err);
+    return res.status(500).json({ received: false });
+  }
+});
+
+// ✅ Now apply normal body parsers AFTER webhook
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.set("trust proxy", 1);
@@ -135,6 +260,36 @@ async function requireVerifiedIdentity(req, res, next) {
   }
 }
 
+//=============================SUPPORTER STATUS===============================
+app.get("/api/joyboost/supporter/me", requireLogin, async (req, res) => {
+  try {
+    const email = String(req.session?.user?.email || "").toLowerCase().trim();
+    if (!email) return res.json({ success:false });
+
+    const record = await db.collection("JoyBoost_Supporters").findOne({
+      supporterEmail: { $regex: `^${email}$`, $options: "i" }
+    });
+
+    if (!record) {
+      return res.json({ success:true, active:false, status:"inactive" });
+    }
+
+    res.json({
+      success: true,
+      active: record.status === "active" || record.status === "canceling",
+      status: record.status,
+      tier: record.tier,
+      cancelAtPeriodEnd: record.cancelAtPeriodEnd || false,
+      currentPeriodEnd: record.currentPeriodEnd || null,
+      canceledAt: record.canceledAt || null
+    });
+  } catch (err) {
+    console.error("supporter/me error:", err);
+    res.json({ success:false });
+  }
+});
+
+
 // ==================== JOYBOOST HELPERS ====================
 const JOYBOOST_REQUESTS = "JoyBoost_Requests";
 const JOYBOOST_SETTINGS = "JoyBoost_Settings"; // per-campaign
@@ -180,31 +335,6 @@ function normalizeJoyBoostSetting(doc) {
   };
 }
 
-
-// ==================== STRIPE ====================
-const stripe = Stripe(STRIPE_SECRET_KEY);
-
-// ==================== STRIPE WEBHOOK (REQUIRED FOR RELIABLE DONATION SAVES) ====================
-app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    console.error("❌ Stripe webhook signature failed:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-    try {
-    // ✅ 1) Checkout completed (donations + JoyBoost subscription signups)
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-
       // ================== JOYBOOST SUPPORTER SUBSCRIPTION (TIERS) ==================
       if (session.mode === "subscription" && session.metadata?.type === "joyboost_supporter") {
         const tier = session.metadata?.tier || "unknown";
@@ -232,10 +362,27 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
             $setOnInsert: { createdAt: new Date() }
           },
           { upsert: true }
+		  if (supporterEmail) {
+  await db.collection("Users").updateOne(
+    { Email: { $regex: `^${supporterEmail}$`, $options: "i" } },
+    {
+      $set: {
+        joyboostSupporterActive: true,
+        joyboostSupporterTier: tier,
+        joyboostSupporterStatus: "active",
+        stripeCustomerId: customerId,
+        stripeSubscriptionId: subscriptionId,
+        joyboostSupporterUpdatedAt: new Date()
+      }
+    }
+  );
+}
+
         );
 
         console.log("✅ JoyBoost supporter activated (upsert):", supporterEmail, "tier:", tier);
       }
+	 
 
 
       // ================== DONATION RECORDING ==================
@@ -1137,10 +1284,23 @@ app.get("/api/check-session", async (req, res) => {
 // This is for "Support JoyBoost" (supporters), NOT applicants needing help.
 // Frontend sends: { tier: "bronze" | "silver" | "gold" | "diamond", email?: "" }
 
-app.post("/api/joyboost/supporter/checkout", async (req, res) => {
+app.post("/api/joyboost/supporter/checkout", requireLogin, async (req, res) => {
   try {
     const tierRaw = String(req.body?.tier || "").trim().toLowerCase();
-    const email = String(req.body?.email || "").trim().toLowerCase();
+    // Prefer logged-in user email (required) so we can update their dashboard status
+    const sessionEmail = String(req.session?.user?.email || req.session?.userEmail || "").trim().toLowerCase();
+    const email = String(req.body?.email || sessionEmail || "").trim().toLowerCase();
+
+    if (!email) {
+      return res.status(400).json({ error: "Missing email (please log in again)" });
+    }
+
+    // ✅ Require that this email belongs to a real JoyFund user
+    const userExists = await db.collection("Users").findOne({ Email: { $regex: `^${email}$`, $options: "i" } });
+    if (!userExists) {
+      return res.status(400).json({ error: "No JoyFund account found for this email. Please sign up / log in first." });
+    }
+
 
     const tierMap = {
   bronze: process.env.JOYBOOST_SUPPORTER_BRONZE_PRICE_ID,
@@ -1178,8 +1338,8 @@ if (existing) {
       line_items: [{ price: priceId, quantity: 1 }],
       customer_email: email || undefined,
       metadata: { type: "joyboost_supporter", tier: tierRaw },
-      success_url: `${process.env.FRONTEND_URL}/joyboost-supporter-success.html?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/joyboost.html?support_canceled=1`
+      success_url: `${FRONTEND_URL}/dashboard.html?jb_supporter=success&session_id={CHECKOUT_SESSION_ID}`,
+	  cancel_url: `${FRONTEND_URL}/joyboost.html?support_canceled=1`,
     }, {
       idempotencyKey: idemKey
     });
