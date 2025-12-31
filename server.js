@@ -200,71 +200,65 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  try {
+    try {
     // ✅ 1) Checkout completed (donations + JoyBoost subscription signups)
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
-	 }
-	  
-// ================== JOYBOOST SUPPORTER SUBSCRIPTION (TIERS) ==================
-if (session.mode === "subscription" && session.metadata?.type === "joyboost_supporter") {
-  const tier = session.metadata?.tier || "unknown";
-  const supporterEmail = session.customer_details?.email || session.customer_email || null;
-  const subscriptionId = session.subscription || null;
-  const customerId = session.customer || null;
 
-  // Upsert so webhook retries don't create duplicates
-  const filter = subscriptionId
-    ? { stripeSubscriptionId: subscriptionId }
-    : { stripeSessionId: session.id };
+      // ================== JOYBOOST SUPPORTER SUBSCRIPTION (TIERS) ==================
+      if (session.mode === "subscription" && session.metadata?.type === "joyboost_supporter") {
+        const tier = session.metadata?.tier || "unknown";
+        const supporterEmail = session.customer_details?.email || session.customer_email || null;
+        const subscriptionId = session.subscription || null;
+        const customerId = session.customer || null;
 
-  await db.collection("JoyBoost_Supporters").updateOne(
-    filter,
-    {
-      $set: {
-        tier,
-        supporterEmail,
-        stripeSessionId: session.id,
-        stripeSubscriptionId: subscriptionId,
-        stripeCustomerId: customerId,
-        status: "active",
-        updatedAt: new Date()
-      },
-      $setOnInsert: {
-        createdAt: new Date()
+        // Upsert so webhook retries don't create duplicates
+        const filter = subscriptionId
+          ? { stripeSubscriptionId: subscriptionId }
+          : { stripeSessionId: session.id };
+
+        await db.collection("JoyBoost_Supporters").updateOne(
+          filter,
+          {
+            $set: {
+              tier,
+              supporterEmail,
+              stripeSessionId: session.id,
+              stripeSubscriptionId: subscriptionId,
+              stripeCustomerId: customerId,
+              status: "active",
+              updatedAt: new Date()
+            },
+            $setOnInsert: { createdAt: new Date() }
+          },
+          { upsert: true }
+        );
+
+        console.log("✅ JoyBoost supporter activated (upsert):", supporterEmail, "tier:", tier);
       }
-    },
-    { upsert: true }
-  );
 
-  console.log("✅ JoyBoost supporter activated (upsert):", supporterEmail, "tier:", tier);
-}
+      // ================== JOYBOOST APPROVAL PAYMENT (ONE-TIME) ==================
+      if (session.mode === "payment" && session.metadata?.type === "joyboost") {
+        const requestId = session.metadata.joyboostRequestId;
 
-	  
+        if (requestId && ObjectId.isValid(requestId)) {
+          await db.collection(JOYBOOST_REQUESTS).updateOne(
+            { _id: new ObjectId(requestId) },
+            {
+              $set: {
+                paid: true,
+                paidAt: new Date(),
+                paidStripeSessionId: session.id,
+                paidAmount: (session.amount_total || 0) / 100
+              }
+            }
+          );
 
-	  // ================== JOYBOOST APPROVAL PAYMENT (ONE-TIME) ==================
-if (session.mode === "payment" && session.metadata?.type === "joyboost") {
-  const requestId = session.metadata.joyboostRequestId;
-
-  if (requestId && ObjectId.isValid(requestId)) {
-    await db.collection(JOYBOOST_REQUESTS).updateOne(
-      { _id: new ObjectId(requestId) },
-      {
-        $set: {
-          paid: true,
-          paidAt: new Date(),
-          paidStripeSessionId: session.id,
-          paidAmount: (session.amount_total || 0) / 100
+          console.log("✅ JoyBoost approval payment received for request:", requestId);
         }
       }
-    );
 
-    console.log("✅ JoyBoost approval payment received for request:", requestId);
-  }
-}
-
-
-      // ================== JOYBOOST SUBSCRIPTION ==================
+      // ================== JOYBOOST SUBSCRIPTION (legacy) ==================
       if (session.mode === "subscription" && session.metadata?.product === "joyboost") {
         const userId = session.metadata.userId;
         const subscriptionId = session.subscription;
@@ -286,98 +280,108 @@ if (session.mode === "payment" && session.metadata?.type === "joyboost") {
       }
 
       // ================== DONATION RECORDING ==================
-		if (!(session.metadata?.type === "joyboost") && !(session.metadata?.type === "joyboost_supporter")) {
-		const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
+      // (Skip JoyBoost payment + JoyBoost supporter subscriptions)
+      if (
+        !(session.metadata?.type === "joyboost") &&
+        !(session.metadata?.type === "joyboost_supporter")
+      ) {
+        const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
 
-		if (!exists && session.payment_status === "paid") {
-        const email = session.customer_details?.email || null;
-        const name = session.customer_details?.name || null;
-        const chargedAmount = (session.amount_total || 0) / 100;
+        if (!exists && session.payment_status === "paid") {
+          const email = session.customer_details?.email || null;
+          const name = session.customer_details?.name || null;
+          const chargedAmount = (session.amount_total || 0) / 100;
 
-        const originalDonation = session.metadata?.originalDonation || null;
-        const campaignId = session.metadata?.campaignId || null;
-        const campaignTitle = session.metadata?.campaignTitle || null;
+          const originalDonation = session.metadata?.originalDonation || null;
+          const campaignId = session.metadata?.campaignId || null;
+          const campaignTitle = session.metadata?.campaignTitle || null;
 
-        const originalNum = Number(originalDonation);
-        const originalAmount = Number.isFinite(originalNum) ? originalNum : null;
+          const originalNum = Number(originalDonation);
+          const originalAmount = Number.isFinite(originalNum) ? originalNum : null;
 
-        await db.collection("Donations").insertOne({
-          stripeSessionId: session.id,
-          campaignId,
-          campaignTitle,
+          await db.collection("Donations").insertOne({
+            stripeSessionId: session.id,
+            campaignId,
+            campaignTitle,
 
-          date: new Date(),
-          name,
-          email,
-          amount: originalAmount ?? chargedAmount,
+            date: new Date(),
+            name,
+            email,
+            amount: originalAmount ?? chargedAmount,
 
-          originalDonation,
-          chargedAmount,
-          currency: session.currency,
-          createdAt: new Date(),
-          source: "stripe_webhook"
-        });
+            originalDonation,
+            chargedAmount,
+            currency: session.currency,
+            createdAt: new Date(),
+            source: "stripe_webhook"
+          });
 
-        console.log("✅ Donation recorded via webhook:", session.id);
-      } else {
-        console.log("ℹ️ Donation already recorded or not paid:", session.id, session.payment_status);
-		  }   // closes: if (!exists && session.payment_status === "paid")
-		}     // closes: if (!(session.metadata?.type === "joyboost"))
+          console.log("✅ Donation recorded via webhook:", session.id);
+        } else {
+          console.log("ℹ️ Donation already recorded or not paid:", session.id, session.payment_status);
+        }
       }
+    } // ✅ CLOSE checkout.session.completed
 
     // ✅ 2) Subscription canceled (turn JoyBoost OFF + Supporters OFF)
-if (event.type === "customer.subscription.deleted") {
-  const sub = event.data.object;
+    if (event.type === "customer.subscription.deleted") {
+      const sub = event.data.object;
 
-  // Turn OFF JoyBoost membership (legacy flow)
-  await db.collection("Users").updateOne(
-    { joyboostSubscriptionId: sub.id },
-    { $set: { joyboostActive: false, joyboostCanceledAt: new Date() } }
-  );
+      // Turn OFF JoyBoost membership (legacy)
+      await db.collection("Users").updateOne(
+        { joyboostSubscriptionId: sub.id },
+        { $set: { joyboostActive: false, joyboostCanceledAt: new Date() } }
+      );
 
-  // Turn OFF JoyBoost Supporter tier (tiers/subscriptions)
-  await db.collection("JoyBoost_Supporters").updateOne(
-    { stripeSubscriptionId: sub.id },
-    { $set: { status: "canceled", canceledAt: new Date(), updatedAt: new Date() } }
-  );
+      // Turn OFF JoyBoost Supporter tier
+      await db.collection("JoyBoost_Supporters").updateOne(
+        { stripeSubscriptionId: sub.id },
+        { $set: { status: "canceled", canceledAt: new Date(), updatedAt: new Date() } }
+      );
 
-  console.log("🛑 Subscription canceled:", sub.id);
-}
+      console.log("🛑 Subscription canceled:", sub.id);
+    } // ✅ CLOSE customer.subscription.deleted
 
-// ✅ 2b) Subscription updated (track canceling / active again for supporters)
-if (event.type === "customer.subscription.updated") {
-  const sub = event.data.object;
+    // ✅ 2b) Subscription updated (track "canceling" status for supporters)
+    if (event.type === "customer.subscription.updated") {
+      const sub = event.data.object;
 
-  if (sub.cancel_at_period_end === true) {
-    await db.collection("JoyBoost_Supporters").updateOne(
-      { stripeSubscriptionId: sub.id },
-      {
-        $set: {
-          status: "canceling",
-          cancelAtPeriodEnd: true,
-          currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
-          updatedAt: new Date()
-        }
+      if (sub.cancel_at_period_end === true) {
+        await db.collection("JoyBoost_Supporters").updateOne(
+          { stripeSubscriptionId: sub.id },
+          {
+            $set: {
+              status: "canceling",
+              cancelAtPeriodEnd: true,
+              currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
+              updatedAt: new Date()
+            }
+          }
+        );
+        console.log("⏳ Supporter subscription canceling at period end:", sub.id);
       }
-    );
-    console.log("⏳ Supporter subscription canceling at period end:", sub.id);
-  }
 
-  if (sub.cancel_at_period_end === false) {
-    await db.collection("JoyBoost_Supporters").updateOne(
-      { stripeSubscriptionId: sub.id },
-      {
-        $set: {
-          status: "active",
-          cancelAtPeriodEnd: false,
-          currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
-          updatedAt: new Date()
-        }
+      if (sub.cancel_at_period_end === false) {
+        await db.collection("JoyBoost_Supporters").updateOne(
+          { stripeSubscriptionId: sub.id },
+          {
+            $set: {
+              status: "active",
+              cancelAtPeriodEnd: false,
+              currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
+              updatedAt: new Date()
+            }
+          }
+        );
+        console.log("✅ Supporter subscription active again:", sub.id);
       }
-    );
-    console.log("✅ Supporter subscription active again:", sub.id);
+    } // ✅ CLOSE customer.subscription.updated
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("❌ Webhook handler error:", err);
+    return res.status(500).json({ received: false });
   }
-}
 
 // ==================== PRODUCTION-READY SESSION ====================
 const MongoStorePkg = require("connect-mongo");
