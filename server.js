@@ -1143,11 +1143,11 @@ app.post("/api/joyboost/supporter/checkout", async (req, res) => {
     const email = String(req.body?.email || "").trim().toLowerCase();
 
     const tierMap = {
-      bronze: process.env.JOYBOOST_SUPPORTER_BRONZE_PRICE_ID,
-      silver: process.env.JOYBOOST_SUPPORTER_SILVER_PRICE_ID,
-      gold: process.env.JOYBOOST_SUPPORTER_GOLD_PRICE_ID,
-      diamond: process.env.JOYBOOST_SUPPORTER_DIAMOND_PRICE_ID
-    };
+  bronze: process.env.JOYBOOST_SUPPORTER_BRONZE_PRICE_ID,
+  silver: process.env.JOYBOOST_SUPPORTER_SILVER_PRICE_ID,
+  gold: process.env.JOYBOOST_SUPPORTER_GOLD_PRICE_ID,
+  platinum: process.env.JOYBOOST_SUPPORTER_PLATINUM_PRICE_ID
+};
 
     const priceId = tierMap[tierRaw];
     if (!priceId) return res.status(400).json({ error: "Invalid tier" });
