@@ -1151,6 +1151,19 @@ app.post("/api/joyboost/supporter/checkout", async (req, res) => {
 
     const priceId = tierMap[tierRaw];
     if (!priceId) return res.status(400).json({ error: "Invalid tier" });
+	
+	// ❌ Block duplicate active subscriptions
+const existing = await db.collection("JoyBoost_Supporters").findOne({
+  supporterEmail: email,
+  status: { $in: ["active", "canceling"] }
+});
+
+if (existing) {
+  return res.status(400).json({
+    error: "You already have an active JoyBoost subscription."
+  });
+}
+
 
     // 🔐 STRIPE IDEMPOTENCY KEY (this is the real fix)
     const baseKey = `${email || "anon"}-${tierRaw}`;
