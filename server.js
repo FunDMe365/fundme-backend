@@ -1150,30 +1150,29 @@ app.post("/api/joyboost/supporter/checkout", async (req, res) => {
     };
 
     const priceId = tierMap[tierRaw];
+    if (!priceId) return res.status(400).json({ error: "Invalid tier" });
 
-    if (!priceId) {
-      return res.status(400).json({
-        error: "Invalid tier. Use bronze, silver, gold, or diamond."
-      });
-    }
+    // 🔐 STRIPE IDEMPOTENCY KEY (this is the real fix)
+    const baseKey = `${email || "anon"}-${tierRaw}`;
+    const timeBucket = Math.floor(Date.now() / 60000); // 60-second window
+    const idemKey = crypto.createHash("sha256")
+      .update(baseKey + timeBucket)
+      .digest("hex");
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
-
       customer_email: email || undefined,
-
-      metadata: {
-        type: "joyboost_supporter",
-        tier: tierRaw
-      },
-
+      metadata: { type: "joyboost_supporter", tier: tierRaw },
       success_url: `${process.env.FRONTEND_URL}/joyboost-supporter-success.html?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.FRONTEND_URL}/joyboost.html?support_canceled=1`
+    }, {
+      idempotencyKey: idemKey
     });
 
     return res.json({ url: session.url });
+
   } catch (err) {
     console.error("JoyBoost supporter checkout error:", err);
     return res.status(500).json({ error: err.message || "Stripe error" });
