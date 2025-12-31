@@ -204,6 +204,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     // ✅ 1) Checkout completed (donations + JoyBoost subscription signups)
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
+	 }
 	  
 // ================== JOYBOOST SUPPORTER SUBSCRIPTION (TIERS) ==================
 if (session.mode === "subscription" && session.metadata?.type === "joyboost_supporter") {
@@ -328,36 +329,25 @@ if (session.mode === "payment" && session.metadata?.type === "joyboost") {
 if (event.type === "customer.subscription.deleted") {
   const sub = event.data.object;
 
-  // Turn OFF JoyBoost membership (if you still use that legacy subscription flow)
+  // Turn OFF JoyBoost membership (legacy flow)
   await db.collection("Users").updateOne(
     { joyboostSubscriptionId: sub.id },
-    {
-      $set: {
-        joyboostActive: false,
-        joyboostCanceledAt: new Date()
-      }
-    }
+    { $set: { joyboostActive: false, joyboostCanceledAt: new Date() } }
   );
 
   // Turn OFF JoyBoost Supporter tier (tiers/subscriptions)
   await db.collection("JoyBoost_Supporters").updateOne(
     { stripeSubscriptionId: sub.id },
-    {
-      $set: {
-        status: "canceled",
-        canceledAt: new Date(),
-        updatedAt: new Date()
-      }
-    }
+    { $set: { status: "canceled", canceledAt: new Date(), updatedAt: new Date() } }
   );
 
   console.log("🛑 Subscription canceled:", sub.id);
-  
-  // ✅ 2b) Subscription updated (track "canceling" status for supporters)
+}
+
+// ✅ 2b) Subscription updated (track canceling / active again for supporters)
 if (event.type === "customer.subscription.updated") {
   const sub = event.data.object;
 
-  // If supporter subscription was set to cancel at period end, mark as "canceling"
   if (sub.cancel_at_period_end === true) {
     await db.collection("JoyBoost_Supporters").updateOne(
       { stripeSubscriptionId: sub.id },
@@ -373,7 +363,6 @@ if (event.type === "customer.subscription.updated") {
     console.log("⏳ Supporter subscription canceling at period end:", sub.id);
   }
 
-  // If cancellation was reversed, mark active again
   if (sub.cancel_at_period_end === false) {
     await db.collection("JoyBoost_Supporters").updateOne(
       { stripeSubscriptionId: sub.id },
@@ -389,15 +378,6 @@ if (event.type === "customer.subscription.updated") {
     console.log("✅ Supporter subscription active again:", sub.id);
   }
 }
-
-
-    return res.json({ received: true });
-  } catch (err) {
-    console.error("❌ Webhook handler error:", err);
-    return res.status(500).json({ received: false });
-  }
-});
-
 
 // ==================== PRODUCTION-READY SESSION ====================
 const MongoStorePkg = require("connect-mongo");
