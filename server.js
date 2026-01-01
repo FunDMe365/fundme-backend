@@ -49,7 +49,12 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
 
 // ==================== APP ====================
 const app = express();
-app.use(bodyParser.json());
+// ✅ IMPORTANT: Stripe webhook needs RAW body.
+// This middleware uses JSON parsing for everything EXCEPT /api/stripe/webhook
+app.use((req, res, next) => {
+  if (req.originalUrl === "/api/stripe/webhook") return next();
+  return bodyParser.json()(req, res, next);
+});
 app.use(bodyParser.urlencoded({ extended: true }));
 app.set("trust proxy", 1);
 process.on("unhandledRejection", (err) => {
@@ -243,7 +248,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 // ✅ Also update the site user record so dashboard changes
 if (supporterEmail) {
   const se = String(supporterEmail).trim().toLowerCase();
-                    const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
+  const emailRegex = new RegExp("^" + escapeRegex(se) + "$", "i");
+
   await db.collection("Users").updateOne(
     { $or: [ { Email: emailRegex }, { email: emailRegex } ] },
     {
@@ -385,7 +391,7 @@ app.use(session({
 
   cookie: {
   secure: true,
-  sameSite: "lax",
+  sameSite: "none",
   httpOnly: true,
   path: "/",
   domain: ".fundasmile.net"
