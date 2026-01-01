@@ -385,10 +385,11 @@ app.use(session({
 
   cookie: {
   secure: true,
-  sameSite: "none",
+  sameSite: "lax",
   httpOnly: true,
-  path: "/"
-}
+  path: "/",
+  domain: ".fundasmile.net"
+	}
 }));
 
 // ===============================
