@@ -7,7 +7,6 @@ const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const crypto = require("crypto");
-const WAITLIST_COLLECTION = "waitlist";
 const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
 const cors = require("cors");
@@ -1588,24 +1587,6 @@ return {
   }
 });
 
-// ==================== ADMIN: WAITLIST LIST ====================
-app.get("/api/admin/waitlist", requireAdmin, async (req, res) => {
-  try {
-    // Your canonical merged collection is "waitlist" (lowercase)
-    const waitlist = await db.collection("waitlist")
-      .find({})
-      .sort({ createdAt: -1 })
-      .limit(1000)
-      .toArray();
-
-    return res.json({ success: true, waitlist });
-  } catch (err) {
-    console.error("GET /api/admin/waitlist error:", err);
-    return res.status(500).json({ success: false, message: "Failed to load waitlist" });
-  }
-});
-
-
 // ==================== ADMIN: VOLUNTEERS LIST ====================
 app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
   try {
@@ -1672,28 +1653,17 @@ app.get("/api/admin/street-team", requireAdmin, async (req, res) => {
 // ==================== ADMIN STATS (counts) ====================
 app.get("/api/admin/stats", requireAdmin, async (req, res) => {
   try {
-   const [users, volunteers, streetTeam, waitlist] = await Promise.all([
+   const [users, volunteers, streetTeam] = await Promise.all([
   db.collection("Users").countDocuments({}),
   db.collection("Volunteers").countDocuments({}),
   db.collection("StreetTeam").countDocuments({}),
-  db.collection(WAITLIST_COLLECTION).countDocuments({})
 ]);
-
-const recentWaitlistArr = await db.collection(WAITLIST_COLLECTION)
-  .find({})
-  .sort({ createdAt: -1 })
-  .limit(1)
-  .toArray();
-
-    const recentWaitlist = recentWaitlistArr[0] || null;
 
     return res.json({
       success: true,
       users,
       volunteers,
 	  streetTeam,
-      waitlist,
-      recentWaitlist
     });
   } catch (err) {
     console.error("admin stats error:", err);
@@ -2294,89 +2264,7 @@ app.get("/api/donations", async (req, res) => {
   }
 });
 
-
-// ==================== PUBLIC: WAITLIST COUNT ====================
-// Used on homepage for social proof: "X people have already joined"
-app.get("/api/waitlist-count", async (req, res) => {
-  try {
-    const count = await db.collection(WAITLIST_COLLECTION).countDocuments({});
-    return res.json({ success: true, count });
-  } catch (err) {
-    console.error("waitlist-count error:", err);
-    return res.status(500).json({ success: false, message: "Failed to get waitlist count" });
-  }
-});
-
-app.get("/api/debug-campaign/:id", async (req, res) => {
-  try {
-    const id = String(req.params.id || "").trim();
-
-    const idVariants = [{ Id: id }, { id: id }];
-if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
-
-const c = await db.collection("Campaigns").findOne({ $or: idVariants });
-
-
-    return res.json({
-      sessionEmail: req.session?.user?.email || null,
-      found: !!c,
-      campaign: c
-        ? {
-            _id: String(c._id),
-            Id: c.Id || null,
-            id: c.id || null,
-            Email: c.Email || null,
-            email: c.email || null,
-            OwnerEmail: c.OwnerEmail || null,
-            ownerEmail: c.ownerEmail || null,
-            title: c.title || c.Title || null,
-            status: c.Status || c.status || null
-          }
-        : null
-    });
-  } catch (err) {
-    console.error("debug-campaign error:", err);
-    return res.status(500).json({ ok: false, error: "server error" });
-  }
-});
-
-
 // ==================== WAITLIST / VOLUNTEERS / STREET TEAM ====================
-app.post("/api/waitlist", async (req, res) => {
-  try {
-    const { name, email, reason } = req.body;
-    const row = { name, email, reason, createdAt: new Date() };
-
-    await db.collection(WAITLIST_COLLECTION).insertOne(row);
-
-    await sendSubmissionEmails({
-      type: "Waitlist",
-      userEmail: email,
-      userName: name,
-      adminSubject: "New Waitlist Submission",
-      userSubject: "You’re on the JoyFund waitlist!",
-      adminHtml: `
-        <h2>New Waitlist Submission</h2>
-        <p><b>Name:</b> ${name || "—"}</p>
-        <p><b>Email:</b> ${email || "—"}</p>
-        <p><b>Reason:</b> ${reason || "—"}</p>
-        <p><b>Date:</b> ${new Date().toLocaleString()}</p>
-      `,
-      userHtml: `
-        <h2>Welcome to JoyFund 💙💗</h2>
-        <p>Hi ${name || ""},</p>
-        <p>Thanks for joining our waitlist — we received your submission and you’re officially on the list.</p>
-        <p>We’ll email you as we roll out updates and launch announcements.</p>
-        <p>— JoyFund Team</p>
-      `
-    });
-
-    return res.json({ success: true });
-  } catch (err) {
-    console.error("waitlist error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-});
 
 app.post("/api/volunteer", async (req, res) => {
   try {
