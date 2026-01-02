@@ -1068,7 +1068,8 @@ app.post("/api/track/pageview", async (req, res) => {
       utm = {},
       meta = {},
       event = "pageview",
-      consent = true
+      consent = true,
+      isTest = false
     } = req.body || {};
 
     if (!consent) return res.json({ success: true, skipped: true });
@@ -1079,9 +1080,17 @@ app.post("/api/track/pageview", async (req, res) => {
 
     const ip =
       (req.headers["cf-connecting-ip"] ||
-       req.headers["x-forwarded-for"] ||
-       req.socket?.remoteAddress || "")
-        .toString().split(",")[0].trim();
+        req.headers["x-forwarded-for"] ||
+        req.socket?.remoteAddress ||
+        "")
+        .toString()
+        .split(",")[0]
+        .trim();
+
+    // Cloudflare geo (best-effort; may be blank depending on setup)
+    const country = String(req.headers["cf-ipcountry"] || "");
+    const region  = String(req.headers["cf-region"] || "");
+    const city    = String(req.headers["cf-ipcity"] || "");
 
     const timestamp = new Date().toISOString();
 
@@ -1102,18 +1111,21 @@ app.post("/api/track/pageview", async (req, res) => {
       meta.language || "",
       meta.screen || "",
       meta.timezone || "",
-      ip
+      ip,
+      country,
+      region,
+      city,
+      isTest ? "test" : "prod"
     ];
 
     await appendToSheet(row);
 
-    res.json({ success: true });
+    return res.json({ success: true });
   } catch (err) {
-    console.error("TRACKING ERROR:", err.message);
-    res.status(500).json({ success: false, error: err.message });
+    console.error("TRACKING ERROR:", err?.message || err);
+    return res.status(500).json({ success: false, message: "Tracking failed", error: err?.message || "unknown" });
   }
 });
-
 
 // ==================== USERS & AUTH ====================
 
