@@ -685,7 +685,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
 
       const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
-	  // ✅ Block donations if campaign is expired or not active
+
 if (!campaign) {
   return res.status(404).json({ success: false, message: "Campaign not found." });
 }
@@ -696,7 +696,6 @@ if (campaign.lifecycleStatus === "Expired") {
     message: "This campaign is no longer accepting donations."
   });
 }
-
       if (!campaign) {
         return res.status(404).json({ error: "Campaign not found" });
       }
@@ -1804,6 +1803,56 @@ app.patch("/api/admin/campaigns/:id/expired-review", requireAdmin, async (req, r
   } catch (err) {
     console.error("PATCH /api/admin/campaigns/:id/expired-review error:", err);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== ADMIN: RESTORE AN EXPIRED CAMPAIGN ====================
+// Admin can restore by giving "days" (example: 7, 14, 30) and an optional note.
+app.post("/api/admin/campaigns/:id/restore", requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const days = Number(req.body?.days || 0);
+    const note = String(req.body?.note || "").trim();
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid campaign id" });
+    }
+
+    if (!days || !Number.isFinite(days) || days < 1 || days > 365) {
+      return res.status(400).json({ success: false, message: "Days must be between 1 and 365" });
+    }
+
+    const now = new Date();
+    const newExpiresAt = addDays(now, days);
+
+    const result = await db.collection("Campaigns").findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          lifecycleStatus: "Active",
+          expiresAt: newExpiresAt,
+          // clear expired markers
+          expiredAt: null,
+
+          // optional: track restore info
+          restoredAt: now,
+          restoredDays: days,
+          restoreNote: note || "",
+          // optional: mark review status if you want
+          expiredReviewStatus: "Restored"
+        }
+      },
+      { returnDocument: "after" }
+    );
+
+    if (!result?.value) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+
+    return res.json({ success: true, campaign: result.value });
+  } catch (err) {
+    console.error("POST /api/admin/campaigns/:id/restore error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
