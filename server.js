@@ -455,6 +455,9 @@ function requireLogin(req, res, next) {
   next();
 }
 
+// ✅ Add this
+const requireAuth = requireLogin;
+
 // Helper: try to find the logged-in user's ID/email from the session
 function getSessionUserLookup(req) {
   // Prefer userId if you store it
