@@ -2133,24 +2133,6 @@ if (status === "Approved") {
   }
 });
 
-// ==================== USER: MY CAMPAIGNS (INCLUDES EXPIRED) ====================
-app.get("/api/my-campaigns", requireAuth, async (req, res) => {
-  try {
-    const email = req.user?.email || req.user?.Email || null;
-    if (!email) return res.status(401).json({ success: false, message: "Not logged in" });
-
-    const rows = await db.collection("Campaigns")
-      .find({ creatorEmail: email })
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    res.json({ success: true, campaigns: rows });
-  } catch (err) {
-    console.error("GET /api/my-campaigns error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
 // ==================== PUBLIC: ACTIVE CAMPAIGNS (SEARCH/LIST) ====================
 app.get("/api/campaigns", async (req, res) => {
   try {
