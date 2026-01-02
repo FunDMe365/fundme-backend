@@ -1583,6 +1583,22 @@ app.post("/api/admin/normalize-campaign-emails", async (req, res) => {
   }
 });
 
+//======================ADMIN: GET EXPIRED CAMPAIGNS===============
+app.get("/api/admin/expired-campaigns", requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection("Campaigns")
+      .find({ lifecycleStatus: "Expired" })
+      .sort({ expiredAt: -1, expiresAt: -1 })
+      .toArray();
+
+    res.json({ success: true, campaigns: rows });
+  } catch (err) {
+    console.error("GET /api/admin/expired-campaigns error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
 // ==================== ADMIN: USERS LIST ====================
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
   try {
@@ -1766,32 +1782,23 @@ app.get("/api/admin/campaigns/expired", requireAdmin, async (req, res) => {
 // ==================== ADMIN: UPDATE EXPIRED CAMPAIGN REVIEW STATUS ====================
 app.patch("/api/admin/campaigns/:id/expired-review", requireAdmin, async (req, res) => {
   try {
-    const id = String(req.params.id || "").trim();
+    const id = req.params.id;
+    const {
+      expiredReviewStatus = "",
+      expiredOutcome = "",
+      expiredReviewNotes = ""
+    } = req.body || {};
 
-    const allowed = ["Needs Review", "Reviewed", "Feasible", "Not Feasible", "Completed"];
+    const update = {
+      expiredReviewStatus: String(expiredReviewStatus || "").trim(),
+      expiredOutcome: String(expiredOutcome || "").trim(),
+      expiredReviewNotes: String(expiredReviewNotes || "")
+    };
 
-    const expiredReviewStatus = String(req.body.expiredReviewStatus || "").trim();
-    const expiredOutcome = String(req.body.expiredOutcome || "").trim();
-    const expiredReviewNotes = String(req.body.expiredReviewNotes || "").trim();
-
-    if (!allowed.includes(expiredReviewStatus)) {
-      return res.status(400).json({ success: false, message: "Invalid expiredReviewStatus" });
-    }
-
-    const filter = ObjectId.isValid(id) ? { _id: new ObjectId(id) } : { Id: id };
-
-    const result = await db.collection("Campaigns").updateOne(filter, {
-      $set: {
-        expiredReviewStatus,
-        expiredOutcome,
-        expiredReviewNotes,
-        expiredReviewUpdatedAt: new Date()
-      }
-    });
-
-    if (!result.matchedCount) {
-      return res.status(404).json({ success: false, message: "Campaign not found" });
-    }
+    await db.collection("Campaigns").updateOne(
+      { _id: new ObjectId(id) },
+      { $set: update }
+    );
 
     res.json({ success: true });
   } catch (err) {
