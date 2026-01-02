@@ -2724,5 +2724,85 @@ app.use((err, req, res, next) => {
 // ==================== STATIC FILES ====================
 app.use(express.static("public"));
 
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
+
+app.post("/api/track/pageview", async (req, res) => {
+  try {
+    const origin = req.headers.origin || "";
+
+    // ✅ lock to your site(s)
+    const allowedOrigins = [
+      "https://fundasmile.net",
+      "https://www.fundasmile.net",
+    ];
+
+    if (origin && !allowedOrigins.includes(origin)) {
+      return res.status(403).json({ success: false, message: "Origin not allowed" });
+    }
+
+    const {
+      visitorId,
+      sessionId,
+      pageUrl,
+      pagePath,
+      referrer,
+      utm = {},
+      meta = {},
+      event = "pageview",
+      consent = true
+    } = req.body || {};
+
+    if (!consent) return res.json({ success: true, skipped: true });
+
+    if (!visitorId || !sessionId || !pageUrl || !pagePath) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    const ip =
+      (req.headers["cf-connecting-ip"] ||
+        req.headers["x-forwarded-for"] ||
+        req.socket?.remoteAddress ||
+        "")
+        .toString()
+        .split(",")[0]
+        .trim();
+
+    const country = (req.headers["cf-ipcountry"] || "").toString();
+
+    const timestamp = new Date().toISOString();
+
+    const row = [
+      timestamp,
+      visitorId,
+      sessionId,
+      event,
+      pageUrl,
+      pagePath,
+      referrer || "",
+      utm.utm_source || "",
+      utm.utm_medium || "",
+      utm.utm_campaign || "",
+      utm.utm_content || "",
+      utm.utm_term || "",
+      meta.userAgent || req.headers["user-agent"] || "",
+      meta.language || "",
+      meta.screen || "",
+      meta.timezone || "",
+      ip,
+      country
+    ];
+
+    await appendToSheet(row);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("TRACKING ERROR:", err);
+    res.status(500).json({ success: false, message: "Tracking failed" });
+  }
+});
+
+
 // ==================== START SERVER ====================
 app.listen(PORT, () => console.log(`JoyFund backend running on port ${PORT}`));
