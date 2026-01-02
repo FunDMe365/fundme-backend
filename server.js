@@ -1,6 +1,16 @@
 // ==================== SERVER.JS - JOYFUND BACKEND ====================
 require("dotenv").config();
 
+// ==================== CAMPAIGN EXPIRATION SETTINGS ====================
+const CAMPAIGN_ACTIVE_DAYS = Number(process.env.CAMPAIGN_ACTIVE_DAYS || 60);
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + Number(days || 0));
+  return d;
+}
+
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const session = require("express-session");
@@ -20,6 +30,37 @@ const db = mongoose.connection;
 db.on("error", console.error.bind(console, "MongoDB connection error:"));
 db.once("open", () => {
   console.log("✅ MongoDB native db ready");
+  
+  // ==================== CAMPAIGN EXPIRATION CRON ====================
+// Runs daily at 2:15 AM server time
+cron.schedule("15 2 * * *", async () => {
+  try {
+    const now = new Date();
+
+    const result = await db.collection("Campaigns").updateMany(
+      {
+        lifecycleStatus: "Active",
+        expiresAt: { $exists: true, $lte: now }
+      },
+      {
+        $set: {
+          lifecycleStatus: "Expired",
+          expiredAt: now,
+          expiredReviewStatus: "Needs Review"
+        }
+      }
+    );
+
+    if (result?.modifiedCount) {
+      console.log("✅ Campaigns auto-expired:", result.modifiedCount);
+    } else {
+      console.log("⏰ Campaign expiration check complete (none expired).");
+    }
+  } catch (err) {
+    console.error("❌ Campaign expiration cron error:", err);
+  }
+});
+
 });
 
 // ==================== ENV VARIABLES ====================
@@ -641,6 +682,18 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
 
       const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+	  // ✅ Block donations if campaign is expired or not active
+if (!campaign) {
+  return res.status(404).json({ success: false, message: "Campaign not found." });
+}
+
+if (campaign.lifecycleStatus === "Expired") {
+  return res.status(403).json({
+    success: false,
+    message: "This campaign is no longer accepting donations."
+  });
+}
+
       if (!campaign) {
         return res.status(404).json({ error: "Campaign not found" });
       }
@@ -1634,6 +1687,116 @@ function normalizeIdv(doc) {
   };
 }
 
+// ==================== ADMIN: BACKFILL CAMPAIGN EXPIRATION FIELDS ====================
+// One-time helper: adds createdAt/expiresAt/lifecycleStatus to older campaigns that are missing them.
+app.post("/api/admin/campaigns/backfill-expiration", requireAdmin, async (req, res) => {
+  try {
+    const now = new Date();
+
+    // Default createdAt: use existing timestamp fields if you have them, otherwise "now"
+    // We'll set expiresAt = createdAt + CAMPAIGN_ACTIVE_DAYS
+    const cursor = db.collection("Campaigns").find({
+      $or: [
+        { expiresAt: { $exists: false } },
+        { lifecycleStatus: { $exists: false } },
+        { createdAt: { $exists: false } }
+      ]
+    });
+
+    let updated = 0;
+
+    while (await cursor.hasNext()) {
+      const c = await cursor.next();
+
+      // Choose best-guess createdAt:
+      const raw =
+        c.createdAt ||
+        c.CreatedAt ||
+        c.timestamp ||
+        c.TimeStamp ||
+        c.dateCreated ||
+        c.date ||
+        null;
+
+      const createdAt = raw ? new Date(raw) : now;
+      const safeCreatedAt = isNaN(createdAt.getTime()) ? now : createdAt;
+
+      const expiresAt = addDays(safeCreatedAt, CAMPAIGN_ACTIVE_DAYS);
+
+      await db.collection("Campaigns").updateOne(
+        { _id: c._id },
+        {
+          $set: {
+            createdAt: c.createdAt || safeCreatedAt,
+            expiresAt: c.expiresAt || expiresAt,
+            lifecycleStatus: c.lifecycleStatus || "Active"
+          },
+          $setOnInsert: {}
+        }
+      );
+
+      updated++;
+    }
+
+    res.json({ success: true, updated });
+  } catch (err) {
+    console.error("backfill-expiration error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== ADMIN: LIST EXPIRED CAMPAIGNS ====================
+app.get("/api/admin/campaigns/expired", requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection("Campaigns")
+      .find({ lifecycleStatus: "Expired" })
+      .sort({ expiredAt: -1, expiresAt: -1, createdAt: -1 })
+      .toArray();
+
+    res.json({ success: true, campaigns: rows });
+  } catch (err) {
+    console.error("GET /api/admin/campaigns/expired error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== ADMIN: UPDATE EXPIRED CAMPAIGN REVIEW STATUS ====================
+app.patch("/api/admin/campaigns/:id/expired-review", requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+
+    const allowed = ["Needs Review", "Reviewed", "Feasible", "Not Feasible", "Completed"];
+
+    const expiredReviewStatus = String(req.body.expiredReviewStatus || "").trim();
+    const expiredOutcome = String(req.body.expiredOutcome || "").trim();
+    const expiredReviewNotes = String(req.body.expiredReviewNotes || "").trim();
+
+    if (!allowed.includes(expiredReviewStatus)) {
+      return res.status(400).json({ success: false, message: "Invalid expiredReviewStatus" });
+    }
+
+    const filter = ObjectId.isValid(id) ? { _id: new ObjectId(id) } : { Id: id };
+
+    const result = await db.collection("Campaigns").updateOne(filter, {
+      $set: {
+        expiredReviewStatus,
+        expiredOutcome,
+        expiredReviewNotes,
+        expiredReviewUpdatedAt: new Date()
+      }
+    });
+
+    if (!result.matchedCount) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("PATCH /api/admin/campaigns/:id/expired-review error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ==================== ADMIN: STREET TEAM LIST ====================
 app.get("/api/admin/street-team", requireAdmin, async (req, res) => {
   try {
@@ -1967,6 +2130,24 @@ if (status === "Approved") {
   }
 });
 
+// ==================== USER: MY CAMPAIGNS (INCLUDES EXPIRED) ====================
+app.get("/api/my-campaigns", requireAuth, async (req, res) => {
+  try {
+    const email = req.user?.email || req.user?.Email || null;
+    if (!email) return res.status(401).json({ success: false, message: "Not logged in" });
+
+    const rows = await db.collection("Campaigns")
+      .find({ creatorEmail: email })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json({ success: true, campaigns: rows });
+  } catch (err) {
+    console.error("GET /api/my-campaigns error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // ==================== PUBLIC: ACTIVE CAMPAIGNS (SEARCH/LIST) ====================
 app.get("/api/campaigns", async (req, res) => {
   try {
@@ -2036,6 +2217,19 @@ if (!title || !goal || !description || !category || !req.file) {
       CreatedAt: new Date().toISOString(),
       ImageURL: cloudRes.secure_url
     };
+	
+	const createdAt = new Date();
+const expiresAt = addDays(createdAt, CAMPAIGN_ACTIVE_DAYS);
+
+// attach expiration fields to the campaign document
+doc.createdAt = createdAt;
+doc.expiresAt = expiresAt;
+doc.lifecycleStatus = "Active";
+doc.expiredAt = null;
+doc.expiredReviewStatus = null;
+doc.expiredReviewNotes = "";
+doc.expiredOutcome = "";
+
 
     await db.collection("Campaigns").insertOne(doc);
 
@@ -2070,7 +2264,14 @@ await sendSubmissionEmails({
 
 app.get("/api/public-campaigns", async (req, res) => {
   try {
-    const rows = await db.collection("Campaigns").find({ Status: "Approved" }).toArray();
+    const rows = await db.collection("Campaigns").find({
+  Status: "Approved",
+  $or: [
+    { lifecycleStatus: { $ne: "Expired" } },
+    { lifecycleStatus: { $exists: false } } // for older campaigns before expiration existed
+  ]
+}).toArray();
+
     res.json({ success: true, campaigns: rows });
   } catch (err) {
     console.error(err);
