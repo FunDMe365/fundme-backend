@@ -26,6 +26,80 @@ const cron = require("node-cron");
 
 const { google } = require("googleapis");
 
+const NodeCache = require("node-cache");
+
+const ipCache = new NodeCache({
+  stdTTL: 60 * 60 * 24 * 7, // 7 days
+  checkperiod: 60 * 60,     // cleanup hourly
+  useClones: false
+});
+
+function getClientIp(req) {
+  const xff = (req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return xff || req.ip;
+}
+
+function isPrivateIp(ip) {
+  return (
+    ip === "127.0.0.1" ||
+    ip === "::1" ||
+    ip.startsWith("10.") ||
+    ip.startsWith("192.168.") ||
+    ip.startsWith("172.16.") ||
+    ip.startsWith("172.17.") ||
+    ip.startsWith("172.18.") ||
+    ip.startsWith("172.19.") ||
+    ip.startsWith("172.2")
+  );
+}
+
+async function lookupCountry(ip) {
+  if (!ip || isPrivateIp(ip)) return null;
+
+  const cached = ipCache.get(ip);
+  if (cached) return cached;
+
+  const token = (process.env.IPINFO_TOKEN || "").trim();
+  if (!token) return null;
+
+  try {
+    const url = `https://ipinfo.io/${encodeURIComponent(ip)}/json?token=${encodeURIComponent(token)}`;
+    const resp = await fetch(url);
+
+    if (!resp.ok) return null;
+
+    const data = await resp.json();
+    const country = (data.country || "").trim().toUpperCase() || null;
+
+    if (country) ipCache.set(ip, country);
+    return country;
+  } catch {
+    return null; // fail open
+  }
+}
+
+// Nigeria block for sensitive routes only
+app.use(async (req, res, next) => {
+  const p = req.path || "";
+
+  // Only protect sensitive endpoints
+  const isSensitive =
+    p.startsWith("/api/") ||
+    p.startsWith("/admin") ||
+    p.startsWith("/dashboard");
+
+  if (!isSensitive) return next();
+
+  const ip = getClientIp(req);
+  const country = await lookupCountry(ip);
+
+  if (country === "NG") {
+    return res.status(403).json({ success: false, message: "Access restricted." });
+  }
+
+  next();
+});
+
 // ==================== GOOGLE SHEETS AUTH ====================
 function getGoogleAuth() {
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
