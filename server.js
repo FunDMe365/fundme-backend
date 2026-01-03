@@ -78,27 +78,7 @@ async function lookupCountry(ip) {
   }
 }
 
-// Nigeria block for sensitive routes only
-app.use(async (req, res, next) => {
-  const p = req.path || "";
 
-  // Only protect sensitive endpoints
-  const isSensitive =
-    p.startsWith("/api/") ||
-    p.startsWith("/admin") ||
-    p.startsWith("/dashboard");
-
-  if (!isSensitive) return next();
-
-  const ip = getClientIp(req);
-  const country = await lookupCountry(ip);
-
-  if (country === "NG") {
-    return res.status(403).json({ success: false, message: "Access restricted." });
-  }
-
-  next();
-});
 
 // ==================== GOOGLE SHEETS AUTH ====================
 function getGoogleAuth() {
@@ -210,6 +190,27 @@ app.use((req, res, next) => {
 });
 app.use(bodyParser.urlencoded({ extended: true }));
 app.set("trust proxy", 1);
+// Nigeria block for sensitive routes only
+app.use(async (req, res, next) => {
+  const p = req.path || "";
+
+  // Only protect sensitive endpoints
+  const isSensitive =
+    p.startsWith("/api/") ||
+    p.startsWith("/admin") ||
+    p.startsWith("/dashboard");
+
+  if (!isSensitive) return next();
+
+  const ip = getClientIp(req);
+  const country = await lookupCountry(ip);
+
+  if (country === "NG") {
+    return res.status(403).json({ success: false, message: "Access restricted." });
+  }
+
+  next();
+});
 process.on("unhandledRejection", (err) => {
   console.error("UNHANDLED REJECTION:", err);
 });
