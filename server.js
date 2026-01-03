@@ -1858,6 +1858,25 @@ const adminLimiter = rateLimit({
   message: { success:false, message:"Too many attempts." }
 });
 
+// 🔒 Admin env sanity check (protected by ADMIN_KEY header)
+app.get("/api/admin/_envcheck", (req, res) => {
+  const key = req.headers["x-admin-key"];
+  if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
+    return res.status(404).send("Not found");
+  }
+
+  const u = String(process.env.ADMIN_USERNAME ?? "");
+  const p = String(process.env.ADMIN_PASSWORD ?? "");
+
+  return res.json({
+    ADMIN_USERNAME_set: !!u.trim(),
+    ADMIN_PASSWORD_set: !!p.trim(),
+    ADMIN_USERNAME_len: u.trim().length,
+    ADMIN_PASSWORD_len: p.trim().length
+  });
+});
+
+
 app.post("/api/admin-login", adminLimiter, (req, res) => {
   const username = String(req.body?.username ?? req.body?.email ?? req.body?.user ?? "").trim();
   const password = String(req.body?.password ?? req.body?.pass ?? "").trim();
@@ -1870,8 +1889,8 @@ app.post("/api/admin-login", adminLimiter, (req, res) => {
     return res.status(500).json({ success: false, message: "Admin credentials not configured on server" });
   }
 
-  const okUser = safeEqual(username, adminUser);
-  const okPass = safeEqual(password, adminPass);
+const okUser = safeEqual(String(username).toLowerCase(), String(adminUser).toLowerCase());
+const okPass = safeEqual(password, adminPass);
 
   if (!okUser || !okPass) {
     return res.status(401).json({ success: false, message: "Invalid admin username or password" });
