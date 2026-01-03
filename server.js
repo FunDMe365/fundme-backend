@@ -1877,14 +1877,28 @@ req.session.regenerate((err) => {
     return res.json({ success: true });
   });
 });
-  }
 
   return res.status(401).json({ success: false, message: "Invalid admin username or password" });
 });
 
-app.get("/api/admin-check", (req, res) => {
-  res.json({ admin: !!(req.session && req.session.admin) });
+app.get("/api/admin-check", requireAdmin, (req, res) => {
+  return res.json({ admin: true });
 });
+
+app.post("/api/admin-logout", requireAdmin, (req, res) => {
+  req.session.destroy(() => {
+    // Use the same cookie name you set in express-session config:
+    // You are using name: "joyfund.sid"
+    res.clearCookie("joyfund.sid", {
+      path: "/",
+      secure: true,
+      sameSite: "lax",
+      domain: ".fundasmile.net"
+    });
+    return res.json({ success: true });
+  });
+});
+
 
 // ✅ ONE-TIME MAINTENANCE: normalize campaign owner emails to lowercase
 app.post("/api/admin/normalize-campaign-emails", async (req, res) => {
