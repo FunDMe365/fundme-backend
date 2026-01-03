@@ -1235,6 +1235,117 @@ app.post("/api/signin", async (req, res) => {
   }
 });
 
+// ==================== PASSWORD RESET ====================
+
+// Create a stable hash of the reset token so we never store the raw token in DB
+function hashResetToken(token) {
+  const secret = String(process.env.RESET_TOKEN_SECRET || "").trim();
+  return crypto
+    .createHash("sha256")
+    .update(token + "|" + secret)
+    .digest("hex");
+}
+
+// 1) Request reset link (always returns success to avoid email enumeration)
+app.post("/api/request-reset-password", async (req, res) => {
+  try {
+    const emailRaw = String(req.body?.email || "").trim().toLowerCase();
+    if (!emailRaw) return res.status(400).json({ success: false, message: "Missing email" });
+
+    const usersCollection = db.collection("Users");
+    const user = await usersCollection.findOne({ Email: { $regex: `^${emailRaw}$`, $options: "i" } });
+
+    // Always return success (prevents attackers from checking what emails exist)
+    if (!user) {
+      return res.json({ success: true, message: "If that email exists, a reset link was sent." });
+    }
+
+    // Create token + expiry
+    const token = crypto.randomBytes(32).toString("hex");
+    const tokenHash = hashResetToken(token);
+    const expires = new Date(Date.now() + 1000 * 60 * 30); // 30 minutes
+
+    await usersCollection.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          resetTokenHash: tokenHash,
+          resetTokenExpiresAt: expires,
+          resetRequestedAt: new Date()
+        }
+      }
+    );
+
+    const resetLink = `${FRONTEND_URL}/reset-password.html?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailRaw)}`;
+
+    // Send email
+    await sendMailjet({
+      toEmail: emailRaw,
+      toName: user.Name || "",
+      subject: "Reset your JoyFund password",
+      html: `
+        <p>Hi ${user.Name || "there"},</p>
+        <p>We received a request to reset your JoyFund password.</p>
+        <p><a href="${resetLink}">Click here to reset your password</a></p>
+        <p>This link expires in 30 minutes.</p>
+        <p>If you didn’t request this, you can ignore this email.</p>
+      `
+    });
+
+    return res.json({ success: true, message: "If that email exists, a reset link was sent." });
+  } catch (err) {
+    console.error("POST /api/request-reset-password error:", err);
+    // Still return success to avoid leaking internal errors
+    return res.json({ success: true, message: "If that email exists, a reset link was sent." });
+  }
+});
+
+// 2) Reset password using token
+app.post("/api/reset-password", async (req, res) => {
+  try {
+    const emailRaw = String(req.body?.email || "").trim().toLowerCase();
+    const tokenRaw = String(req.body?.token || "").trim();
+    const newPassword = String(req.body?.password || "");
+
+    if (!emailRaw || !tokenRaw || !newPassword) {
+      return res.status(400).json({ success: false, message: "Missing email, token, or password" });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, message: "Password must be at least 8 characters" });
+    }
+
+    const usersCollection = db.collection("Users");
+    const tokenHash = hashResetToken(tokenRaw);
+
+    const user = await usersCollection.findOne({
+      Email: { $regex: `^${emailRaw}$`, $options: "i" },
+      resetTokenHash: tokenHash,
+      resetTokenExpiresAt: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: "Invalid or expired reset link" });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+
+    await usersCollection.updateOne(
+      { _id: user._id },
+      {
+        $set: { PasswordHash: hashed, passwordUpdatedAt: new Date() },
+        $unset: { resetTokenHash: "", resetTokenExpiresAt: "" }
+      }
+    );
+
+    return res.json({ success: true, message: "Password updated" });
+  } catch (err) {
+    console.error("POST /api/reset-password error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
 
 app.get("/api/_debug/session", (req, res) => {
   res.json({
