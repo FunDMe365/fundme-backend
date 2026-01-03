@@ -313,6 +313,11 @@ function daysBetween(a, b) {
   return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
 
+app.get("/admin-login.html", (req, res) => {
+  return res.status(404).send("Not found");
+});
+
+
 // ==================== JOYBOOST: RESOLVE CAMPAIGN BY ANY ID ====================
 async function findCampaignByAnyId(campaignIdRaw) {
   const campaignId = String(campaignIdRaw || "").trim();
