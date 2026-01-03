@@ -29,6 +29,7 @@ const cors = require("cors");
 const fs = require("fs");
 const { ObjectId } = require("mongodb");
 const cron = require("node-cron");
+const rateLimit = require("express-rate-limit");
 
 const { google } = require("googleapis");
 
@@ -180,13 +181,15 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://fundasmile.net";
 function escapeRegex(str) {
   return String(str || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "FunDMe$123";
-console.log("ADMIN_USERNAME set?", !!process.env.ADMIN_USERNAME, "len:", (process.env.ADMIN_USERNAME || "").length);
+const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || "").trim();
+const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || "").trim();
 const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
 
 // ==================== APP ====================
 const app = express();
+const helmet = require("helmet");
+app.disable("x-powered-by");
+app.use(helmet());
 // ✅ IMPORTANT: Stripe webhook needs RAW body.
 // This middleware uses JSON parsing for everything EXCEPT /api/stripe/webhook
 app.use((req, res, next) => {
@@ -250,6 +253,15 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions)); // ✅ this is the fix
+
+// ==================== BASIC BRUTE-FORCE PROTECTION ====================
+const resetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many attempts. Try again later." }
+});
 
 async function getIdentityStatus(email) {
   if (!email) return "Not Submitted";
@@ -1329,7 +1341,7 @@ function hashResetToken(token) {
 }
 
 // 1) Request reset link (always returns success to avoid email enumeration)
-app.post("/api/request-reset-password", async (req, res) => {
+app.post("/api/request-reset-password", resetLimiter, async (req, res) => {
   try {
     const emailRaw = String(req.body?.email || "").trim().toLowerCase();
     if (!emailRaw) return res.status(400).json({ success: false, message: "Missing email" });
@@ -1383,7 +1395,7 @@ app.post("/api/request-reset-password", async (req, res) => {
 });
 
 // 2) Reset password using token
-app.post("/api/reset-password", async (req, res) => {
+app.post("/api/reset-password", resetLimiter, async (req, res) => {
   try {
     const emailRaw = String(req.body?.email || "").trim().toLowerCase();
     const tokenRaw = String(req.body?.token || "").trim();
@@ -1430,6 +1442,7 @@ app.post("/api/reset-password", async (req, res) => {
 
 
 app.get("/api/_debug/session", (req, res) => {
+  if (process.env.NODE_ENV === "production") return res.status(404).send("Not found");
   res.json({
     hasCookieHeader: !!req.headers.cookie,
     sidCookiePresent: (req.headers.cookie || "").includes("joyfund.sid="),
@@ -1472,7 +1485,7 @@ app.delete("/api/delete-account", async (req, res) => {
       res.clearCookie("joyfund.sid", {
   path: "/",
   secure: true,
-  sameSite: "none",
+  sameSite: "lax",
   domain: ".fundasmile.net"
 });
 
@@ -1497,7 +1510,7 @@ app.post("/api/signout", (req, res) => {
     res.clearCookie("joyfund.sid", {
       path: "/",
       secure: true,
-      sameSite: "none",
+      sameSite: "lax",
       domain: ".fundasmile.net"
     });
 
@@ -1835,8 +1848,9 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ success: false, message: "Forbidden" });
 }
 
+// Protect ALL /api/admin/* routes by default
+app.use("/api/admin", requireAdmin);
 
-const rateLimit = require("express-rate-limit");
 
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -1845,41 +1859,36 @@ const adminLimiter = rateLimit({
 });
 
 app.post("/api/admin-login", adminLimiter, (req, res) => {
-  console.log("ADMIN LOGIN HIT", {
-    bodyKeys: Object.keys(req.body || {}),
-    username_type: typeof req.body?.username,
-    password_type: typeof req.body?.password,
-	
-  });
-
-  const username = String(req.body?.username ?? req.body?.email ?? "").trim();
-  const password = String(req.body?.password ?? "").trim();
-
+  const username = String(req.body?.username ?? req.body?.email ?? req.body?.user ?? "").trim();
+  const password = String(req.body?.password ?? req.body?.pass ?? "").trim();
 
   const adminUser = String(process.env.ADMIN_USERNAME ?? "").trim();
   const adminPass = String(process.env.ADMIN_PASSWORD ?? "").trim();
 
-  const okUser = safeEqual(username, process.env.ADMIN_USERNAME);
-const okPass = safeEqual(password, process.env.ADMIN_PASSWORD);
+  // Fail closed if env vars are missing
+  if (!adminUser || !adminPass) {
+    return res.status(500).json({ success: false, message: "Admin credentials not configured on server" });
+  }
 
-if (!okUser || !okPass) {
-  return res.status(401).json({ success: false, message: "Invalid admin username or password" });
-}
+  const okUser = safeEqual(username, adminUser);
+  const okPass = safeEqual(password, adminPass);
 
-// regenerate session when elevating privileges
-req.session.regenerate((err) => {
-  if (err) return res.status(500).json({ success: false, message: "Session error" });
+  if (!okUser || !okPass) {
+    return res.status(401).json({ success: false, message: "Invalid admin username or password" });
+  }
 
-  req.session.admin = true;
-  req.session.adminAt = Date.now();
+  // Regenerate session when elevating privileges (prevents session fixation)
+  req.session.regenerate((err) => {
+    if (err) return res.status(500).json({ success: false, message: "Session error" });
 
-  req.session.save((err2) => {
-    if (err2) return res.status(500).json({ success: false, message: "Session save failed" });
-    return res.json({ success: true });
+    req.session.admin = true;
+    req.session.adminAt = Date.now();
+
+    req.session.save((err2) => {
+      if (err2) return res.status(500).json({ success: false, message: "Session save failed" });
+      return res.json({ success: true });
+    });
   });
-});
-
-  return res.status(401).json({ success: false, message: "Invalid admin username or password" });
 });
 
 app.get("/api/admin-check", requireAdmin, (req, res) => {
@@ -2950,7 +2959,7 @@ app.post("/api/logout", (req, res) => {
       res.clearCookie("joyfund.sid", {
   path: "/",
   secure: true,
-  sameSite: "none",
+  sameSite: "lax",
   domain: ".fundasmile.net"
 });
 
