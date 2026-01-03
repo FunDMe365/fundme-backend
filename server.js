@@ -1852,8 +1852,9 @@ app.post("/api/admin-login", adminLimiter, (req, res) => {
 	
   });
 
-  const username = String(req.body?.username ?? "").trim();
+  const username = String(req.body?.username ?? req.body?.email ?? "").trim();
   const password = String(req.body?.password ?? "").trim();
+
 
   const adminUser = String(process.env.ADMIN_USERNAME ?? "").trim();
   const adminPass = String(process.env.ADMIN_PASSWORD ?? "").trim();
