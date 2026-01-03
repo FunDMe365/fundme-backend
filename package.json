@@ -30,6 +30,7 @@
     "express-session": "^1.17.3",
     "google-spreadsheet": "^5.0.2",
     "googleapis": "^121.0.0",
+    "helmet": "^8.1.0",
     "mongodb": "^7.0.0",
     "mongoose": "^9.0.2",
     "multer": "^1.4.5-lts.1",
