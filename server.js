@@ -177,7 +177,6 @@ function escapeRegex(str) {
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "FunDMe$123";
 console.log("ADMIN_USERNAME set?", !!process.env.ADMIN_USERNAME, "len:", (process.env.ADMIN_USERNAME || "").length);
-console.log("ADMIN_PASSWORD set?", !!process.env.ADMIN_PASSWORD, "len:", (process.env.ADMIN_PASSWORD || "").length);
 const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
 
 // ==================== APP ====================
@@ -216,16 +215,13 @@ process.on("unhandledRejection", (err) => {
 });
 
 app.get("/api/_debug/admin-env", (req, res) => {
-  const u = process.env.ADMIN_USERNAME || "";
-  const p = process.env.ADMIN_PASSWORD || "";
-  res.json({
-    adminUser_set: !!u,
-    adminUser_len: u.length,
-    adminPass_set: !!p,
-    adminPass_len: p.length,
-    node_env: process.env.NODE_ENV || null
-  });
+  // Never expose environment/security info in production
+  if (process.env.NODE_ENV === "production") {
+    return res.status(404).send("Not found");
+  }
+  return res.json({ ok: true });
 });
+
 
 
 // ==================== CORS (must be before routes) ====================
@@ -550,7 +546,7 @@ app.use(session({
 
   cookie: {
   secure: true,
-  sameSite: "none",
+  sameSite: "lax",
   httpOnly: true,
   path: "/",
   domain: ".fundasmile.net"
@@ -1833,11 +1829,21 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ success: false, message: "Forbidden" });
 }
 
-app.post("/api/admin-login", (req, res) => {
+
+const rateLimit = require("express-rate-limit");
+
+const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { success:false, message:"Too many attempts." }
+});
+
+app.post("/api/admin-login", adminLimiter, (req, res) => {
   console.log("ADMIN LOGIN HIT", {
     bodyKeys: Object.keys(req.body || {}),
     username_type: typeof req.body?.username,
     password_type: typeof req.body?.password,
+	
   });
 
   const username = String(req.body?.username ?? "").trim();
