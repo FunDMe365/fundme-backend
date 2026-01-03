@@ -17,6 +17,12 @@ const session = require("express-session");
 const bcrypt = require("bcryptjs");
 const multer = require("multer");
 const crypto = require("crypto");
+function safeEqual(a, b) {
+  const aa = Buffer.from(String(a ?? ""));
+  const bb = Buffer.from(String(b ?? ""));
+  if (aa.length !== bb.length) return false;
+  return crypto.timingSafeEqual(aa, bb);
+}
 const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
 const cors = require("cors");
@@ -1852,12 +1858,25 @@ app.post("/api/admin-login", adminLimiter, (req, res) => {
   const adminUser = String(process.env.ADMIN_USERNAME ?? "").trim();
   const adminPass = String(process.env.ADMIN_PASSWORD ?? "").trim();
 
-  if (username === adminUser && password === adminPass) {
-    req.session.admin = true;
-    return req.session.save((err) => {
-      if (err) return res.status(500).json({ success: false, message: "Session failed to save" });
-      return res.json({ success: true });
-    });
+  const okUser = safeEqual(username, process.env.ADMIN_USERNAME);
+const okPass = safeEqual(password, process.env.ADMIN_PASSWORD);
+
+if (!okUser || !okPass) {
+  return res.status(401).json({ success: false, message: "Invalid admin username or password" });
+}
+
+// regenerate session when elevating privileges
+req.session.regenerate((err) => {
+  if (err) return res.status(500).json({ success: false, message: "Session error" });
+
+  req.session.admin = true;
+  req.session.adminAt = Date.now();
+
+  req.session.save((err2) => {
+    if (err2) return res.status(500).json({ success: false, message: "Session save failed" });
+    return res.json({ success: true });
+  });
+});
   }
 
   return res.status(401).json({ success: false, message: "Invalid admin username or password" });
