@@ -1276,7 +1276,7 @@ app.post("/api/request-reset-password", async (req, res) => {
       }
     );
 
-    const resetLink = `${FRONTEND_URL}/reset-password.html?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailRaw)}`;
+    const resetLink = `${FRONTEND_URL}/set-new-password.html?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailRaw)}`;
 
     // Send email
     await sendMailjet({
