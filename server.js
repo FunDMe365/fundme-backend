@@ -31,8 +31,6 @@ const { ObjectId } = require("mongodb");
 const cron = require("node-cron");
 const rateLimit = require("express-rate-limit");
 
-const { google } = require("googleapis");
-
 const NodeCache = require("node-cache");
 
 const ipCache = new NodeCache({
@@ -84,45 +82,6 @@ async function lookupCountry(ip) {
     return null; // fail open
   }
 }
-
-
-
-// ==================== GOOGLE SHEETS AUTH ====================
-function getGoogleAuth() {
-  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-  let privateKey = process.env.GOOGLE_PRIVATE_KEY;
-
-  if (!clientEmail || !privateKey) {
-    throw new Error("Missing GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY env vars");
-  }
-
-  privateKey = privateKey.replace(/\\n/g, "\n");
-
-  return new google.auth.JWT({
-    email: clientEmail,
-    key: privateKey,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  });
-}
-
-async function appendToSheet(rowValues) {
-  const spreadsheetId = process.env.GSHEET_ID;
-  const tab = process.env.GSHEET_TAB || "tracking";
-
-  if (!spreadsheetId) throw new Error("Missing GSHEET_ID env var");
-
-  const auth = getGoogleAuth();
-  const sheets = google.sheets({ version: "v4", auth });
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `${tab}!A1`,
-    valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
-    requestBody: { values: [rowValues] },
-  });
-}
-
 
 const mongoose = require("./db");
 const db = mongoose.connection;
@@ -1137,88 +1096,6 @@ app.post("/api/track-visitor", (req, res) => {
   }
 
   res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
-});
-
-// ==================== GOOGLE SHEET WRITE TEST ====================
-app.get("/api/track/test-sheet", async (req, res) => {
-  try {
-    const timestamp = new Date().toISOString();
-    await appendToSheet([timestamp, "test", "sheet_write_ok"]);
-    res.json({ success: true, message: "Sheet write OK" });
-  } catch (err) {
-    console.error("SHEET TEST ERROR:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.post("/api/track/pageview", async (req, res) => {
-  try {
-    const {
-      visitorId,
-      sessionId,
-      pageUrl,
-      pagePath,
-      referrer,
-      utm = {},
-      meta = {},
-      event = "pageview",
-      consent = true,
-      isTest = false
-    } = req.body || {};
-
-    if (!consent) return res.json({ success: true, skipped: true });
-
-    if (!visitorId || !sessionId || !pageUrl || !pagePath) {
-      return res.status(400).json({ success: false, message: "Missing required fields" });
-    }
-
-    const ip =
-      (req.headers["cf-connecting-ip"] ||
-        req.headers["x-forwarded-for"] ||
-        req.socket?.remoteAddress ||
-        "")
-        .toString()
-        .split(",")[0]
-        .trim();
-
-    // Cloudflare geo (best-effort; may be blank depending on setup)
-    const country = String(req.headers["cf-ipcountry"] || "");
-    const region  = String(req.headers["cf-region"] || "");
-    const city    = String(req.headers["cf-ipcity"] || "");
-
-    const timestamp = new Date().toISOString();
-
-    const row = [
-      timestamp,
-      visitorId,
-      sessionId,
-      event,
-      pageUrl,
-      pagePath,
-      referrer || "",
-      utm.utm_source || "",
-      utm.utm_medium || "",
-      utm.utm_campaign || "",
-      utm.utm_content || "",
-      utm.utm_term || "",
-      meta.userAgent || req.headers["user-agent"] || "",
-      meta.language || "",
-      meta.screen || "",
-      meta.timezone || "",
-      ip,
-      country,
-      region,
-      city,
-      isTest ? "test" : "prod"
-    ];
-
-    await appendToSheet(row);
-
-    return res.json({ success: true });
-  } catch (err) {
-    console.error("TRACKING ERROR:", err?.message || err);
-    return res.status(500).json({ success: false, message: "Tracking failed", error: err?.message || "unknown" });
-  }
 });
 
 // ==================== USERS & AUTH ====================
@@ -3106,81 +2983,6 @@ app.use(express.static("public"));
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
-});
-
-app.post("/api/track/pageview", async (req, res) => {
-  try {
-    const origin = req.headers.origin || "";
-
-    // ✅ lock to your site(s)
-    const allowedOrigins = [
-      "https://fundasmile.net",
-      "https://www.fundasmile.net",
-    ];
-
-    if (origin && !allowedOrigins.includes(origin)) {
-      return res.status(403).json({ success: false, message: "Origin not allowed" });
-    }
-
-    const {
-      visitorId,
-      sessionId,
-      pageUrl,
-      pagePath,
-      referrer,
-      utm = {},
-      meta = {},
-      event = "pageview",
-      consent = true
-    } = req.body || {};
-
-    if (!consent) return res.json({ success: true, skipped: true });
-
-    if (!visitorId || !sessionId || !pageUrl || !pagePath) {
-      return res.status(400).json({ success: false, message: "Missing required fields" });
-    }
-
-    const ip =
-      (req.headers["cf-connecting-ip"] ||
-        req.headers["x-forwarded-for"] ||
-        req.socket?.remoteAddress ||
-        "")
-        .toString()
-        .split(",")[0]
-        .trim();
-
-    const country = (req.headers["cf-ipcountry"] || "").toString();
-
-    const timestamp = new Date().toISOString();
-
-    const row = [
-      timestamp,
-      visitorId,
-      sessionId,
-      event,
-      pageUrl,
-      pagePath,
-      referrer || "",
-      utm.utm_source || "",
-      utm.utm_medium || "",
-      utm.utm_campaign || "",
-      utm.utm_content || "",
-      utm.utm_term || "",
-      meta.userAgent || req.headers["user-agent"] || "",
-      meta.language || "",
-      meta.screen || "",
-      meta.timezone || "",
-      ip,
-      country
-    ];
-
-    await appendToSheet(row);
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error("TRACKING ERROR:", err);
-    res.status(500).json({ success: false, message: "Tracking failed" });
-  }
 });
 
 
