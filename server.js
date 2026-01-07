@@ -145,7 +145,7 @@ const pgPool = DATABASE_URL
       connectionString: DATABASE_URL,
       // Render "Internal Database URL" usually does NOT need SSL.
       // If you ever use an external URL that requires SSL, set PGSSLMODE or toggle below.
-      ssl: false
+      ssl: { rejectUnauthorized: false }
     })
   : null;
 
@@ -3007,6 +3007,70 @@ app.use((err, req, res, next) => {
     return res.status(400).json({ success: false, message: err.message || "Invalid upload" });
   }
   return next(err);
+});
+
+// ==================== JOYDROP: GENERATE (ADMIN, CALLED BY SCHEDULER) ====================
+app.post("/api/admin/joydrop/generate", async (req, res) => {
+  try {
+    const key = String(req.headers["x-admin-key"] || "");
+    if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+    if (!pgPool) {
+      return res.status(500).json({ success: false, message: "JoyDrop DB not configured" });
+    }
+
+    const titles = [
+      "A tiny reset for today 💙",
+      "You made it to this moment",
+      "A gentle 60-second JoyDrop",
+      "Small joy counts",
+      "One breath, one step"
+    ];
+    const openers = [
+      "If today feels heavy, you don’t have to fix everything at once.",
+      "This is your reminder: you’re allowed to pause.",
+      "You’re not behind — you’re human.",
+      "Even a small win is still a win.",
+      "You’ve carried a lot. Let’s lighten it by 1%."
+    ];
+    const middles = [
+      "Put one hand on your chest and take one slow breath in, then out.",
+      "Unclench your jaw. Drop your shoulders. Let your exhale be longer than your inhale.",
+      "Look around and name 3 things you can see. 2 things you can hear. 1 thing you can feel.",
+      "Text someone you trust one sentence: “Thinking of you today.”",
+      "Do the smallest helpful thing for Future You (fill your water, clear one spot, or set one reminder)."
+    ];
+    const closers = [
+      "That’s it. That counts.",
+      "No pressure. Just presence.",
+      "You can come back to this anytime.",
+      "Proud of you for taking a moment.",
+      "Tiny steps still move you forward."
+    ];
+    const microActions = [
+      "Drink a glass of water.",
+      "Step outside for 60 seconds.",
+      "Send one kind text.",
+      "Write one sentence: “Right now, I need ___.”",
+      "Put your phone down for 2 minutes and breathe."
+    ];
+    const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+    const title = pick(titles);
+    const body = `${pick(openers)}\n\n${pick(middles)}\n\n${pick(closers)}`;
+    const micro_action = pick(microActions);
+
+    await pgPool.query(
+      `INSERT INTO joydrops (title, body, micro_action) VALUES ($1, $2, $3)`,
+      [title, body, micro_action]
+    );
+
+    return res.json({ success: true, title });
+  } catch (err) {
+    console.error("POST /api/admin/joydrop/generate error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 // ==================== JOYDROP: GET CURRENT ====================
