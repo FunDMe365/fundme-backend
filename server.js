@@ -30,6 +30,7 @@ const fs = require("fs");
 const { ObjectId } = require("mongodb");
 const cron = require("node-cron");
 const rateLimit = require("express-rate-limit");
+const { Pool } = require("pg");
 
 const NodeCache = require("node-cache");
 
@@ -135,6 +136,38 @@ const MAILJET_API_KEY = process.env.MAILJET_API_KEY;
 const MAILJET_API_SECRET = process.env.MAILJET_API_SECRET;
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://fundasmile.net";
+
+// ==================== POSTGRES (JOYDROPS) ====================
+const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
+
+const pgPool = DATABASE_URL
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      // Render "Internal Database URL" usually does NOT need SSL.
+      // If you ever use an external URL that requires SSL, set PGSSLMODE or toggle below.
+      ssl: false
+    })
+  : null;
+
+async function ensureJoyDropsTable() {
+  if (!pgPool) {
+    console.warn("⚠️ Postgres not configured (missing DATABASE_URL). JoyDrops disabled.");
+    return;
+  }
+
+  // Create table if it doesn't exist
+  await pgPool.query(`
+    CREATE TABLE IF NOT EXISTS joydrops (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      micro_action TEXT DEFAULT ''
+    );
+  `);
+
+  console.log("✅ Postgres joydrops table ready");
+}
 
 // Escape a string for safe use inside a RegExp constructor
 function escapeRegex(str) {
@@ -2976,7 +3009,42 @@ app.use((err, req, res, next) => {
   return next(err);
 });
 
+// ==================== JOYDROP: GET CURRENT ====================
+app.get("/api/joydrop/current", async (req, res) => {
+  try {
+    if (!pgPool) {
+      return res.status(500).json({ success: false, message: "JoyDrop DB not configured" });
+    }
 
+    const result = await pgPool.query(
+      `SELECT id, created_at, title, body, micro_action
+       FROM joydrops
+       ORDER BY created_at DESC
+       LIMIT 1`
+    );
+
+    const row = result.rows?.[0] || null;
+
+    // If none exist yet, return a friendly default instead of error
+    if (!row) {
+      return res.json({
+        success: true,
+        joydrop: {
+          id: null,
+          created_at: new Date().toISOString(),
+          title: "Your first JoyDrop is coming 💙",
+          body: "Check back soon — we’ll have a fresh drop here weekly.",
+          micro_action: "Take one slow breath in… and one slow breath out."
+        }
+      });
+    }
+
+    return res.json({ success: true, joydrop: row });
+  } catch (err) {
+    console.error("GET /api/joydrop/current error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 // ==================== STATIC FILES ====================
 app.use(express.static("public"));
@@ -2985,6 +3053,9 @@ app.get("/api/health", (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
+ensureJoyDropsTable().catch((e) => {
+  console.error("❌ ensureJoyDropsTable failed:", e);
+});
 
 // ==================== START SERVER ====================
 app.listen(PORT, () => console.log(`JoyFund backend running on port ${PORT}`));
