@@ -1,0 +1,17 @@
+name: Weekly JoyDrop
+
+on:
+  schedule:
+    # Mondays at 9:00 AM New York (14:00 UTC)
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call JoyDrop generator endpoint
+        run: |
+          curl -sS -X POST "https://api.fundasmile.net/api/admin/joydrop/generate" \
+            -H "x-admin-key: ${{ secrets.JOYDROP_ADMIN_KEY }}" \
+            -H "content-type: application/json"
