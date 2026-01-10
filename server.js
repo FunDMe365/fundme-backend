@@ -1206,12 +1206,12 @@ app.post("/api/signup", async (req, res) => {
       return res.status(400).json({ error: "Missing fields" });
     }
 
-    const usersCollection = db.collection("Users"); // ✅ FIXED (no db.db)
+    const collection = db.collection("Users"); // ✅ FIXED (no db.db)
 
     const cleanEmail = String(email).trim().toLowerCase();
     const cleanName = String(name).trim();
 
-    const existing = await usersCollection.findOne({ Email: cleanEmail });
+    const existing = await collection.findOne({ Email: cleanEmail });
     if (existing) return res.status(400).json({ error: "Email already exists" });
 
     const hashed = await bcrypt.hash(String(password), 10);
@@ -1223,7 +1223,7 @@ app.post("/api/signup", async (req, res) => {
       JoinDate: new Date()
     };
 
-    await usersCollection.insertOne(newUser);
+    await collection.insertOne(newUser);
 	
 	await sendSubmissionEmails({
   type: "Signup",
@@ -1294,7 +1294,7 @@ app.post("/api/signin", async (req, res) => {
     const cleanEmail = String(email || "").trim().toLowerCase();
 const emailRegex = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
 
-const user = await usersCollection.findOne({
+const user = await collection.findOne({
   $or: [
     { Email: emailRegex },
     { email: emailRegex }
@@ -1344,8 +1344,8 @@ app.post("/api/request-reset-password", resetLimiter, async (req, res) => {
     const emailRaw = String(req.body?.email || "").trim().toLowerCase();
     if (!emailRaw) return res.status(400).json({ success: false, message: "Missing email" });
 
-    const usersCollection = db.collection("Users");
-    const user = await usersCollection.findOne({ Email: { $regex: `^${emailRaw}$`, $options: "i" } });
+    const collection = db.collection("Users");
+    const user = await collection.findOne({ Email: { $regex: `^${emailRaw}$`, $options: "i" } });
 
     // Always return success (prevents attackers from checking what emails exist)
     if (!user) {
@@ -1357,7 +1357,7 @@ app.post("/api/request-reset-password", resetLimiter, async (req, res) => {
     const tokenHash = hashResetToken(token);
     const expires = new Date(Date.now() + 1000 * 60 * 30); // 30 minutes
 
-    await usersCollection.updateOne(
+    await collection.updateOne(
       { _id: user._id },
       {
         $set: {
@@ -1407,10 +1407,10 @@ app.post("/api/reset-password", resetLimiter, async (req, res) => {
       return res.status(400).json({ success: false, message: "Password must be at least 8 characters" });
     }
 
-    const usersCollection = db.collection("Users");
+    const collection = db.collection("Users");
     const tokenHash = hashResetToken(tokenRaw);
 
-    const user = await usersCollection.findOne({
+    const user = await collection.findOne({
       Email: { $regex: `^${emailRaw}$`, $options: "i" },
       resetTokenHash: tokenHash,
       resetTokenExpiresAt: { $gt: new Date() }
@@ -1422,7 +1422,7 @@ app.post("/api/reset-password", resetLimiter, async (req, res) => {
 
     const hashed = await bcrypt.hash(newPassword, 10);
 
-    await usersCollection.updateOne(
+    await collection.updateOne(
       { _id: user._id },
       {
         $set: { PasswordHash: hashed, passwordUpdatedAt: new Date() },
