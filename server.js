@@ -1083,6 +1083,45 @@ async function sendSubmissionEmails({
   await Promise.allSettled(tasks);
 }
 
+
+// ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
+async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle }) {
+  const verifyUrl = `${PUBLIC_BASE_URL || "https://fundasmile.net"}/verify-identity.html`;
+  return sendMailjet({
+    toEmail,
+    toName: "",
+    subject: "Your campaign was approved — identity verification required",
+    html: `
+      <p>Your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> was approved by our team.</p>
+      <p>Before it can go live, you must verify your identity.</p>
+      <p><a href="${verifyUrl}">Verify your identity now →</a></p>
+      <p>If you already submitted verification, you can ignore this and we’ll update you once it’s reviewed.</p>
+    `
+  });
+}
+
+async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
+  const campaignsUrl = `${PUBLIC_BASE_URL || "https://fundasmile.net"}/campaigns.html`;
+  return sendMailjet({
+    toEmail,
+    toName: "",
+    subject: "Your campaign is live 🎉",
+    html: `
+      <p>Good news — your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> is now live on JoyFund.</p>
+      <p>You can view it here: <a href="${campaignsUrl}">${campaignsUrl}</a></p>
+    `
+  });
+}
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 // ==================== JOYBOOST: DAILY CHECK-IN ====================
 cron.schedule("0 10 * * *", async () => { // daily at 10:00 server time
   try {
@@ -2250,8 +2289,8 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     const id = String(req.params.id || "");
     const { status } = req.body;
 
-    // ✅ "Approved" = approved by admin but not necessarily live
-    // ✅ "Active"   = live/public (identity verified)
+    // ✅ "Approved" means: reviewed & approved, but NOT necessarily live.
+    // ✅ "Active" means: live/public (identity verified).
     const allowed = ["Pending", "Approved", "Denied", "Closed", "Active"];
     if (!allowed.includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status" });
@@ -2266,7 +2305,9 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     if (!campaign) return res.status(404).json({ success: false, message: "Not found" });
 
     const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
-    const emailExactI = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
+    const emailExactI = ownerEmail
+      ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i")
+      : null;
 
     // Find latest ID verification for owner (if any)
     let idvStatus = "";
@@ -2281,7 +2322,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
 
     let finalStatus = status;
 
-    // ❌ Block "Active" if identity isn't approved
+    // If admin tries to set Active but identity isn't approved, block it.
     if (status === "Active" && String(idvStatus).toLowerCase() !== "approved") {
       return res.status(409).json({
         success: false,
@@ -2290,10 +2331,14 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     }
 
     // If admin sets Approved:
-    // - If identity already approved -> promote to Active
-    // - Else keep as Approved
+    // - If identity is already approved -> auto-promote to Active and email "live"
+    // - If identity not approved -> keep as Approved and email "verify identity"
     if (status === "Approved") {
-      finalStatus = (String(idvStatus).toLowerCase() === "approved") ? "Active" : "Approved";
+      if (String(idvStatus).toLowerCase() === "approved") {
+        finalStatus = "Active";
+      } else {
+        finalStatus = "Approved";
+      }
     }
 
     const result = await db.collection("Campaigns").findOneAndUpdate(
@@ -2304,18 +2349,14 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
 
     if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
 
-    // 🔔 Emails (do not fail the request if email fails)
+    // Fire-and-forget emails (don't fail the request if email fails)
     if (ownerEmail) {
       const title = campaign.title ?? campaign.Title ?? "your campaign";
-
       if (status === "Approved" && finalStatus === "Approved") {
-        // Approved but still needs identity verification
         sendCampaignApprovalIdentityEmail({ toEmail: ownerEmail, campaignTitle: title })
           .catch(e => console.error("approval->identity email error:", e));
       }
-
       if (finalStatus === "Active") {
-        // Campaign is live
         sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
           .catch(e => console.error("campaign live email error:", e));
       }
@@ -2347,7 +2388,6 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
   try {
     const id = req.params.id;
 
-    // 1) Mark the ID verification record Approved
     const result = await db.collection("ID_Verifications").findOneAndUpdate(
       { _id: new ObjectId(id) },
       { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
@@ -2356,25 +2396,23 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
 
     if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
 
-    // 2) Auto-publish any campaigns that were already Approved for this email
+    // ✅ When identity gets approved, automatically publish any previously-approved campaigns
     const ownerEmail = String(result.value.Email ?? result.value.email ?? "").trim().toLowerCase();
     if (ownerEmail) {
       const emailExactI = new RegExp("^" + escapeRegex(ownerEmail) + "$", "i");
 
-      // Find campaigns waiting for identity (Approved but not public)
       const campaignsToPublish = await db.collection("Campaigns").find({
         $or: [{ Email: emailExactI }, { email: emailExactI }],
         Status: "Approved"
       }).toArray();
 
       if (campaignsToPublish.length) {
-        // Promote them to Active
         await db.collection("Campaigns").updateMany(
           { $or: [{ Email: emailExactI }, { email: emailExactI }], Status: "Approved" },
           { $set: { Status: "Active", PublishedAt: new Date() } }
         );
 
-        // Email "live" for each campaign (clear + simple)
+        // Email once (or per campaign). We'll email per campaign title for clarity.
         for (const c of campaignsToPublish) {
           const title = c.title ?? c.Title ?? "your campaign";
           sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
@@ -2646,7 +2684,7 @@ app.get("/api/campaigns", async (req, res) => {
 
 // ==================== CAMPAIGNS ====================
 app.post("/api/create-campaign", requireIdentityIfDenied, upload.single("image"), async (req, res) => {
-	try {
+  try {
     const { title, goal, description, category } = req.body;
 
 const sessionEmail = req.session?.user?.email;
@@ -2715,45 +2753,6 @@ await sendSubmissionEmails({
     <p>— JoyFund Team</p>
   `
 });
-
-const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || "https://fundasmile.net");
-
-async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle }) {
-  const verifyUrl = `${PUBLIC_BASE_URL}/verify-identity.html`;
-  return sendMailjet({
-    toEmail,
-    toName: "",
-    subject: "Your campaign was approved — identity verification required",
-    html: `
-      <p>Your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> was approved by our team.</p>
-      <p>Before it can go live, you must verify your identity.</p>
-      <p><a href="${verifyUrl}">Verify your identity now →</a></p>
-      <p>If you already submitted verification, you can ignore this and we’ll update you once it’s reviewed.</p>
-    `
-  });
-}
-
-async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
-  const campaignsUrl = `${PUBLIC_BASE_URL}/campaigns.html`;
-  return sendMailjet({
-    toEmail,
-    toName: "",
-    subject: "Your campaign is live 🎉",
-    html: `
-      <p>Good news — your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> is now live on JoyFund.</p>
-      <p>You can view it here: <a href="${campaignsUrl}">${campaignsUrl}</a></p>
-    `
-  });
-}
-
-function escapeHtml(s) {
-  return String(s || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
 
 
     return res.json({ success: true, campaign: doc });
