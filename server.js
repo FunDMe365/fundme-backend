@@ -305,6 +305,32 @@ async function requireVerifiedIdentity(req, res, next) {
   }
 }
 
+
+// ✅ Soft-gate identity verification: allow everyone EXCEPT users explicitly Denied
+async function requireIdentityIfDenied(req, res, next) {
+  try {
+    const userEmail = req.session?.user?.email;
+    if (!userEmail) {
+      return res.status(401).json({ success: false, message: "Not logged in" });
+    }
+
+    const status = await getIdentityStatus(userEmail);
+
+    if (status === "Denied") {
+      return res.status(403).json({
+        success: false,
+        message: "Your identity verification was denied. Please resubmit."
+      });
+    }
+
+    req.identityStatus = status;
+    return next();
+  } catch (err) {
+    console.error("requireIdentityIfDenied error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
 // ==================== JOYBOOST HELPERS ====================
 const JOYBOOST_REQUESTS = "JoyBoost_Requests";
 const JOYBOOST_SETTINGS = "JoyBoost_Settings"; // per-campaign
@@ -1226,17 +1252,15 @@ app.post("/api/signin", async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: "Missing fields" });
 
-    const usersCollection = db.collection("Users"); // ✅ THIS WAS MISSING
-
     const cleanEmail = String(email || "").trim().toLowerCase();
-    const emailRegex = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
+const emailRegex = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
 
-    const user = await usersCollection.findOne({
-      $or: [
-        { Email: emailRegex },
-        { email: emailRegex }
-      ]
-    });
+const user = await usersCollection.findOne({
+  $or: [
+    { Email: emailRegex },
+    { email: emailRegex }
+  ]
+});
 
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
@@ -2226,7 +2250,9 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     const id = String(req.params.id || "");
     const { status } = req.body;
 
-    const allowed = ["Pending", "Approved", "Denied", "Closed"];
+    // ✅ "Approved" = approved by admin but not necessarily live
+    // ✅ "Active"   = live/public (identity verified)
+    const allowed = ["Pending", "Approved", "Denied", "Closed", "Active"];
     if (!allowed.includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status" });
     }
@@ -2235,18 +2261,70 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     const idVariants = [{ Id: id }, { id: id }];
     if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
-const result = await db.collection("Campaigns").findOneAndUpdate(
-  { $or: idVariants },
-  { $set: { Status: status, ReviewedAt: new Date(), ReviewedBy: "admin" } },
-  { returnDocument: "after" }
-);
+    // Pull campaign first so we can look up owner email + title
+    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+    if (!campaign) return res.status(404).json({ success: false, message: "Not found" });
+
+    const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
+    const emailExactI = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
+
+    // Find latest ID verification for owner (if any)
+    let idvStatus = "";
+    if (emailExactI) {
+      const idv = await db.collection("ID_Verifications")
+        .find({ $or: [{ Email: emailExactI }, { email: emailExactI }] })
+        .sort({ createdAt: -1, CreatedAt: -1, _id: -1 })
+        .limit(1)
+        .toArray();
+      idvStatus = String(idv?.[0]?.Status ?? idv?.[0]?.status ?? "").trim();
+    }
+
+    let finalStatus = status;
+
+    // ❌ Block "Active" if identity isn't approved
+    if (status === "Active" && String(idvStatus).toLowerCase() !== "approved") {
+      return res.status(409).json({
+        success: false,
+        message: "Identity verification must be Approved before a campaign can go live."
+      });
+    }
+
+    // If admin sets Approved:
+    // - If identity already approved -> promote to Active
+    // - Else keep as Approved
+    if (status === "Approved") {
+      finalStatus = (String(idvStatus).toLowerCase() === "approved") ? "Active" : "Approved";
+    }
+
+    const result = await db.collection("Campaigns").findOneAndUpdate(
+      { $or: idVariants },
+      { $set: { Status: finalStatus, ReviewedAt: new Date(), ReviewedBy: "admin" } },
+      { returnDocument: "after" }
+    );
 
     if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
 
-    res.json({ success: true, campaign: normalizeCampaign(result.value) });
+    // 🔔 Emails (do not fail the request if email fails)
+    if (ownerEmail) {
+      const title = campaign.title ?? campaign.Title ?? "your campaign";
+
+      if (status === "Approved" && finalStatus === "Approved") {
+        // Approved but still needs identity verification
+        sendCampaignApprovalIdentityEmail({ toEmail: ownerEmail, campaignTitle: title })
+          .catch(e => console.error("approval->identity email error:", e));
+      }
+
+      if (finalStatus === "Active") {
+        // Campaign is live
+        sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
+          .catch(e => console.error("campaign live email error:", e));
+      }
+    }
+
+    return res.json({ success: true, campaign: normalizeCampaign(result.value) });
   } catch (err) {
     console.error("admin campaign status error:", err);
-    res.status(500).json({ success: false, message: "Failed to update campaign" });
+    return res.status(500).json({ success: false, message: "Failed to update campaign" });
   }
 });
 
@@ -2269,6 +2347,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
   try {
     const id = req.params.id;
 
+    // 1) Mark the ID verification record Approved
     const result = await db.collection("ID_Verifications").findOneAndUpdate(
       { _id: new ObjectId(id) },
       { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
@@ -2277,10 +2356,37 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
 
     if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
 
-    res.json({ success: true, row: normalizeIdv(result.value) });
+    // 2) Auto-publish any campaigns that were already Approved for this email
+    const ownerEmail = String(result.value.Email ?? result.value.email ?? "").trim().toLowerCase();
+    if (ownerEmail) {
+      const emailExactI = new RegExp("^" + escapeRegex(ownerEmail) + "$", "i");
+
+      // Find campaigns waiting for identity (Approved but not public)
+      const campaignsToPublish = await db.collection("Campaigns").find({
+        $or: [{ Email: emailExactI }, { email: emailExactI }],
+        Status: "Approved"
+      }).toArray();
+
+      if (campaignsToPublish.length) {
+        // Promote them to Active
+        await db.collection("Campaigns").updateMany(
+          { $or: [{ Email: emailExactI }, { email: emailExactI }], Status: "Approved" },
+          { $set: { Status: "Active", PublishedAt: new Date() } }
+        );
+
+        // Email "live" for each campaign (clear + simple)
+        for (const c of campaignsToPublish) {
+          const title = c.title ?? c.Title ?? "your campaign";
+          sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
+            .catch(e => console.error("campaign live email error:", e));
+        }
+      }
+    }
+
+    return res.json({ success: true, data: normalizeIdv(result.value) });
   } catch (err) {
     console.error("admin idv approve error:", err);
-    res.status(500).json({ success: false, message: "Approve failed" });
+    return res.status(500).json({ success: false, message: "Approve failed" });
   }
 });
 
@@ -2514,7 +2620,7 @@ app.get("/api/campaigns", async (req, res) => {
 
     // Status field in your docs appears to be "Status" (capital S)
     // Accept a couple common "active" meanings to avoid mismatches.
-    const activeStatuses = ["Active", "Approved"];
+    const activeStatuses = ["Active"];
 
     const filter = { Status: { $in: activeStatuses } };
 
@@ -2539,8 +2645,8 @@ app.get("/api/campaigns", async (req, res) => {
 });
 
 // ==================== CAMPAIGNS ====================
-app.post("/api/create-campaign", requireVerifiedIdentity, upload.single("image"), async (req, res) => {
-  try {
+app.post("/api/create-campaign", requireIdentityIfDenied, upload.single("image"), async (req, res) => {
+	try {
     const { title, goal, description, category } = req.body;
 
 const sessionEmail = req.session?.user?.email;
@@ -2609,6 +2715,45 @@ await sendSubmissionEmails({
     <p>— JoyFund Team</p>
   `
 });
+
+const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || "https://fundasmile.net");
+
+async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle }) {
+  const verifyUrl = `${PUBLIC_BASE_URL}/verify-identity.html`;
+  return sendMailjet({
+    toEmail,
+    toName: "",
+    subject: "Your campaign was approved — identity verification required",
+    html: `
+      <p>Your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> was approved by our team.</p>
+      <p>Before it can go live, you must verify your identity.</p>
+      <p><a href="${verifyUrl}">Verify your identity now →</a></p>
+      <p>If you already submitted verification, you can ignore this and we’ll update you once it’s reviewed.</p>
+    `
+  });
+}
+
+async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
+  const campaignsUrl = `${PUBLIC_BASE_URL}/campaigns.html`;
+  return sendMailjet({
+    toEmail,
+    toName: "",
+    subject: "Your campaign is live 🎉",
+    html: `
+      <p>Good news — your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> is now live on JoyFund.</p>
+      <p>You can view it here: <a href="${campaignsUrl}">${campaignsUrl}</a></p>
+    `
+  });
+}
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
 
 
     return res.json({ success: true, campaign: doc });
