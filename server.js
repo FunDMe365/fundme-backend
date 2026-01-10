@@ -1173,29 +1173,30 @@ app.post("/api/signup", async (req, res) => {
     <p><b>Date:</b> ${new Date().toLocaleString()}</p>
   `,
   userHtml: `
-  <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.5;">
-    <h2 style="margin:0 0 10px 0;">Welcome to JoyFund 💙💗</h2>
+    <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.5;">
+      <h2 style="margin:0 0 10px 0;">Welcome to JoyFund 💙💗</h2>
 
-    <p style="margin:0 0 12px 0;">Hi ${cleanName},</p>
+      <p style="margin:0 0 12px 0;">Hi ${cleanName},</p>
 
-    <p style="margin:0 0 12px 0;">
-      I’m really glad you’re here. JoyFund exists to help people fund joy-based experiences that support mental health and healing —
-      the kind of moments that can bring someone back to themselves.
-    </p>
+      <p style="margin:0 0 12px 0;">
+        I’m really glad you’re here. JoyFund exists to help people fund joy-based experiences that support mental health and healing —
+        the kind of moments that can bring someone back to themselves.
+      </p>
 
-    <p style="margin:0 0 12px 0;">
-      You don’t have to do anything right away. If you joined because you’re going through something,
-      or you’re just curious, either is perfectly okay.
-    </p>
+      <p style="margin:0 0 12px 0;">
+        You don’t have to do anything right away. If you joined because you’re going through something,
+        or you’re just curious, either is perfectly okay.
+      </p>
 
-    <p style="margin:0 0 12px 0;">
-      If you ever want help getting started, just reply to this email and tell me what you’re hoping for.
-      I read every message.
-    </p>
+      <p style="margin:0 0 12px 0;">
+        If you ever want help getting started, just reply to this email and tell me what you’re hoping for.
+        I read every message.
+      </p>
 
-    <p style="margin:0 0 6px 0;">With love,</p>
-    <p style="margin:0;"><b>Corey</b><br/>Founder, JoyFund</p>
-  </div>
+      <p style="margin:0 0 6px 0;">With love,</p>
+      <p style="margin:0;"><b>Corey</b><br/>Founder, JoyFund</p>
+    </div>
+  `,
 });
 
     req.session.user = {
