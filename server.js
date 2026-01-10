@@ -1226,15 +1226,17 @@ app.post("/api/signin", async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: "Missing fields" });
 
-    const cleanEmail = String(email || "").trim().toLowerCase();
-const emailRegex = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
+    const usersCollection = db.collection("Users"); // ✅ THIS WAS MISSING
 
-const user = await usersCollection.findOne({
-  $or: [
-    { Email: emailRegex },
-    { email: emailRegex }
-  ]
-});
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    const emailRegex = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
+
+    const user = await usersCollection.findOne({
+      $or: [
+        { Email: emailRegex },
+        { email: emailRegex }
+      ]
+    });
 
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
