@@ -1292,9 +1292,10 @@ app.post("/api/signin", async (req, res) => {
     if (!email || !password) return res.status(400).json({ error: "Missing fields" });
 
     const cleanEmail = String(email || "").trim().toLowerCase();
+    const usersCollection = db.collection("Users");
 const emailRegex = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
 
-const user = await collection.findOne({
+const user = await usersCollection.findOne({
   $or: [
     { Email: emailRegex },
     { email: emailRegex }
@@ -1345,7 +1346,7 @@ app.post("/api/request-reset-password", resetLimiter, async (req, res) => {
     if (!emailRaw) return res.status(400).json({ success: false, message: "Missing email" });
 
     const collection = db.collection("Users");
-    const user = await collection.findOne({ Email: { $regex: `^${emailRaw}$`, $options: "i" } });
+    const user = await usersCollection.findOne({ Email: { $regex: `^${emailRaw}$`, $options: "i" } });
 
     // Always return success (prevents attackers from checking what emails exist)
     if (!user) {
@@ -1410,7 +1411,7 @@ app.post("/api/reset-password", resetLimiter, async (req, res) => {
     const collection = db.collection("Users");
     const tokenHash = hashResetToken(tokenRaw);
 
-    const user = await collection.findOne({
+    const user = await usersCollection.findOne({
       Email: { $regex: `^${emailRaw}$`, $options: "i" },
       resetTokenHash: tokenHash,
       resetTokenExpiresAt: { $gt: new Date() }
