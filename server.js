@@ -2468,13 +2468,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
 
     const idvResult = await db.collection("ID_Verifications").findOneAndUpdate(
       { _id: new ObjectId(req.params.id) },
-      {
-        $set: {
-          Status: "Approved",
-          ReviewedAt: new Date(),
-          ReviewedBy: "admin"
-        }
-      },
+      { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
       { returnDocument: "after" }
     );
 
@@ -2483,20 +2477,17 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
     }
 
     const idv = idvResult.value;
-
-    // ✅ SINGLE ownerEmail declaration (THIS IS THE FIX)
     const ownerEmail = String(idv.Email || idv.email || "").trim().toLowerCase();
 
     if (ownerEmail) {
       const emailRegex = new RegExp("^" + escapeRegex(ownerEmail) + "$", "i");
 
-      // 🔁 Promote ALL approved campaigns to ACTIVE
       const campaigns = await db.collection("Campaigns").find({
         $or: [{ Email: emailRegex }, { email: emailRegex }],
         Status: "Approved"
       }).toArray();
 
-      if (campaigns.length > 0) {
+      if (campaigns.length) {
         await db.collection("Campaigns").updateMany(
           { $or: [{ Email: emailRegex }, { email: emailRegex }], Status: "Approved" },
           {
@@ -2510,7 +2501,6 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
           }
         );
 
-        // 📧 Send LIVE email
         for (const c of campaigns) {
           await sendCampaignLiveEmail({
             toEmail: ownerEmail,
@@ -2570,7 +2560,6 @@ async function publishCampaignByAnyId(campaignId) {
 // 1) Publish the campaign tied to this ID verification (if present)
 let publishedPrimary = null;
 try {
-  publishedPrimary = await publishCampaignByAnyId(campaignIdRaw);
   if (publishedPrimary && ownerEmail) {
     const title = publishedPrimary.title ?? publishedPrimary.Title ?? "your campaign";
     sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
