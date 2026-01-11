@@ -2443,12 +2443,17 @@ const result = await db.collection("Campaigns").findOneAndUpdate(
 });
 
 // ==================== ADMIN: ID VERIFICATIONS ====================
+
 // List ID verifications (default Pending)
 app.get("/api/admin/id-verifications", requireAdmin, async (req, res) => {
   try {
     const status = String(req.query.status || "Pending");
     const filter = status ? { Status: status } : {};
-    const rows = await db.collection("ID_Verifications").find(filter).sort({ createdAt: -1 }).toArray();
+    const rows = await db.collection("ID_Verifications")
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .toArray();
+
     res.json({ success: true, data: rows.map(normalizeIdv) });
   } catch (err) {
     console.error("admin idv list error:", err);
@@ -2456,57 +2461,72 @@ app.get("/api/admin/id-verifications", requireAdmin, async (req, res) => {
   }
 });
 
-// Approve an ID verification
+// ==================== ADMIN: ID VERIFICATIONS ====================
 app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, res) => {
   try {
     console.log("✅ ADMIN id-verification APPROVE:", req.params.id);
-    const id = req.params.id;
 
-    const result = await db.collection("ID_Verifications").findOneAndUpdate(
-  { _id: new ObjectId(id) },
-  { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
-  { returnDocument: "after" }
-);
-
-if (!result?.value) {
-  return res.status(404).json({ success: false, message: "Not found" });
-}
-
-// 🔁 AFTER ID APPROVAL — PROMOTE CAMPAIGN TO ACTIVE
-const idv = result.value;
-
-const ownerEmail = String(idv.Email || idv.email || "").trim().toLowerCase();
-if (ownerEmail) {
-  const emailExactI = new RegExp("^" + escapeRegex(ownerEmail) + "$", "i");
-
-  const campaigns = await db.collection("Campaigns").find({
-    $or: [{ Email: emailExactI }, { email: emailExactI }],
-    Status: "Approved"
-  }).toArray();
-
-  if (campaigns.length) {
-    await db.collection("Campaigns").updateMany(
-      { $or: [{ Email: emailExactI }, { email: emailExactI }], Status: "Approved" },
+    const idvResult = await db.collection("ID_Verifications").findOneAndUpdate(
+      { _id: new ObjectId(req.params.id) },
       {
         $set: {
-          Status: "Active",
-          lifecycleStatus: "Active",
-          verificationStatus: "verified",
-          verificationUpdatedAt: new Date(),
-          activatedAt: new Date(),
-          PublishedAt: new Date()
+          Status: "Approved",
+          ReviewedAt: new Date(),
+          ReviewedBy: "admin"
         }
-      }
+      },
+      { returnDocument: "after" }
     );
 
-    for (const c of campaigns) {
-      sendCampaignLiveEmail({
-        toEmail: ownerEmail,
-        campaignTitle: c.title || c.Title || "your campaign"
-      }).catch(e => console.error("campaign live email error:", e));
+    if (!idvResult?.value) {
+      return res.status(404).json({ success: false, message: "ID verification not found" });
     }
+
+    const idv = idvResult.value;
+
+    // ✅ SINGLE ownerEmail declaration (THIS IS THE FIX)
+    const ownerEmail = String(idv.Email || idv.email || "").trim().toLowerCase();
+
+    if (ownerEmail) {
+      const emailRegex = new RegExp("^" + escapeRegex(ownerEmail) + "$", "i");
+
+      // 🔁 Promote ALL approved campaigns to ACTIVE
+      const campaigns = await db.collection("Campaigns").find({
+        $or: [{ Email: emailRegex }, { email: emailRegex }],
+        Status: "Approved"
+      }).toArray();
+
+      if (campaigns.length > 0) {
+        await db.collection("Campaigns").updateMany(
+          { $or: [{ Email: emailRegex }, { email: emailRegex }], Status: "Approved" },
+          {
+            $set: {
+              Status: "Active",
+              lifecycleStatus: "Active",
+              verificationStatus: "verified",
+              activatedAt: new Date(),
+              PublishedAt: new Date()
+            }
+          }
+        );
+
+        // 📧 Send LIVE email
+        for (const c of campaigns) {
+          await sendCampaignLiveEmail({
+            toEmail: ownerEmail,
+            campaignTitle: c.title || c.Title || "your campaign"
+          });
+        }
+      }
+    }
+
+    return res.json({ success: true });
+
+  } catch (err) {
+    console.error("❌ ID approval error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
-}
+});
 
     // ✅ When identity gets approved, automatically publish:
 // 1) the campaign referenced by this ID verification (preferred)
