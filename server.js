@@ -358,7 +358,7 @@ async function findCampaignByAnyId(campaignIdRaw) {
   const campaignId = String(campaignIdRaw || "").trim();
   if (!campaignId) return null;
 
-  const idVariants = [{ _id: campaignId }, { Id: campaignId }, { id: campaignId }];
+  const idVariants = [{ Id: campaignId }, { id: campaignId }];
   if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
 
   return db.collection("Campaigns").findOne({ $or: idVariants });
@@ -835,7 +835,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       donationType = "campaign";
 
       // Find campaign by Mongo _id OR legacy Id field
-      const idVariants = [{ _id: campaignId }, { Id: campaignId }, { id: campaignId }];
+      const idVariants = [{ Id: campaignId }, { id: campaignId }];
       if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
 
       const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
@@ -1087,42 +1087,6 @@ async function sendSubmissionEmails({
 }
 
 
-
-
-    // ==================== EMAIL HELPERS: ID APPROVAL FLOW ====================
-    async function sendIdApprovedEmail({ toEmail }) {
-      console.log("📧 ID approved email sending to:", toEmail);
-      const base = PUBLIC_BASE_URL;
-      const dashboardUrl = `${base}/dashboard.html`;
-      return sendMailjet({
-        toEmail,
-        toName: "",
-        subject: "Your identity verification was approved",
-        text: `Good news — your identity verification was approved.
-
-You can now make your approved campaigns go live (or they will be activated automatically if already approved).
-
-Open your dashboard: ${dashboardUrl}
-
-— JoyFund`,
-        html: `
-          <div style="font-family:Arial,sans-serif;line-height:1.5;color:#222;">
-            <h2 style="margin:0 0 10px 0;">✅ Identity approved</h2>
-            <p style="margin:0 0 10px 0;">
-              Good news — your identity verification was approved.
-            </p>
-            <p style="margin:0 0 10px 0;">
-              You can now have your approved campaigns go live (or they will be activated automatically if already approved).
-            </p>
-            <p style="margin:0 0 8px 0;">
-              Open your dashboard:
-              <a href="${dashboardUrl}">${dashboardUrl}</a>
-            </p>
-            <p style="margin:14px 0 0 0;color:#777;font-size:12px;">If you didn’t request this, you can ignore this email.</p>
-          </div>
-        `
-      });
-    }
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
 async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
   console.log("📧 Campaign approved (needs ID) email sending to:", toEmail);
@@ -2502,8 +2466,13 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
   try {
     console.log("✅ ADMIN id-verification APPROVE:", req.params.id);
 
+    const rawId = String(req.params.id || "").trim();
+
+    const idvQuery = [{ _id: rawId }, { Id: rawId }, { id: rawId }];
+    if (ObjectId.isValid(rawId)) idvQuery.unshift({ _id: new ObjectId(rawId) });
+
     const idvResult = await db.collection("ID_Verifications").findOneAndUpdate(
-      { $or: (function(){ const __id=String(req.params.id||""); const __v=[{_id: __id},{Id: __id},{id: __id}]; if (ObjectId.isValid(__id)) __v.unshift({_id:new ObjectId(__id)}); return __v; })() },
+      { $or: idvQuery },
       { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
       { returnDocument: "after" }
     );
@@ -2517,12 +2486,6 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
     // Identify owner email
     const ownerEmail = String(idv.Email ?? idv.email ?? "").trim().toLowerCase();
 
-    // Send "ID approved" email (non-blocking)
-    if (ownerEmail) {
-      sendIdApprovedEmail({ toEmail: ownerEmail }).catch(e => console.error("id approved email error:", e));
-    }
-
-
     // Try to identify a specific campaign ID on the IDV doc (optional)
     const campaignIdRaw = String(
       idv.campaignId ?? idv.CampaignId ?? idv.campaignID ?? idv.campaign_id ?? ""
@@ -2532,7 +2495,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
     async function promoteCampaignByAnyId(campaignId) {
       if (!campaignId) return null;
 
-      const idVariants = [{ _id: campaignId }, { Id: campaignId }, { id: campaignId }];
+      const idVariants = [{ Id: campaignId }, { id: campaignId }];
       if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
 
       const c = await db.collection("Campaigns").findOne({ $or: idVariants });
