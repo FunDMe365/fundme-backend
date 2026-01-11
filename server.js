@@ -137,6 +137,9 @@ const MAILJET_API_SECRET = process.env.MAILJET_API_SECRET;
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://fundasmile.net";
 
+
+// Public base URL used in emails/links (defaults to FRONTEND_URL)
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || FRONTEND_URL || "https://fundasmile.net").trim();
 // ==================== POSTGRES (JOYDROPS) ====================
 const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
 
@@ -1087,7 +1090,7 @@ async function sendSubmissionEmails({
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
 async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
   console.log("📧 Campaign approved (needs ID) email sending to:", toEmail);
-  const base = PUBLIC_BASE_URL || FRONTEND_URL || "https://fundasmile.net";
+  const base = PUBLIC_BASE_URL;
   const safeCampaignId = String(campaignId || "").trim();
   const verifyUrl = safeCampaignId
     ? `${base}/identityverification.html?campaignId=${encodeURIComponent(safeCampaignId)}`
@@ -1140,7 +1143,7 @@ You can also access this from your dashboard: ${dashboardUrl}
 
 async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
   console.log("📧 Campaign live email sending to:", toEmail);
-  const campaignsUrl = `${PUBLIC_BASE_URL || "https://fundasmile.net"}/campaigns.html`;
+  const campaignsUrl = `${PUBLIC_BASE_URL}/campaigns.html`;
   return sendMailjet({
     toEmail,
     toName: "",
