@@ -2342,7 +2342,9 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
     if (!campaign) return res.status(404).json({ success: false, message: "Not found" });
 
-    const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
+    const ownerEmail = String(
+      campaign.Email ?? campaign.email ?? campaign.ownerEmail ?? campaign.OwnerEmail ?? campaign.userEmail ?? campaign.UserEmail ?? campaign.accountEmail ?? ""
+    ).trim().toLowerCase();
     const emailExactI = ownerEmail
       ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i")
       : null;
@@ -2401,13 +2403,16 @@ const result = await db.collection("Campaigns").findOneAndUpdate(
     if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
 
     // Fire-and-forget emails (don't fail the request if email fails)
+    console.log("🛂 Campaign status change:", { id, requestedStatus: status, finalStatus, ownerEmail, idvStatus });
     if (ownerEmail) {
       const title = campaign.title ?? campaign.Title ?? "your campaign";
       if (status === "Approved" && finalStatus === "Approved") {
+        console.log("📧 Sending approval→ID email to", ownerEmail, "campaignId", campaignIdForEmail);
         sendCampaignApprovalIdentityEmail({ toEmail: ownerEmail, campaignTitle: title, campaignId: campaignIdForEmail })
           .catch(e => console.error("approval->identity email error:", e));
       }
       if (finalStatus === "Active") {
+        console.log("📧 Sending campaign LIVE email to", ownerEmail, "campaign:", title);
         sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
           .catch(e => console.error("campaign live email error:", e));
       }
@@ -2460,7 +2465,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       if (campaignsToPublish.length) {
         await db.collection("Campaigns").updateMany(
           { $or: [{ Email: emailExactI }, { email: emailExactI }], Status: "Approved" },
-          { $set: { Status: "Active", PublishedAt: new Date() } }
+          { $set: { Status: "Active", PublishedAt: new Date(), verificationStatus: "verified", verificationUpdatedAt: new Date() } }
         );
 
         // Email once (or per campaign). We'll email per campaign title for clarity.
@@ -2816,7 +2821,7 @@ await sendSubmissionEmails({
 app.get("/api/public-campaigns", async (req, res) => {
   try {
     const rows = await db.collection("Campaigns").find({
-  Status: "Approved",
+  Status: "Active",
   $or: [
     { lifecycleStatus: { $ne: "Expired" } },
     { lifecycleStatus: { $exists: false } } // for older campaigns before expiration existed
