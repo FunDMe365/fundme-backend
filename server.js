@@ -1238,6 +1238,22 @@ app.post("/api/track-visitor", (req, res) => {
   res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
 });
 
+// Backwards-compatible analytics endpoint (older pages call this)
+app.post("/api/track/pageview", (req, res) => {
+  // Reuse the same lightweight visitor tracking
+  const { visitorId } = req.body || {};
+  if (!visitorId) return res.status(400).json({ success: false, message: "Missing visitorId" });
+
+  const now = Date.now();
+  liveVisitors[String(visitorId)] = now;
+
+  for (const id in liveVisitors) {
+    if (now - liveVisitors[id] > 30000) delete liveVisitors[id];
+  }
+
+  return res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
+});
+
 // ==================== USERS & AUTH ====================
 
 // Sign up a new user
@@ -2400,7 +2416,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     }
 const result = await db.collection("Campaigns").findOneAndUpdate(
       { $or: idVariants },
-      { $set: Object.assign({ Status: finalStatus, ReviewedAt: new Date(), ReviewedBy: "admin" }, verificationStatusPatch) },
+      { $set: Object.assign({ Status: finalStatus, ReviewedAt: new Date(), ReviewedBy: "admin" }, (finalStatus === "Active" ? { lifecycleStatus: "Active", PublishedAt: new Date(), activatedAt: new Date() } : {}), verificationStatusPatch) },
       { returnDocument: "after" }
     );
 
@@ -2454,32 +2470,91 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
 
     if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
 
-    // ✅ When identity gets approved, automatically publish any previously-approved campaigns
-    const ownerEmail = String(result.value.Email ?? result.value.email ?? "").trim().toLowerCase();
-    if (ownerEmail) {
-      const emailExactI = new RegExp("^" + escapeRegex(ownerEmail) + "$", "i");
+    // ✅ When identity gets approved, automatically publish:
+// 1) the campaign referenced by this ID verification (preferred)
+// 2) any other campaigns for this owner that were previously "Approved"
+const idvDoc = result.value;
+const ownerEmail = String(idvDoc.Email ?? idvDoc.email ?? "").trim().toLowerCase();
+const campaignIdRaw = String(idvDoc.campaignId ?? "").trim();
 
-      const campaignsToPublish = await db.collection("Campaigns").find({
-        $or: [{ Email: emailExactI }, { email: emailExactI }],
-        Status: "Approved"
-      }).toArray();
+// Helper: match ObjectId _id, string _id, or legacy Id field
+async function publishCampaignByAnyId(campaignId) {
+  if (!campaignId) return null;
 
-      if (campaignsToPublish.length) {
-        await db.collection("Campaigns").updateMany(
-          { $or: [{ Email: emailExactI }, { email: emailExactI }], Status: "Approved" },
-          { $set: { Status: "Active", PublishedAt: new Date() } }
-        );
+  const idVariants = [{ Id: campaignId }, { id: campaignId }];
+  if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
 
-        // Email once (or per campaign). We'll email per campaign title for clarity.
-        for (const c of campaignsToPublish) {
-          const title = c.title ?? c.Title ?? "your campaign";
-          sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
-            .catch(e => console.error("campaign live email error:", e));
-        }
+  const c = await db.collection("Campaigns").findOne({ $or: idVariants });
+  if (!c) return null;
+
+  const currentStatus = String(c.Status ?? c.status ?? "").trim();
+  // Only publish if it was already reviewed/approved (or pending but you approved ID first)
+  const okToPublish = ["Approved", "Pending", "Active"].includes(currentStatus) || !currentStatus;
+  if (!okToPublish) return null;
+
+  await db.collection("Campaigns").updateOne(
+    { _id: c._id },
+    {
+      $set: {
+        Status: "Active",
+        lifecycleStatus: "Active",
+        PublishedAt: c.PublishedAt || new Date(),
+        activatedAt: new Date(),
+        verificationStatus: "verified",
+        verificationUpdatedAt: new Date()
       }
     }
+  );
 
-    return res.json({ success: true, data: normalizeIdv(result.value) });
+  return { ...c, Status: "Active", lifecycleStatus: "Active" };
+}
+
+// 1) Publish the campaign tied to this ID verification (if present)
+let publishedPrimary = null;
+try {
+  publishedPrimary = await publishCampaignByAnyId(campaignIdRaw);
+  if (publishedPrimary && ownerEmail) {
+    const title = publishedPrimary.title ?? publishedPrimary.Title ?? "your campaign";
+    sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
+      .catch(e => console.error("campaign live email error:", e));
+  }
+} catch (e) {
+  console.error("publish primary campaign error:", e);
+}
+
+// 2) Publish any other approved campaigns by owner email
+if (ownerEmail) {
+  const emailExactI = new RegExp("^" + escapeRegex(ownerEmail) + "$", "i");
+
+  const campaignsToPublish = await db.collection("Campaigns").find({
+    $or: [{ Email: emailExactI }, { email: emailExactI }],
+    $or: [{ Status: "Approved" }, { status: "Approved" }]
+  }).toArray();
+
+  if (campaignsToPublish.length) {
+    await db.collection("Campaigns").updateMany(
+      { $or: [{ Email: emailExactI }, { email: emailExactI }], $or: [{ Status: "Approved" }, { status: "Approved" }] },
+      {
+        $set: {
+          Status: "Active",
+          lifecycleStatus: "Active",
+          PublishedAt: new Date(),
+          activatedAt: new Date(),
+          verificationStatus: "verified",
+          verificationUpdatedAt: new Date()
+        }
+      }
+    );
+
+    for (const c of campaignsToPublish) {
+      const title = c.title ?? c.Title ?? "your campaign";
+      sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
+        .catch(e => console.error("campaign live email error:", e));
+    }
+  }
+}
+
+return res.json({ success: true, data: normalizeIdv(result.value) });
   } catch (err) {
     console.error("admin idv approve error:", err);
     return res.status(500).json({ success: false, message: "Approve failed" });
