@@ -1086,16 +1086,33 @@ async function sendSubmissionEmails({
 
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
 async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle }) {
-  const verifyUrl = `${PUBLIC_BASE_URL || "https://fundasmile.net"}/verify-identity.html`;
+  const base = PUBLIC_BASE_URL || FRONTEND_URL || "https://fundasmile.net";
+  const verifyUrl = `${base}/identityverification.html`;
+  const dashboardUrl = `${base}/dashboard.html`;
+
   return sendMailjet({
     toEmail,
     toName: "",
-    subject: "Your campaign was approved — identity verification required",
+    subject: "Your campaign was approved — upload your ID to go live",
     html: `
-      <p>Your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> was approved by our team.</p>
-      <p>Before it can go live, you must verify your identity.</p>
-      <p><a href="${verifyUrl}">Verify your identity now →</a></p>
-      <p>If you already submitted verification, you can ignore this and we’ll update you once it’s reviewed.</p>
+      <h2 style="margin:0 0 10px;">Campaign approved 🎉</h2>
+      <p>Your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> has been approved by our team.</p>
+
+      <p><b>Next step:</b> upload a photo of your ID for verification. Once your ID is approved, your campaign will automatically go live.</p>
+
+      <p style="margin:14px 0;">
+        <a href="${verifyUrl}" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#111827;color:#fff;text-decoration:none;font-weight:800;">
+          Upload ID for Verification →
+        </a>
+      </p>
+
+      <p style="margin:0 0 6px;">Prefer the dashboard?</p>
+      <p style="margin:0 0 14px;"><a href="${dashboardUrl}">Open your dashboard</a> → look for <b>“Upload ID for Verification”</b>.</p>
+
+      <p style="color:#6b7280;font-size:13px;margin-top:14px;">
+        If you already submitted an ID, you can ignore this email — we’ll update your status after review.
+      </p>
+      ${EMAIL_FOOTER}
     `
   });
 }
@@ -3069,7 +3086,7 @@ app.post("/api/logout", (req, res) => {
   }
 });
 
-// ==================== ID VERIFICATION ====================
+// ==================== ID VERIFICATION (CAMPAIGN-BOUND) ====================
 app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
   try {
     // must be logged in
@@ -3079,12 +3096,45 @@ app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
     }
 
     const email = String(user.email).trim().toLowerCase();
-    const name = String(user.name || "").trim(); // optional
+    const name  = String(user.name || "").trim();
 
+    // must include a file
     if (!req.file) {
-      return res.status(400).json({ success: false, message: "Missing fields" });
+      return res.status(400).json({ success: false, message: "Missing ID file" });
     }
 
+    // must include campaignId (from identityverification.html?campaignId=...)
+    const campaignIdRaw = String(req.body.campaignId || "").trim();
+    if (!campaignIdRaw) {
+      return res.status(400).json({ success: false, message: "Missing campaignId" });
+    }
+
+    // Find campaign by _id OR legacy Id/id fields
+    const idVariants = [{ Id: campaignIdRaw }, { id: campaignIdRaw }];
+    if (ObjectId.isValid(campaignIdRaw)) idVariants.unshift({ _id: new ObjectId(campaignIdRaw) });
+
+    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+
+    // Ownership check (campaign must belong to logged-in user)
+    const ownerEmail = String(campaign.email || campaign.Email || "").trim().toLowerCase();
+    if (!ownerEmail || ownerEmail !== email) {
+      return res.status(403).json({ success: false, message: "Not allowed for this campaign" });
+    }
+
+    // Optional: only allow upload when campaign is waiting on verification
+    // If you haven't added a campaign verificationStatus yet, this won't block anything.
+    const vStatus = String(campaign.verificationStatus || "").trim();
+    if (vStatus && vStatus !== "needs_verification" && vStatus !== "verification_rejected") {
+      return res.status(409).json({
+        success: false,
+        message: "This campaign is not currently requesting ID verification."
+      });
+    }
+
+    // Upload to Cloudinary (same approach you already used)
     const cloudRes = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         { folder: "joyfund/id-verifications", use_filename: true, unique_filename: true },
@@ -3093,41 +3143,58 @@ app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
       stream.end(req.file.buffer);
     });
 
-    await db.collection("ID_Verifications").insertOne({
-  name,
-  email,
-  url: cloudRes.secure_url,
-  Status: "Pending",
-  createdAt: new Date()
-});
+    // Save verification record (NOW includes campaignId)
+    const verificationDoc = {
+      name,
+      email,
+      campaignId: campaignIdRaw,
+      url: cloudRes.secure_url,
+      Status: "Pending",
+      createdAt: new Date()
+    };
 
-await sendSubmissionEmails({
-  type: "Identity Verification",
-  userEmail: email,
-  userName: name,
-  adminSubject: "New Identity Verification Uploaded",
-  userSubject: "Your ID has been received",
-  adminHtml: `
-    <h2>New ID Verification</h2>
-    <p><b>User:</b> ${email}</p>
-    <p><b>Name:</b> ${name || "—"}</p>
-    <p><b>File:</b> <a href="${cloudRes.secure_url}">View upload</a></p>
-    <p><b>Date:</b> ${new Date().toLocaleString()}</p>
-  `,
-  userHtml: `
-    <h2>Thanks for verifying your identity 💙💗</h2>
-    <p>Hi ${name || ""},</p>
-    <p>We received your ID and will review it shortly.</p>
-    <p>If we need anything else, we’ll reach out by email.</p>
-    <p>— JoyFund Team</p>
-  `
-});
-	
+    await db.collection("ID_Verifications").insertOne(verificationDoc);
+
+    // Update campaign so dashboard/admin can track it
+    await db.collection("Campaigns").updateOne(
+      { _id: campaign._id },
+      {
+        $set: {
+          verificationStatus: "verification_submitted",
+          verificationSubmittedAt: new Date(),
+          verificationIdUrl: cloudRes.secure_url
+        }
+      }
+    );
+
+    // Emails (admin + user)
+    await sendSubmissionEmails({
+      type: "Identity Verification",
+      userEmail: email,
+      userName: name,
+      adminSubject: "New Identity Verification Uploaded",
+      userSubject: "Your ID has been received",
+      adminHtml: `
+        <h2>New ID Verification</h2>
+        <p><b>User:</b> ${email}</p>
+        <p><b>Name:</b> ${name || "—"}</p>
+        <p><b>CampaignId:</b> ${campaignIdRaw}</p>
+        <p><b>File:</b> <a href="${cloudRes.secure_url}">View upload</a></p>
+        <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+      `,
+      userHtml: `
+        <h2>Thanks for verifying your identity 💙💗</h2>
+        <p>Hi ${name || ""},</p>
+        <p>We received your ID and will review it shortly.</p>
+        <p>You can always check your status from your Dashboard.</p>
+        <p>— JoyFund</p>
+      `
+    });
 
     return res.json({ success: true, url: cloudRes.secure_url });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, message: err.message });
+    console.error("POST /api/verify-id error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
