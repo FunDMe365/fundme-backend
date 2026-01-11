@@ -2463,12 +2463,50 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
     const id = req.params.id;
 
     const result = await db.collection("ID_Verifications").findOneAndUpdate(
-      { _id: new ObjectId(id) },
-      { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
-      { returnDocument: "after" }
+  { _id: new ObjectId(id) },
+  { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
+  { returnDocument: "after" }
+);
+
+if (!result?.value) {
+  return res.status(404).json({ success: false, message: "Not found" });
+}
+
+// 🔁 AFTER ID APPROVAL — PROMOTE CAMPAIGN TO ACTIVE
+const idv = result.value;
+
+const ownerEmail = String(idv.Email || idv.email || "").trim().toLowerCase();
+if (ownerEmail) {
+  const emailExactI = new RegExp("^" + escapeRegex(ownerEmail) + "$", "i");
+
+  const campaigns = await db.collection("Campaigns").find({
+    $or: [{ Email: emailExactI }, { email: emailExactI }],
+    Status: "Approved"
+  }).toArray();
+
+  if (campaigns.length) {
+    await db.collection("Campaigns").updateMany(
+      { $or: [{ Email: emailExactI }, { email: emailExactI }], Status: "Approved" },
+      {
+        $set: {
+          Status: "Active",
+          lifecycleStatus: "Active",
+          verificationStatus: "verified",
+          verificationUpdatedAt: new Date(),
+          activatedAt: new Date(),
+          PublishedAt: new Date()
+        }
+      }
     );
 
-    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
+    for (const c of campaigns) {
+      sendCampaignLiveEmail({
+        toEmail: ownerEmail,
+        campaignTitle: c.title || c.Title || "your campaign"
+      }).catch(e => console.error("campaign live email error:", e));
+    }
+  }
+}
 
     // ✅ When identity gets approved, automatically publish:
 // 1) the campaign referenced by this ID verification (preferred)
