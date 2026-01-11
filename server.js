@@ -1085,34 +1085,54 @@ async function sendSubmissionEmails({
 
 
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
-async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle }) {
+async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
   const base = PUBLIC_BASE_URL || FRONTEND_URL || "https://fundasmile.net";
-  const verifyUrl = `${base}/identityverification.html`;
+  const safeCampaignId = String(campaignId || "").trim();
+  const verifyUrl = safeCampaignId
+    ? `${base}/identityverification.html?campaignId=${encodeURIComponent(safeCampaignId)}`
+    : `${base}/identityverification.html`;
   const dashboardUrl = `${base}/dashboard.html`;
 
   return sendMailjet({
     toEmail,
     toName: "",
-    subject: "Your campaign was approved — upload your ID to go live",
+    subject: "Your campaign was approved — quick identity verification needed",
+    text: `Good news — your campaign "${campaignTitle}" was approved.
+
+Before it can go live, we need a quick identity verification.
+
+1) Open: ${verifyUrl}
+2) Upload a clear photo of your ID
+
+You can also access this from your dashboard: ${dashboardUrl}
+
+— JoyFund`,
     html: `
-      <h2 style="margin:0 0 10px;">Campaign approved 🎉</h2>
-      <p>Your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> has been approved by our team.</p>
-
-      <p><b>Next step:</b> upload a photo of your ID for verification. Once your ID is approved, your campaign will automatically go live.</p>
-
-      <p style="margin:14px 0;">
-        <a href="${verifyUrl}" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#111827;color:#fff;text-decoration:none;font-weight:800;">
-          Upload ID for Verification →
-        </a>
-      </p>
-
-      <p style="margin:0 0 6px;">Prefer the dashboard?</p>
-      <p style="margin:0 0 14px;"><a href="${dashboardUrl}">Open your dashboard</a> → look for <b>“Upload ID for Verification”</b>.</p>
-
-      <p style="color:#6b7280;font-size:13px;margin-top:14px;">
-        If you already submitted an ID, you can ignore this email — we’ll update your status after review.
-      </p>
-      ${EMAIL_FOOTER}
+      <div style="font-family:Arial,sans-serif;line-height:1.5;">
+        <h2 style="margin:0 0 10px 0;">✅ Your campaign was approved</h2>
+        <p style="margin:0 0 10px 0;">
+          Great news — <strong>${escapeHtml(String(campaignTitle || "your campaign"))}</strong> was approved.
+        </p>
+        <p style="margin:0 0 10px 0;">
+          Before it can go live, we need a quick identity verification:
+        </p>
+        <ol style="margin:0 0 12px 20px;padding:0;">
+          <li>Open the verification page</li>
+          <li>Upload a clear photo of your ID</li>
+        </ol>
+        <p style="margin:0 0 14px 0;">
+          <a href="${verifyUrl}" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#111;color:#fff;text-decoration:none;">
+            Upload ID for Verification
+          </a>
+        </p>
+        <p style="margin:0 0 8px 0;color:#555;">
+          Or open your dashboard:
+          <a href="${dashboardUrl}">${dashboardUrl}</a>
+        </p>
+        <p style="margin:14px 0 0 0;color:#777;font-size:12px;">
+          If you didn’t request this, you can ignore this email.
+        </p>
+      </div>
     `
   });
 }
@@ -2359,9 +2379,22 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       }
     }
 
-    const result = await db.collection("Campaigns").findOneAndUpdate(
+    
+    // Track per-campaign verification requirement for the user dashboard
+    // - Approved but not yet identity-approved => needs_verification
+    // - Active => verified
+    // - Otherwise leave as-is
+    const campaignIdForEmail = String(campaign._id || campaign.Id || campaign.id || id).trim();
+
+    let verificationStatusPatch = {};
+    if (finalStatus === "Active") {
+      verificationStatusPatch = { verificationStatus: "verified", verificationUpdatedAt: new Date() };
+    } else if (status === "Approved" && finalStatus === "Approved" && String(idvStatus).toLowerCase() !== "approved") {
+      verificationStatusPatch = { verificationStatus: "needs_verification", verificationUpdatedAt: new Date() };
+    }
+const result = await db.collection("Campaigns").findOneAndUpdate(
       { $or: idVariants },
-      { $set: { Status: finalStatus, ReviewedAt: new Date(), ReviewedBy: "admin" } },
+      { $set: Object.assign({ Status: finalStatus, ReviewedAt: new Date(), ReviewedBy: "admin" }, verificationStatusPatch) },
       { returnDocument: "after" }
     );
 
@@ -2371,7 +2404,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     if (ownerEmail) {
       const title = campaign.title ?? campaign.Title ?? "your campaign";
       if (status === "Approved" && finalStatus === "Approved") {
-        sendCampaignApprovalIdentityEmail({ toEmail: ownerEmail, campaignTitle: title })
+        sendCampaignApprovalIdentityEmail({ toEmail: ownerEmail, campaignTitle: title, campaignId: campaignIdForEmail })
           .catch(e => console.error("approval->identity email error:", e));
       }
       if (finalStatus === "Active") {
