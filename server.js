@@ -2840,9 +2840,12 @@ app.get("/api/my-campaigns", async (req, res) => {
 
     const email = String(sessionEmail).trim().toLowerCase();
 
+    // ✅ Case-insensitive match (older records may have Email stored with mixed case)
+    const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
+
     // Support both field names just in case (Email vs email)
     const rows = await db.collection("Campaigns")
-      .find({ $or: [{ Email: email }, { email: email }] })
+      .find({ $or: [{ Email: emailRegex }, { email: emailRegex }] })
       .toArray();
 
     return res.json({ success: true, campaigns: rows });
@@ -2851,6 +2854,7 @@ app.get("/api/my-campaigns", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
 
 
 // ==================== UPDATE CAMPAIGN (owner only) ====================
