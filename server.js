@@ -2515,7 +2515,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
     const idv = idvResult.value;
 
     // Identify owner email
-    const ownerEmail = String\(idv\.Email \?\? idv\.email \?\? ""\)\.trim\(\)\.toLowerCase\(\);
+    const ownerEmail = String(idv.Email ?? idv.email ?? "").trim().toLowerCase();
 
     // Send "ID approved" email (non-blocking)
     if (ownerEmail) {
