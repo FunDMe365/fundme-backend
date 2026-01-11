@@ -835,7 +835,7 @@ app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
       donationType = "campaign";
 
       // Find campaign by Mongo _id OR legacy Id field
-      const idVariants = [{ Id: campaignId }, { id: campaignId }];
+      const idVariants = [{ _id: campaignId }, { Id: campaignId }, { id: campaignId }];
       if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
 
       const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
@@ -1087,6 +1087,42 @@ async function sendSubmissionEmails({
 }
 
 
+
+
+    // ==================== EMAIL HELPERS: ID APPROVAL FLOW ====================
+    async function sendIdApprovedEmail({ toEmail }) {
+      console.log("📧 ID approved email sending to:", toEmail);
+      const base = PUBLIC_BASE_URL;
+      const dashboardUrl = `${base}/dashboard.html`;
+      return sendMailjet({
+        toEmail,
+        toName: "",
+        subject: "Your identity verification was approved",
+        text: `Good news — your identity verification was approved.
+
+You can now make your approved campaigns go live (or they will be activated automatically if already approved).
+
+Open your dashboard: ${dashboardUrl}
+
+— JoyFund`,
+        html: `
+          <div style="font-family:Arial,sans-serif;line-height:1.5;color:#222;">
+            <h2 style="margin:0 0 10px 0;">✅ Identity approved</h2>
+            <p style="margin:0 0 10px 0;">
+              Good news — your identity verification was approved.
+            </p>
+            <p style="margin:0 0 10px 0;">
+              You can now have your approved campaigns go live (or they will be activated automatically if already approved).
+            </p>
+            <p style="margin:0 0 8px 0;">
+              Open your dashboard:
+              <a href="${dashboardUrl}">${dashboardUrl}</a>
+            </p>
+            <p style="margin:14px 0 0 0;color:#777;font-size:12px;">If you didn’t request this, you can ignore this email.</p>
+          </div>
+        `
+      });
+    }
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
 async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
   console.log("📧 Campaign approved (needs ID) email sending to:", toEmail);
@@ -1162,22 +1198,6 @@ function escapeHtml(s) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
-}
-
-
-function sendIdApprovedEmail({ toEmail }) {
-  console.log("📧 ID approved email sending to:", toEmail);
-  const dashboardUrl = `${PUBLIC_BASE_URL}/dashboard.html`;
-  return sendMailjet({
-    toEmail,
-    toName: "",
-    subject: "Your identity verification was approved ✅",
-    html: `
-      <p>Good news — your identity verification has been <b>approved</b>.</p>
-      <p>If you have any campaigns waiting to go live, they will now be able to publish.</p>
-      <p>Go to your dashboard: <a href="${dashboardUrl}">${dashboardUrl}</a></p>
-    `
-  });
 }
 
 // ==================== JOYBOOST: DAILY CHECK-IN ====================
@@ -2483,7 +2503,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
     console.log("✅ ADMIN id-verification APPROVE:", req.params.id);
 
     const idvResult = await db.collection("ID_Verifications").findOneAndUpdate(
-      { $or: (function(){ const _idStr = String(req.params.id||""); const ors=[{ _id: _idStr }, { Id: _idStr }, { id: _idStr }]; if (ObjectId.isValid(_idStr)) ors.unshift({ _id: new ObjectId(_idStr) }); return ors; })() },
+      { $or: (function(){ const __id=String(req.params.id||""); const __v=[{_id: __id},{Id: __id},{id: __id}]; if (ObjectId.isValid(__id)) __v.unshift({_id:new ObjectId(__id)}); return __v; })() },
       { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
       { returnDocument: "after" }
     );
@@ -2495,8 +2515,9 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
     const idv = idvResult.value;
 
     // Identify owner email
-    const ownerEmail = String(idv.Email ?? idv.email ?? "").trim().toLowerCase();
+    const ownerEmail = String\(idv\.Email \?\? idv\.email \?\? ""\)\.trim\(\)\.toLowerCase\(\);
 
+    // Send "ID approved" email (non-blocking)
     if (ownerEmail) {
       sendIdApprovedEmail({ toEmail: ownerEmail }).catch(e => console.error("id approved email error:", e));
     }
@@ -2511,7 +2532,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
     async function promoteCampaignByAnyId(campaignId) {
       if (!campaignId) return null;
 
-      const idVariants = [{ Id: campaignId }, { id: campaignId }];
+      const idVariants = [{ _id: campaignId }, { Id: campaignId }, { id: campaignId }];
       if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
 
       const c = await db.collection("Campaigns").findOne({ $or: idVariants });
@@ -2982,7 +3003,7 @@ app.delete("/api/campaigns/:id", requireLogin, async (req, res) => {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ success: false, message: "Missing id" });
 
-    const idVariants = [{ Id: id }, { id: id }];
+    const idVariants = [{ _id: id }, { Id: id }, { id: id }];
     if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
     const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
@@ -3069,7 +3090,7 @@ async function updateCampaignHandler(req, res) {
     $set.UpdatedAt = new Date().toISOString();
 
     // 1) Find campaign by id
-    const idVariants = [{ Id: id }, { id: id }];
+    const idVariants = [{ _id: id }, { Id: id }, { id: id }];
     if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
     const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
