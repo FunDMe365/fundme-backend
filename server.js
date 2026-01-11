@@ -1307,11 +1307,9 @@ app.post("/api/signup", async (req, res) => {
       joinDate: newUser.JoinDate
     };
 
-    // ✅ IMPORTANT: force session write before responding (mobile fix)
-    req.session.save((err) => {
-      if (err) {
-        console.error("Session save error (signup):", err);
-        return res.status(500).json({ error: "Session failed to save" });
+    // ✅ Do NOT block on session store writes (prevents “stuck on fetch”)
+    return res.json({ ok: true, loggedIn: true, user: req.session.user });
+return res.status(500).json({ error: "Session failed to save" });
       }
       return res.json({ ok: true, loggedIn: true, user: req.session.user });
     });
@@ -1350,11 +1348,9 @@ const user = await usersCollection.findOne({
       joinDate: user.JoinDate
     };
 
-    // ✅ IMPORTANT: force session write before responding (mobile fix)
-    req.session.save((err) => {
-      if (err) {
-        console.error("Session save error (signin):", err);
-        return res.status(500).json({ error: "Session failed to save" });
+    // ✅ Do NOT block on session store writes (prevents “stuck on fetch”)
+    return res.json({ ok: true, loggedIn: true, user: req.session.user });
+return res.status(500).json({ error: "Session failed to save" });
       }
       return res.json({ ok: true, loggedIn: true, user: req.session.user });
     });
@@ -1939,9 +1935,9 @@ const okPass = safeEqual(password, adminPass);
     req.session.admin = true;
     req.session.adminAt = Date.now();
 
-    req.session.save((err2) => {
-      if (err2) return res.status(500).json({ success: false, message: "Session save failed" });
-      return res.json({ success: true });
+    // ✅ Do NOT block on session store writes (prevents “stuck on fetch”)
+    return res.json({ success: true });
+return res.json({ success: true });
     });
   });
 });
@@ -2342,9 +2338,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
     if (!campaign) return res.status(404).json({ success: false, message: "Not found" });
 
-    const ownerEmail = String(
-      campaign.Email ?? campaign.email ?? campaign.ownerEmail ?? campaign.OwnerEmail ?? campaign.userEmail ?? campaign.UserEmail ?? campaign.accountEmail ?? ""
-    ).trim().toLowerCase();
+    const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
     const emailExactI = ownerEmail
       ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i")
       : null;
@@ -2403,16 +2397,13 @@ const result = await db.collection("Campaigns").findOneAndUpdate(
     if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
 
     // Fire-and-forget emails (don't fail the request if email fails)
-    console.log("🛂 Campaign status change:", { id, requestedStatus: status, finalStatus, ownerEmail, idvStatus });
     if (ownerEmail) {
       const title = campaign.title ?? campaign.Title ?? "your campaign";
       if (status === "Approved" && finalStatus === "Approved") {
-        console.log("📧 Sending approval→ID email to", ownerEmail, "campaignId", campaignIdForEmail);
         sendCampaignApprovalIdentityEmail({ toEmail: ownerEmail, campaignTitle: title, campaignId: campaignIdForEmail })
           .catch(e => console.error("approval->identity email error:", e));
       }
       if (finalStatus === "Active") {
-        console.log("📧 Sending campaign LIVE email to", ownerEmail, "campaign:", title);
         sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
           .catch(e => console.error("campaign live email error:", e));
       }
@@ -2465,7 +2456,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       if (campaignsToPublish.length) {
         await db.collection("Campaigns").updateMany(
           { $or: [{ Email: emailExactI }, { email: emailExactI }], Status: "Approved" },
-          { $set: { Status: "Active", PublishedAt: new Date(), verificationStatus: "verified", verificationUpdatedAt: new Date() } }
+          { $set: { Status: "Active", PublishedAt: new Date() } }
         );
 
         // Email once (or per campaign). We'll email per campaign title for clarity.
@@ -2845,12 +2836,9 @@ app.get("/api/my-campaigns", async (req, res) => {
 
     const email = String(sessionEmail).trim().toLowerCase();
 
-    // ✅ Case-insensitive match (older records may have Email stored with mixed case)
-    const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
-
     // Support both field names just in case (Email vs email)
     const rows = await db.collection("Campaigns")
-      .find({ $or: [{ Email: emailRegex }, { email: emailRegex }] })
+      .find({ $or: [{ Email: email }, { email: email }] })
       .toArray();
 
     return res.json({ success: true, campaigns: rows });
@@ -2859,7 +2847,6 @@ app.get("/api/my-campaigns", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
-
 
 
 // ==================== UPDATE CAMPAIGN (owner only) ====================
