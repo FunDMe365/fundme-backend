@@ -1086,6 +1086,7 @@ async function sendSubmissionEmails({
 
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
 async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
+  console.log("📧 Campaign approved (needs ID) email sending to:", toEmail);
   const base = PUBLIC_BASE_URL || FRONTEND_URL || "https://fundasmile.net";
   const safeCampaignId = String(campaignId || "").trim();
   const verifyUrl = safeCampaignId
@@ -1138,6 +1139,7 @@ You can also access this from your dashboard: ${dashboardUrl}
 }
 
 async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
+  console.log("📧 Campaign live email sending to:", toEmail);
   const campaignsUrl = `${PUBLIC_BASE_URL || "https://fundasmile.net"}/campaigns.html`;
   return sendMailjet({
     toEmail,
@@ -1307,9 +1309,14 @@ app.post("/api/signup", async (req, res) => {
       joinDate: newUser.JoinDate
     };
 
-    // ✅ Do NOT block on session store writes (prevents “stuck on fetch”)
-    return res.json({ ok: true, loggedIn: true, user: req.session.user });
-
+    // ✅ IMPORTANT: force session write before responding (mobile fix)
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error (signup):", err);
+        return res.status(500).json({ error: "Session failed to save" });
+      }
+      return res.json({ ok: true, loggedIn: true, user: req.session.user });
+    });
 
   } catch (err) {
     console.error("Signup error:", err);
@@ -1345,9 +1352,14 @@ const user = await usersCollection.findOne({
       joinDate: user.JoinDate
     };
 
-    // ✅ Do NOT block on session store writes (prevents “stuck on fetch”)
-    return res.json({ ok: true, loggedIn: true, user: req.session.user });
-
+    // ✅ IMPORTANT: force session write before responding (mobile fix)
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error (signin):", err);
+        return res.status(500).json({ error: "Session failed to save" });
+      }
+      return res.json({ ok: true, loggedIn: true, user: req.session.user });
+    });
 
   } catch (err) {
     console.error("Signin error:", err);
@@ -1915,8 +1927,8 @@ app.post("/api/admin-login", adminLimiter, (req, res) => {
     return res.status(500).json({ success: false, message: "Admin credentials not configured on server" });
   }
 
-  const okUser = safeEqual(String(username).toLowerCase(), String(adminUser).toLowerCase());
-  const okPass = safeEqual(password, adminPass);
+const okUser = safeEqual(String(username).toLowerCase(), String(adminUser).toLowerCase());
+const okPass = safeEqual(password, adminPass);
 
   if (!okUser || !okPass) {
     return res.status(401).json({ success: false, message: "Invalid admin username or password" });
@@ -1929,11 +1941,12 @@ app.post("/api/admin-login", adminLimiter, (req, res) => {
     req.session.admin = true;
     req.session.adminAt = Date.now();
 
-    // ✅ Do NOT block on session store writes (prevents “stuck on fetch”)
-    return res.json({ success: true });
+    req.session.save((err2) => {
+      if (err2) return res.status(500).json({ success: false, message: "Session save failed" });
+      return res.json({ success: true });
+    });
   });
 });
-
 
 app.get("/api/admin-check", requireAdmin, (req, res) => {
   return res.json({ admin: true });
@@ -2313,6 +2326,7 @@ app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
 // Update campaign status (Approved/Denied/Closed/etc.)
 app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
   try {
+    console.log("✅ ADMIN campaign status PATCH:", req.params.id, req.body);
     const id = String(req.params.id || "");
     const { status } = req.body;
 
@@ -2426,6 +2440,7 @@ app.get("/api/admin/id-verifications", requireAdmin, async (req, res) => {
 // Approve an ID verification
 app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, res) => {
   try {
+    console.log("✅ ADMIN id-verification APPROVE:", req.params.id);
     const id = req.params.id;
 
     const result = await db.collection("ID_Verifications").findOneAndUpdate(
@@ -2831,7 +2846,7 @@ app.get("/api/my-campaigns", async (req, res) => {
 
     // Support both field names just in case (Email vs email)
     const rows = await db.collection("Campaigns")
-      .find({ $or: [{ Email: email }, { email: email }] })
+      .find({ $or: [{ Email: email }, { email: email }], Status: { $ne: "Deleted" }, lifecycleStatus: { $ne: "Deleted" } })
       .toArray();
 
     return res.json({ success: true, campaigns: rows });
@@ -2840,6 +2855,52 @@ app.get("/api/my-campaigns", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+// ==================== USER: DELETE CAMPAIGN (SOFT DELETE) ====================
+app.delete("/api/campaigns/:id", requireLogin, async (req, res) => {
+  try {
+    const sessionEmail = req.session?.user?.email;
+    if (!sessionEmail) return res.status(401).json({ success: false, message: "Not logged in" });
+
+    const email = String(sessionEmail).trim().toLowerCase();
+    const emailExactI = new RegExp("^" + escapeRegex(email) + "$", "i");
+
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ success: false, message: "Missing id" });
+
+    const idVariants = [{ Id: id }, { id: id }];
+    if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
+
+    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+    if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
+
+    // Ownership check (supports Email/email/OwnerEmail/ownerEmail)
+    const ownerFields = [
+      campaign.Email,
+      campaign.email,
+      campaign.OwnerEmail,
+      campaign.ownerEmail
+    ].filter(Boolean).map(v => String(v).trim().toLowerCase());
+
+    const isOwner = ownerFields.includes(email);
+    const isAdmin = !!req.session?.admin || (req.session?.user && req.session.user.isAdmin);
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: "Not allowed" });
+    }
+
+    await db.collection("Campaigns").updateOne(
+      { $or: idVariants },
+      { $set: { Status: "Deleted", lifecycleStatus: "Deleted", deletedAt: new Date(), deletedBy: isAdmin ? "admin" : "owner" } }
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("DELETE /api/campaigns/:id error:", err);
+    return res.status(500).json({ success: false, message: "Delete failed" });
+  }
+});
+
 
 
 // ==================== UPDATE CAMPAIGN (owner only) ====================
