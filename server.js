@@ -242,7 +242,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "x-admin-key"],
   exposedHeaders: ["set-cookie"]
 };
 
@@ -1901,8 +1901,22 @@ app.get("/api/dashboard/donations-summary", async (req, res) => {
 
 // ==================== ADMIN ====================
 function requireAdmin(req, res, next) {
+  // Accept either:
+  // 1) an explicit admin session (set by /api/admin-login), OR
+  // 2) a shared ADMIN_KEY header (useful if cookies fail), OR
+  // 3) a normal user session where the logged-in email matches ADMIN_EMAIL.
   if (req.session && req.session.admin) return next();
-  res.status(403).json({ success: false, message: "Forbidden" });
+
+  const key = req.headers["x-admin-key"];
+  if (process.env.ADMIN_KEY && key && String(key) === String(process.env.ADMIN_KEY)) return next();
+
+  const sessionEmail = req.session?.user?.email || req.session?.user?.Email || req.session?.email || req.session?.Email;
+  const adminEmail = process.env.ADMIN_EMAIL;
+  if (adminEmail && sessionEmail && String(sessionEmail).trim().toLowerCase() === String(adminEmail).trim().toLowerCase()) {
+    return next();
+  }
+
+  return res.status(403).json({ success: false, message: "Forbidden" });
 }
 
 // Protect ALL /api/admin/* routes by default
