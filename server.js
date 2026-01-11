@@ -1309,10 +1309,7 @@ app.post("/api/signup", async (req, res) => {
 
     // ✅ Do NOT block on session store writes (prevents “stuck on fetch”)
     return res.json({ ok: true, loggedIn: true, user: req.session.user });
-return res.status(500).json({ error: "Session failed to save" });
-      }
-      return res.json({ ok: true, loggedIn: true, user: req.session.user });
-    });
+
 
   } catch (err) {
     console.error("Signup error:", err);
@@ -1350,10 +1347,7 @@ const user = await usersCollection.findOne({
 
     // ✅ Do NOT block on session store writes (prevents “stuck on fetch”)
     return res.json({ ok: true, loggedIn: true, user: req.session.user });
-return res.status(500).json({ error: "Session failed to save" });
-      }
-      return res.json({ ok: true, loggedIn: true, user: req.session.user });
-    });
+
 
   } catch (err) {
     console.error("Signin error:", err);
@@ -1921,8 +1915,8 @@ app.post("/api/admin-login", adminLimiter, (req, res) => {
     return res.status(500).json({ success: false, message: "Admin credentials not configured on server" });
   }
 
-const okUser = safeEqual(String(username).toLowerCase(), String(adminUser).toLowerCase());
-const okPass = safeEqual(password, adminPass);
+  const okUser = safeEqual(String(username).toLowerCase(), String(adminUser).toLowerCase());
+  const okPass = safeEqual(password, adminPass);
 
   if (!okUser || !okPass) {
     return res.status(401).json({ success: false, message: "Invalid admin username or password" });
@@ -1937,10 +1931,9 @@ const okPass = safeEqual(password, adminPass);
 
     // ✅ Do NOT block on session store writes (prevents “stuck on fetch”)
     return res.json({ success: true });
-return res.json({ success: true });
-    });
   });
 });
+
 
 app.get("/api/admin-check", requireAdmin, (req, res) => {
   return res.json({ admin: true });
