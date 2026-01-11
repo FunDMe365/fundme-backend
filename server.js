@@ -1155,6 +1155,31 @@ async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
   });
 }
 
+
+async function sendIdentityApprovedEmail({ toEmail }) {
+  console.log("📧 Identity approved email sending to:", toEmail);
+  const dashboardUrl = `${PUBLIC_BASE_URL}/dashboard.html`;
+  return sendMailjet({
+    toEmail,
+    subject: "Your identity verification was approved ✅",
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;">
+        <h2 style="margin:0 0 10px 0;">✅ Identity Approved</h2>
+        <p style="margin:0 0 10px 0;">
+          Your identity verification has been approved.
+        </p>
+        <p style="margin:0 0 10px 0;">
+          You can manage your campaign anytime from your dashboard:
+          <a href="${dashboardUrl}">${dashboardUrl}</a>
+        </p>
+        <p style="margin:14px 0 0 0;color:#777;font-size:12px;">
+          If you didn’t request this, you can ignore this email.
+        </p>
+      </div>
+    `
+  });
+}
+
 function escapeHtml(s) {
   return String(s || "")
     .replaceAll("&", "&amp;")
@@ -2416,7 +2441,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     }
 const result = await db.collection("Campaigns").findOneAndUpdate(
       { $or: idVariants },
-      { $set: Object.assign({ Status: finalStatus, ReviewedAt: new Date(), ReviewedBy: "admin" }, (finalStatus === "Active" ? { lifecycleStatus: "Active", PublishedAt: new Date(), activatedAt: new Date() } : {}), verificationStatusPatch) },
+      { $set: Object.assign({ Status: finalStatus, status: finalStatus, ReviewedAt: new Date(), ReviewedBy: "admin" }, (finalStatus === "Active" ? { lifecycleStatus: "Active", PublishedAt: new Date(), activatedAt: new Date() } : {}), verificationStatusPatch) },
       { returnDocument: "after" }
     );
 
@@ -2499,9 +2524,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       await db.collection("Campaigns").updateOne(
         { _id: c._id },
         {
-          $set: {
-            Status: "Active",
-            lifecycleStatus: "Active",
+          $set: { Status: "Active", status: "Active", lifecycleStatus: "Active",
             PublishedAt: c.PublishedAt || new Date(),
             activatedAt: new Date(),
             verificationStatus: "verified",
@@ -2541,9 +2564,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
             ]
           },
           {
-            $set: {
-              Status: "Active",
-              lifecycleStatus: "Active",
+            $set: { Status: "Active", status: "Active", lifecycleStatus: "Active",
               PublishedAt: new Date(),
               activatedAt: new Date(),
               verificationStatus: "verified",
@@ -2569,7 +2590,14 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
         .catch(e => console.error("campaign live email error:", e));
     }
 
-    return res.json({ success: true, data: normalizeIdv(idvResult.value) });
+    
+    // Email the user that their identity verification was approved
+    if (ownerEmail) {
+      sendIdentityApprovedEmail({ toEmail: ownerEmail })
+        .catch(e => console.error("identity approved email error:", e));
+    }
+
+return res.json({ success: true, data: normalizeIdv(idvResult.value) });
   } catch (err) {
     console.error("admin idv approve error:", err);
     return res.status(500).json({ success: false, message: "Approve failed" });
@@ -2912,18 +2940,25 @@ await sendSubmissionEmails({
 
 app.get("/api/public-campaigns", async (req, res) => {
   try {
+    // Public (live) campaigns:
+    // - Status/ status must be "Active"
+    // - lifecycleStatus must NOT be Expired/Deleted (or missing for legacy docs)
     const rows = await db.collection("Campaigns").find({
-  Status: "Active",
-  $or: [
-    { lifecycleStatus: { $ne: "Expired" } },
-    { lifecycleStatus: { $exists: false } } // for older campaigns before expiration existed
-  ]
-}).toArray();
+      $and: [
+        { $or: [{ Status: "Active" }, { status: "Active" }] },
+        {
+          $or: [
+            { lifecycleStatus: { $exists: false } }, // legacy
+            { lifecycleStatus: { $nin: ["Expired", "Deleted"] } }
+          ]
+        }
+      ]
+    }).toArray();
 
-    res.json({ success: true, campaigns: rows });
+    return res.json({ success: true, campaigns: rows });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    console.error("GET /api/public-campaigns error:", err);
+    return res.status(500).json({ success: false });
   }
 });
 
@@ -2936,6 +2971,7 @@ app.get("/api/my-campaigns", async (req, res) => {
     }
 
     const email = String(sessionEmail).trim().toLowerCase();
+    const emailExactI = new RegExp("^" + escapeRegex(email) + "$", "i");
 
     // Support both field names just in case (Email vs email)
     const rows = await db.collection("Campaigns")
