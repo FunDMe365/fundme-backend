@@ -2397,17 +2397,6 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
     const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
 
-    // Send ID-approved email right away (separate from campaign-live email)
-    if (ownerEmail) {
-      try {
-        const name = String(idv.name ?? idv.Name ?? "").trim();
-        await sendIdApprovedEmail({ toEmail: ownerEmail, name });
-        console.log("✅ ID approved email sent (attempted).");
-      } catch (e) {
-        console.error("❌ ID approved email error:", e);
-      }
-    }
-
     // Look up latest ID verification status (if any)
     let idvStatus = "";
     if (ownerEmailRegex) {
@@ -2588,6 +2577,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
 
     // 2) Promote any other Approved campaigns for this owner
     let promotedCount = 0;
+    let firstApprovedTitle = \"\";
     if (ownerEmail) {
       const filter = {
         $and: [
@@ -2605,6 +2595,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       const approvedCampaigns = await db.collection("Campaigns").find(filter).toArray();
 
       if (approvedCampaigns.length) {
+        firstApprovedTitle = String((approvedCampaigns[0].title ?? approvedCampaigns[0].Title ?? \"\")).trim();
         await db.collection("Campaigns").updateMany(
           filter,
           {
@@ -2637,17 +2628,38 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
         console.log("ℹ️ No Approved campaigns found to promote for:", ownerEmail);
       }
     }
+    // 3) Notify the user: ID approved + campaign live (when at least one campaign is Active)
+    if (ownerEmail) {
+      const safeName = String(idv.name ?? idv.Name ?? "").trim();
+      const title = String(
+        primaryCampaign?.title ??
+        primaryCampaign?.Title ??
+        firstApprovedTitle ||
+        "your campaign"
+      ).trim();
 
-    // If we promoted only primary campaign (not in Approved list), still send live email for it
-    if (primaryCampaign && ownerEmail && promotedCount === 0) {
-      const title = String(primaryCampaign.title ?? primaryCampaign.Title ?? "your campaign");
+      const wentLive = !!primaryCampaign || promotedCount > 0;
+
       try {
-        console.log("📧 Triggering: campaign LIVE email (primary only) ->", ownerEmail, "campaign:", title);
-        await sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title });
-        console.log("✅ campaign LIVE email sent (attempted).");
+        console.log("📧 Triggering: ID approved email ->", ownerEmail);
+        await sendIdApprovedEmail({ toEmail: ownerEmail, name: safeName });
+        console.log("✅ ID approved email sent (attempted).");
       } catch (e) {
-        console.error("❌ campaign LIVE email error:", e);
+        console.error("❌ ID approved email error:", e);
       }
+
+      if (wentLive) {
+        try {
+          console.log("📧 Triggering: campaign LIVE email ->", ownerEmail, "campaign:", title);
+          await sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title });
+          console.log("✅ campaign LIVE email sent (attempted).");
+        } catch (e) {
+          console.error("❌ campaign LIVE email error:", e);
+        }
+      } else {
+        console.log("ℹ️ Skipping campaign LIVE email because no campaign was promoted to Active.");
+      }
+    }
     }
 
     return res.json({ success: true, data: normalizeIdv(idvResult.value) });
