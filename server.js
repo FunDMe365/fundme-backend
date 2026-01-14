@@ -580,8 +580,7 @@ app.use(session({
   store: MongoStore.create({
     client: mongoose.connection.getClient(),   // <-- THIS FIXES THE AUTH ERROR
     dbName: "joyfund",
-    collectionName: "sessions",
-    touchAfter: 24 * 3600
+    collectionName: "sessions"
   }),
 
   cookie: {
@@ -1089,42 +1088,6 @@ async function sendSubmissionEmails({
 
 
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
-
-async function sendIdApprovedEmail({ toEmail, name }) {
-  try {
-    if (!toEmail) return;
-
-    const safeName = String(name || "").trim() || "there";
-    const dashboardUrl = `${FRONTEND_URL}/dashboard.html`;
-
-    await sendMailjet({
-      toEmail,
-      toName: safeName,
-      subject: "✅ Your ID has been approved",
-      html: `
-        <div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;line-height:1.5;">
-          <h2 style="margin:0 0 10px 0;">✅ ID Verified</h2>
-          <p style="margin:0 0 12px 0;">Hi ${safeName},</p>
-          <p style="margin:0 0 12px 0;">
-            Your identity verification has been approved. If you have an approved campaign, it can now be published once it is set to <strong>Active</strong>.
-          </p>
-          <p style="margin:0 0 14px 0;">
-            You can check your dashboard here:
-            <a href="${dashboardUrl}">${dashboardUrl}</a>
-          </p>
-          <p style="margin:0;color:#666;font-size:13px;">
-            If you didn’t request this, please reply to this email.
-          </p>
-        </div>
-      `
-    });
-
-    console.log("✅ ID approved email sent (attempted) to:", toEmail);
-  } catch (err) {
-    console.error("❌ ID approved email error:", err);
-  }
-}
-
 async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
   console.log("📧 Campaign approved (needs ID) email sending to:", toEmail);
   const base = PUBLIC_BASE_URL;
@@ -2151,25 +2114,20 @@ app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
 
 // Normalize campaign fields so the admin page always gets consistent keys
 function normalizeCampaign(doc) {
-  // Defensive: routes sometimes call this with `undefined` when a DB lookup fails
-  if (!doc || typeof doc !== "object") return null;
-
-  const id = doc._id ?? doc.id ?? null;
   return {
-    _id: id ? String(id) : null,
-    title: doc.Title ?? doc.title ?? "—",
-    description: doc.Description ?? doc.description ?? "",
-    imageUrl: doc.ImageUrl ?? doc.imageUrl ?? doc.image ?? "",
-    ownerEmail: doc.Email ?? doc.email ?? "—",
-    goal: doc.Goal ?? doc.goal ?? null,
-    raised: doc.Raised ?? doc.raised ?? 0,
-    category: doc.Category ?? doc.category ?? "—",
+    _id: String(doc._id),   // Mongo ID
+    Id: doc.Id || null,    // 👈 ADD THIS
+    title: doc.title ?? doc.Title ?? "Untitled",
+    email: doc.Email ?? doc.email ?? "—",
+    goal: doc.Goal ?? doc.goal ?? "—",
     status: doc.Status ?? doc.status ?? "—",
-    createdAt: doc.CreatedAt ?? doc.createdAt ?? doc.created_at ?? null
+    createdAt: doc.CreatedAt ?? doc.createdAt ?? null,
+    imageUrl: doc.ImageURL ?? doc.imageUrl ?? null,
+    category: doc.Category ?? doc.category ?? null
   };
 }
 
-
+// Normalize ID verification fields
 function normalizeIdv(doc) {
   return {
     _id: String(doc._id),
@@ -2377,7 +2335,7 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
 app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
   try {
     const rows = await db.collection("Campaigns").find({}).sort({ CreatedAt: -1 }).toArray();
-    res.json({ success: true, campaigns: rows.map(normalizeCampaign).filter(Boolean) });
+    res.json({ success: true, campaigns: rows.map(normalizeCampaign) });
   } catch (err) {
     console.error("admin campaigns error:", err);
     res.status(500).json({ success: false, message: "Failed to load campaigns" });
@@ -2407,7 +2365,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
 
     // Owner email normalization
     const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
-    let ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
+    const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
 
     // Look up latest ID verification status (if any)
     let idvStatus = "";
@@ -2464,16 +2422,6 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       { returnDocument: "after" }
     );
 
-    // Mongo driver can return { value: undefined } in some edge cases; fall back to findOne.
-    const updatedCampaign =
-      (result && updatedCampaign) ||
-      (await db.collection("Campaigns").findOne({ _id: new ObjectId(id) }));
-
-    if (!updatedCampaign) {
-      return res.status(404).json({ success: false, message: "Not found" });
-    }
-
-
     // EMAILS (await + log)
     const title = String(result?.value?.title ?? result?.value?.Title ?? "your campaign");
     const campaignIdForEmail = String(result?.value?._id ?? id);
@@ -2504,7 +2452,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       }
     }
 
-    return res.json({ success: true, campaign: normalizeCampaign(updatedCampaign) });
+    return res.json({ success: true, campaign: normalizeCampaign(result.value) });
   } catch (err) {
     console.error("admin campaign status error:", err);
     return res.status(500).json({ success: false, message: "Failed to update campaign" });
@@ -2551,8 +2499,25 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
 
     const idv = idvResult.value;
 
-    let ownerEmail = String(idv.Email ?? idv.email ?? "").trim().toLowerCase();
+    const ownerEmail = String(idv.Email ?? idv.email ?? "").trim().toLowerCase();
     const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
+
+    // ✅ Send "ID Approved" email to the user (this was missing)
+    if (ownerEmail) {
+      try {
+        const personName = String(idv.name ?? idv.Name ?? "").trim();
+        await sendIdApprovedEmail({ toEmail: ownerEmail, name: personName });
+        // Track it for debugging/auditing (safe even if field doesn't exist yet)
+        await db.collection("ID_Verifications").updateOne(
+          { _id: idv._id },
+          { $set: { idApprovedEmailSentAt: new Date() } }
+        );
+        console.log("✅ ID approved email sent (attempted).");
+      } catch (e) {
+        console.error("❌ ID approved email error:", e);
+      }
+    }
+
 
     // Specific campaign id from IDV (optional)
     const campaignIdRaw = String(
@@ -2594,20 +2559,6 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       } else {
         console.log("⚠️ Could not find primary campaign for campaignId on IDV:", campaignIdRaw);
       }
-    }
-
-    // If the IDV record didn't include an email, derive it from the campaign we just promoted
-    if (!ownerEmail && primaryCampaign) {
-      ownerEmail = String(primaryCampaign.Email ?? primaryCampaign.email ?? "").trim().toLowerCase();
-      ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
-      console.log("ℹ️ Derived ownerEmail from campaign:", ownerEmail);
-    }
-
-    // Send an explicit ID-approved email (even if no campaign was found to promote)
-    if (ownerEmail) {
-      const safeName = String(idv.name ?? idv.Name ?? "").trim();
-      console.log("📧 Triggering: ID approved email ->", ownerEmail);
-      await sendIdApprovedEmail({ toEmail: ownerEmail, name: safeName });
     }
 
     // 2) Promote any other Approved campaigns for this owner
@@ -2674,7 +2625,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       }
     }
 
-    return res.json({ success: true, data: normalizeIdv(idvResult.value), row: normalizeIdv(idvResult.value) });
+    return res.json({ success: true, data: normalizeIdv(idvResult.value) });
   } catch (err) {
     console.error("admin idv approve error:", err);
     return res.status(500).json({ success: false, message: "Approve failed" });
@@ -2911,17 +2862,14 @@ app.get("/api/campaigns", async (req, res) => {
 
     // Status field in your docs appears to be "Status" (capital S)
     // Accept a couple common "active" meanings to avoid mismatches.
-    const activeStatuses = ["Active", "Live", "LIVE", "Published"];
+    const activeStatuses = ["Active"];
 
     const filter = { Status: { $in: activeStatuses } };
 
     if (q) {
       filter.$or = [
         { title: { $regex: q, $options: "i" } },
-        { Title: { $regex: q, $options: "i" } },
-        { description: { $regex: q, $options: "i" } },
         { Description: { $regex: q, $options: "i" } },
-        { category: { $regex: q, $options: "i" } },
         { Category: { $regex: q, $options: "i" } }
       ];
     }
