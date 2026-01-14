@@ -2577,7 +2577,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
 
     // 2) Promote any other Approved campaigns for this owner
     let promotedCount = 0;
-    let firstApprovedTitle = \"\";
+    let firstApprovedTitle = "";
     if (ownerEmail) {
       const filter = {
         $and: [
@@ -2595,7 +2595,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       const approvedCampaigns = await db.collection("Campaigns").find(filter).toArray();
 
       if (approvedCampaigns.length) {
-        firstApprovedTitle = String((approvedCampaigns[0].title ?? approvedCampaigns[0].Title ?? \"\")).trim();
+        firstApprovedTitle = String((approvedCampaigns[0].title ?? approvedCampaigns[0].Title ?? "")).trim();
         await db.collection("Campaigns").updateMany(
           filter,
           {
