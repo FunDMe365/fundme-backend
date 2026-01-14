@@ -1141,6 +1141,35 @@ You can also access this from your dashboard: ${dashboardUrl}
   });
 }
 
+
+
+async function sendIdApprovedEmail({ toEmail, name }) {
+  console.log("📧 ID approved email sending to:", toEmail);
+  const dashboardUrl = `${PUBLIC_BASE_URL}/dashboard.html`;
+
+  return sendMailjet({
+    toEmail,
+    toName: name || "",
+    subject: "Your identity has been verified ✅",
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.5;color:#111;">
+        <h2 style="margin:0 0 10px 0;">Identity Verified ✅</h2>
+        <p style="margin:0 0 10px 0;">
+          Great news — your identity verification has been approved.
+        </p>
+        <p style="margin:0 0 12px 0;">
+          If you have any approved campaigns waiting to go live, we’ll publish them as soon as possible.
+        </p>
+        <p style="margin:0 0 14px 0;">
+          You can view your status and manage campaigns here:
+          <a href="${dashboardUrl}">${dashboardUrl}</a>
+        </p>
+        ${EMAIL_FOOTER}
+      </div>
+    `
+  });
+}
+
 async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
   console.log("📧 Campaign live email sending to:", toEmail);
   const campaignsUrl = `${PUBLIC_BASE_URL}/campaigns.html`;
@@ -2114,6 +2143,7 @@ app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
 
 // Normalize campaign fields so the admin page always gets consistent keys
 function normalizeCampaign(doc) {
+  if (!doc) return null;
   return {
     _id: String(doc._id),   // Mongo ID
     Id: doc.Id || null,    // 👈 ADD THIS
@@ -2422,9 +2452,19 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       { returnDocument: "after" }
     );
 
+    // Some driver/edge cases can return an empty result.value even though the update succeeded.
+    // Fail safe: re-fetch the campaign so we never crash the admin UI or skip later logic.
+    let updatedCampaign = result?.value || null;
+    if (!updatedCampaign) {
+      updatedCampaign = await db.collection("Campaigns").findOne({ _id: campaign._id });
+    }
+    if (!updatedCampaign) {
+      return res.status(404).json({ success: false, message: "Not found" });
+    }
+
     // EMAILS (await + log)
-    const title = String(result?.value?.title ?? result?.value?.Title ?? "your campaign");
-    const campaignIdForEmail = String(result?.value?._id ?? id);
+    const title = String(updatedCampaign.title ?? updatedCampaign.Title ?? "your campaign");
+    const campaignIdForEmail = String(updatedCampaign._id ?? id);
 
     if (ownerEmail) {
       if (status === "Approved" && String(idvStatus).toLowerCase() !== "approved") {
@@ -2452,7 +2492,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       }
     }
 
-    return res.json({ success: true, campaign: normalizeCampaign(result.value) });
+    return res.json({ success: true, campaign: normalizeCampaign(updatedCampaign) });
   } catch (err) {
     console.error("admin campaign status error:", err);
     return res.status(500).json({ success: false, message: "Failed to update campaign" });
@@ -2864,14 +2904,23 @@ app.get("/api/campaigns", async (req, res) => {
     // Accept a couple common "active" meanings to avoid mismatches.
     const activeStatuses = ["Active"];
 
-    const filter = { Status: { $in: activeStatuses } };
+    const statusOr = [
+      { Status: { $in: activeStatuses } },
+      { status: { $in: activeStatuses } },
+      { lifecycleStatus: { $in: activeStatuses } }
+    ];
+
+    // Always require "active" status, and optionally apply search terms.
+    const filter = { $and: [{ $or: statusOr }] };
 
     if (q) {
-      filter.$or = [
-        { title: { $regex: q, $options: "i" } },
-        { Description: { $regex: q, $options: "i" } },
-        { Category: { $regex: q, $options: "i" } }
-      ];
+      filter.$and.push({
+        $or: [
+          { title: { $regex: q, $options: "i" } },
+          { Description: { $regex: q, $options: "i" } },
+          { Category: { $regex: q, $options: "i" } }
+        ]
+      });
     }
 
     const campaigns = await col
