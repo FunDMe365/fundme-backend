@@ -2397,10 +2397,11 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
     const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
 
-    // Send explicit ID-approved email (separate from campaign-live email)
+    // Send ID-approved email right away (separate from campaign-live email)
     if (ownerEmail) {
       try {
-        await sendIdApprovedEmail({ toEmail: ownerEmail, name: idv.name ?? idv.Name ?? "" });
+        const name = String(idv.name ?? idv.Name ?? "").trim();
+        await sendIdApprovedEmail({ toEmail: ownerEmail, name });
         console.log("✅ ID approved email sent (attempted).");
       } catch (e) {
         console.error("❌ ID approved email error:", e);
