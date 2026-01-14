@@ -580,7 +580,8 @@ app.use(session({
   store: MongoStore.create({
     client: mongoose.connection.getClient(),   // <-- THIS FIXES THE AUTH ERROR
     dbName: "joyfund",
-    collectionName: "sessions"
+    collectionName: "sessions",
+    touchAfter: 24 * 3600
   }),
 
   cookie: {
@@ -2150,20 +2151,25 @@ app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
 
 // Normalize campaign fields so the admin page always gets consistent keys
 function normalizeCampaign(doc) {
+  // Defensive: routes sometimes call this with `undefined` when a DB lookup fails
+  if (!doc || typeof doc !== "object") return null;
+
+  const id = doc._id ?? doc.id ?? null;
   return {
-    _id: String(doc._id),   // Mongo ID
-    Id: doc.Id || null,    // 👈 ADD THIS
-    title: doc.title ?? doc.Title ?? "Untitled",
-    email: doc.Email ?? doc.email ?? "—",
-    goal: doc.Goal ?? doc.goal ?? "—",
+    _id: id ? String(id) : null,
+    title: doc.Title ?? doc.title ?? "—",
+    description: doc.Description ?? doc.description ?? "",
+    imageUrl: doc.ImageUrl ?? doc.imageUrl ?? doc.image ?? "",
+    ownerEmail: doc.Email ?? doc.email ?? "—",
+    goal: doc.Goal ?? doc.goal ?? null,
+    raised: doc.Raised ?? doc.raised ?? 0,
+    category: doc.Category ?? doc.category ?? "—",
     status: doc.Status ?? doc.status ?? "—",
-    createdAt: doc.CreatedAt ?? doc.createdAt ?? null,
-    imageUrl: doc.ImageURL ?? doc.imageUrl ?? null,
-    category: doc.Category ?? doc.category ?? null
+    createdAt: doc.CreatedAt ?? doc.createdAt ?? doc.created_at ?? null
   };
 }
 
-// Normalize ID verification fields
+
 function normalizeIdv(doc) {
   return {
     _id: String(doc._id),
@@ -2371,7 +2377,7 @@ app.get("/api/admin/stats", requireAdmin, async (req, res) => {
 app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
   try {
     const rows = await db.collection("Campaigns").find({}).sort({ CreatedAt: -1 }).toArray();
-    res.json({ success: true, campaigns: rows.map(normalizeCampaign) });
+    res.json({ success: true, campaigns: rows.map(normalizeCampaign).filter(Boolean) });
   } catch (err) {
     console.error("admin campaigns error:", err);
     res.status(500).json({ success: false, message: "Failed to load campaigns" });
@@ -2458,6 +2464,16 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       { returnDocument: "after" }
     );
 
+    // Mongo driver can return { value: undefined } in some edge cases; fall back to findOne.
+    const updatedCampaign =
+      (result && updatedCampaign) ||
+      (await db.collection("Campaigns").findOne({ _id: new ObjectId(id) }));
+
+    if (!updatedCampaign) {
+      return res.status(404).json({ success: false, message: "Not found" });
+    }
+
+
     // EMAILS (await + log)
     const title = String(result?.value?.title ?? result?.value?.Title ?? "your campaign");
     const campaignIdForEmail = String(result?.value?._id ?? id);
@@ -2488,7 +2504,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       }
     }
 
-    return res.json({ success: true, campaign: normalizeCampaign(result.value) });
+    return res.json({ success: true, campaign: normalizeCampaign(updatedCampaign) });
   } catch (err) {
     console.error("admin campaign status error:", err);
     return res.status(500).json({ success: false, message: "Failed to update campaign" });
@@ -2895,14 +2911,17 @@ app.get("/api/campaigns", async (req, res) => {
 
     // Status field in your docs appears to be "Status" (capital S)
     // Accept a couple common "active" meanings to avoid mismatches.
-    const activeStatuses = ["Active"];
+    const activeStatuses = ["Active", "Live", "LIVE", "Published"];
 
     const filter = { Status: { $in: activeStatuses } };
 
     if (q) {
       filter.$or = [
         { title: { $regex: q, $options: "i" } },
+        { Title: { $regex: q, $options: "i" } },
+        { description: { $regex: q, $options: "i" } },
         { Description: { $regex: q, $options: "i" } },
+        { category: { $regex: q, $options: "i" } },
         { Category: { $regex: q, $options: "i" } }
       ];
     }
