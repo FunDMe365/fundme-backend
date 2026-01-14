@@ -2658,7 +2658,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       }
     }
 
-    return res.json({ success: true, data: normalizeIdv(idvResult.value) });
+    return res.json({ success: true, data: normalizeIdv(idvResult.value), row: normalizeIdv(idvResult.value) });
   } catch (err) {
     console.error("admin idv approve error:", err);
     return res.status(500).json({ success: false, message: "Approve failed" });
