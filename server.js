@@ -2114,7 +2114,6 @@ app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
 
 // Normalize campaign fields so the admin page always gets consistent keys
 function normalizeCampaign(doc) {
-  if (!doc) return null;
   return {
     _id: String(doc._id),   // Mongo ID
     Id: doc.Id || null,    // 👈 ADD THIS
@@ -2453,20 +2452,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       }
     }
 
-        // Some Mongo driver configs don't return result.value reliably. Fall back to refetch.
-    let updatedDoc = result?.value;
-    if (!updatedDoc) {
-      const idRaw = String(id || "").trim();
-      const idVars = [{ _id: idRaw }, { Id: idRaw }, { id: idRaw }];
-      if (ObjectId.isValid(idRaw)) idVars.unshift({ _id: new ObjectId(idRaw) });
-      updatedDoc = await db.collection("Campaigns").findOne({ $or: idVars });
-    }
-
-    if (!updatedDoc) {
-      return res.status(404).json({ success: false, message: "Not found" });
-    }
-
-    return res.json({ success: true, campaign: normalizeCampaign(updatedDoc) });
+    return res.json({ success: true, campaign: normalizeCampaign(result.value) });
   } catch (err) {
     console.error("admin campaign status error:", err);
     return res.status(500).json({ success: false, message: "Failed to update campaign" });
@@ -2493,67 +2479,83 @@ app.get("/api/admin/id-verifications", requireAdmin, async (req, res) => {
 });
 
 // ==================== ADMIN: ID VERIFICATIONS ====================
-app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, res) => {
+// ✅ Approve an ID verification (shared handler for PATCH + POST to avoid method mismatch 404s)
+const approveIdVerificationHandler = async (req, res) => {
   try {
     console.log("✅ ADMIN id-verification APPROVE:", req.params.id);
 
     const idRaw = String(req.params.id || "").trim();
-    const idVars = [{ _id: idRaw }];
-    if (ObjectId.isValid(idRaw)) idVars.unshift({ _id: new ObjectId(idRaw) });
 
-    const idvResult = await db.collection("ID_Verifications").findOneAndUpdate(
-      { $or: idVars },
-      { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
-      { returnDocument: "after" }
-    );
+    // Match by Mongo _id (ObjectId or string) OR legacy Id/id fields
+    const idVars = [
+      { _id: idRaw },
+      { Id: idRaw },
+      { id: idRaw }
+    ];
+    if (ObjectId.isValid(idRaw)) {
+      idVars.unshift({ _id: new ObjectId(idRaw) });
+    }
 
-    if (!idvResult?.value) {
+    // 1) Load the ID verification first (reliable across Mongo driver versions)
+    const existing = await db.collection("ID_Verifications").findOne({ $or: idVars });
+    if (!existing) {
       return res.status(404).json({ success: false, message: "ID verification not found" });
     }
 
-    const idv = idvResult.value;
+    // 2) Update status to Approved
+    await db.collection("ID_Verifications").updateOne(
+      { _id: existing._id },
+      { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } }
+    );
 
-    const ownerEmail = String(idv.Email ?? idv.email ?? "").trim().toLowerCase();
+    // 3) Re-fetch the updated doc (so we always return the latest)
+    const idv = await db.collection("ID_Verifications").findOne({ _id: existing._id });
+
+    const ownerEmail = String(idv?.Email ?? idv?.email ?? "").trim().toLowerCase();
     const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
 
-    // ✅ Send "ID Approved" email to the user (this was missing)
+    // Specific campaign id from IDV (optional)
+    const campaignIdRaw = String(
+      idv?.campaignId ?? idv?.CampaignId ?? idv?.campaignID ?? idv?.campaign_id ?? ""
+    ).trim();
+
+    // ✅ Send "ID Approved" email to the user
     if (ownerEmail) {
       try {
-        const personName = String(idv.name ?? idv.Name ?? "").trim();
+        const personName = String(idv?.name ?? idv?.Name ?? "").trim();
         await sendIdApprovedEmail({ toEmail: ownerEmail, name: personName });
         // Track it for debugging/auditing (safe even if field doesn't exist yet)
         await db.collection("ID_Verifications").updateOne(
-          { _id: idv._id },
-          { $set: { idApprovedEmailSentAt: new Date() } }
+          { _id: existing._id },
+          { $set: { approvalEmailSentAt: new Date() } }
         );
         console.log("✅ ID approved email sent (attempted).");
       } catch (e) {
         console.error("❌ ID approved email error:", e);
       }
+    } else {
+      console.log("⚠️ ID approved email skipped (missing ownerEmail on IDV).");
     }
 
-
-    // Specific campaign id from IDV (optional)
-    const campaignIdRaw = String(
-      idv.campaignId ?? idv.CampaignId ?? idv.campaignID ?? idv.campaign_id ?? ""
-    ).trim();
-
+    // Helper: promote a campaign doc to Active + verified (safe even if it's already active)
     async function promoteCampaignByAnyId(campaignId) {
       if (!campaignId) return null;
 
-      const idVariants = [{ _id: campaignId }, { Id: campaignId }, { id: campaignId }];
-      if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
+      const cid = String(campaignId).trim();
+      const variants = [{ _id: cid }, { Id: cid }, { id: cid }];
+      if (ObjectId.isValid(cid)) variants.unshift({ _id: new ObjectId(cid) });
 
-      const c = await db.collection("Campaigns").findOne({ $or: idVariants });
-      if (!c) return null;
+      const found = await db.collection("Campaigns").findOne({ $or: variants });
+      if (!found) return null;
 
       await db.collection("Campaigns").updateOne(
-        { _id: c._id },
+        { _id: found._id },
         {
           $set: {
             Status: "Active",
+            status: "Active",
             lifecycleStatus: "Active",
-            PublishedAt: c.PublishedAt || new Date(),
+            PublishedAt: found.PublishedAt || new Date(),
             activatedAt: new Date(),
             verificationStatus: "verified",
             verificationUpdatedAt: new Date()
@@ -2561,7 +2563,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
         }
       );
 
-      return c;
+      return found;
     }
 
     // 1) Promote the campaign tied to this IDV (if provided)
@@ -2575,7 +2577,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       }
     }
 
-    // 2) Promote any other Approved campaigns for this owner
+    // 2) Promote any other Approved campaigns for this owner (covers cases where campaignId wasn't sent)
     let promotedCount = 0;
     if (ownerEmail) {
       const filter = {
@@ -2591,28 +2593,27 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
         ]
       };
 
-      const approvedCampaigns = await db.collection("Campaigns").find(filter).toArray();
+      const approved = await db.collection("Campaigns").find(filter).toArray();
 
-      if (approvedCampaigns.length) {
-        await db.collection("Campaigns").updateMany(
-          filter,
-          {
-            $set: {
-              Status: "Active",
-              lifecycleStatus: "Active",
-              PublishedAt: new Date(),
-              activatedAt: new Date(),
-              verificationStatus: "verified",
-              verificationUpdatedAt: new Date()
+      if (approved.length) {
+        for (const c of approved) {
+          await db.collection("Campaigns").updateOne(
+            { _id: c._id },
+            {
+              $set: {
+                Status: "Active",
+                status: "Active",
+                lifecycleStatus: "Active",
+                PublishedAt: c.PublishedAt || new Date(),
+                activatedAt: new Date(),
+                verificationStatus: "verified",
+                verificationUpdatedAt: new Date()
+              }
             }
-          }
-        );
+          );
 
-        promotedCount = approvedCampaigns.length;
-        console.log("✅ Promoted approved campaigns to Active:", promotedCount);
+          promotedCount += 1;
 
-        // Email once per promoted campaign (await so we see logs)
-        for (const c of approvedCampaigns) {
           const title = String(c.title ?? c.Title ?? "your campaign");
           try {
             console.log("📧 Triggering: campaign LIVE email ->", ownerEmail, "campaign:", title);
@@ -2639,12 +2640,15 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       }
     }
 
-    return res.json({ success: true, data: normalizeIdv(idvResult.value) });
+    return res.json({ success: true, data: normalizeIdv(idv) });
   } catch (err) {
     console.error("admin idv approve error:", err);
     return res.status(500).json({ success: false, message: "Approve failed" });
   }
-});
+};
+
+app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, approveIdVerificationHandler);
+app.post("/api/admin/id-verifications/:id/approve", requireAdmin, approveIdVerificationHandler);
 
 // Deny an ID verification
 app.patch("/api/admin/id-verifications/:id/deny", requireAdmin, async (req, res) => {
@@ -2982,29 +2986,12 @@ await sendSubmissionEmails({
 
 app.get("/api/public-campaigns", async (req, res) => {
   try {
-    // Be tolerant of legacy field naming (Status/status/lifecycleStatus) and verification flags.
     const rows = await db.collection("Campaigns").find({
-      $and: [
-        {
-          $or: [
-            { Status: { $regex: /^Active$/i } },
-            { status: { $regex: /^Active$/i } },
-            { lifecycleStatus: { $regex: /^Active$/i } }
-          ]
-        },
-        {
-          $or: [
-            { verificationStatus: { $regex: /^verified$/i } },
-            { verificationStatus: { $exists: false } },
-            { verificationStatus: null }
-          ]
-        },
-        {
-          $or: [
-            { lifecycleStatus: { $ne: "Expired" } },
-            { lifecycleStatus: { $exists: false } }
-          ]
-        }
+      Status: "Active",
+      verificationStatus: { $in: ["verified", "Verified"] },
+      $or: [
+        { lifecycleStatus: { $ne: "Expired" } },
+        { lifecycleStatus: { $exists: false } }
       ]
     }).toArray();
 
