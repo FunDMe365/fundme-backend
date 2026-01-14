@@ -1088,32 +1088,7 @@ async function sendSubmissionEmails({
 
 
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
-async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }
-
-async function sendIdApprovedEmail({ toEmail }) {
-  console.log("📧 ID approved email sending to:", toEmail);
-  const dashboardUrl = `${PUBLIC_BASE_URL}/dashboard.html`;
-  return sendMailjet({
-    toEmail,
-    subject: "✅ Your ID was approved — you’re verified!",
-    html: `
-      <div style="font-family:Arial,sans-serif;line-height:1.5;">
-        <h2 style="margin:0 0 10px 0;">✅ ID Approved</h2>
-        <p style="margin:0 0 10px 0;">
-          Good news — your identity verification has been approved. You can now have campaigns go live once they are approved.
-        </p>
-        <p style="margin:0 0 10px 0;">
-          Open your dashboard here:
-          <a href="${dashboardUrl}">${dashboardUrl}</a>
-        </p>
-        <p style="margin:14px 0 0 0;color:#777;font-size:12px;">
-          If you didn’t request this, you can ignore this email.
-        </p>
-      </div>
-    `
-  });
-}
-) {
+async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
   console.log("📧 Campaign approved (needs ID) email sending to:", toEmail);
   const base = PUBLIC_BASE_URL;
   const safeCampaignId = String(campaignId || "").trim();
@@ -2478,9 +2453,21 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       }
     }
 
-    const updatedDoc = result?.value || (await db.collection("Campaigns").findOne({ _id: campaign._id }));
+        // Some Mongo driver configs don't return result.value reliably. Fall back to refetch.
+    let updatedDoc = result?.value;
+    if (!updatedDoc) {
+      const idRaw = String(id || "").trim();
+      const idVars = [{ _id: idRaw }, { Id: idRaw }, { id: idRaw }];
+      if (ObjectId.isValid(idRaw)) idVars.unshift({ _id: new ObjectId(idRaw) });
+      updatedDoc = await db.collection("Campaigns").findOne({ $or: idVars });
+    }
+
+    if (!updatedDoc) {
+      return res.status(404).json({ success: false, message: "Not found" });
+    }
+
     return res.json({ success: true, campaign: normalizeCampaign(updatedDoc) });
-} catch (err) {
+  } catch (err) {
     console.error("admin campaign status error:", err);
     return res.status(500).json({ success: false, message: "Failed to update campaign" });
   }
@@ -2995,12 +2982,29 @@ await sendSubmissionEmails({
 
 app.get("/api/public-campaigns", async (req, res) => {
   try {
+    // Be tolerant of legacy field naming (Status/status/lifecycleStatus) and verification flags.
     const rows = await db.collection("Campaigns").find({
-      Status: "Active",
-      verificationStatus: { $in: ["verified", "Verified"] },
-      $or: [
-        { lifecycleStatus: { $ne: "Expired" } },
-        { lifecycleStatus: { $exists: false } }
+      $and: [
+        {
+          $or: [
+            { Status: { $regex: /^Active$/i } },
+            { status: { $regex: /^Active$/i } },
+            { lifecycleStatus: { $regex: /^Active$/i } }
+          ]
+        },
+        {
+          $or: [
+            { verificationStatus: { $regex: /^verified$/i } },
+            { verificationStatus: { $exists: false } },
+            { verificationStatus: null }
+          ]
+        },
+        {
+          $or: [
+            { lifecycleStatus: { $ne: "Expired" } },
+            { lifecycleStatus: { $exists: false } }
+          ]
+        }
       ]
     }).toArray();
 
