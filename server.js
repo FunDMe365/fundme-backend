@@ -1155,33 +1155,6 @@ async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
   });
 }
 
-
-async function sendIdApprovedPromotionEmail({ toEmail, name }) {
-  console.log("📧 ID approved email sending to:", toEmail);
-  const campaignsUrl = `${PUBLIC_BASE_URL}/campaigns.html`;
-  const dashboardUrl = `${PUBLIC_BASE_URL}/dashboard.html`;
-  const safeName = escapeHtml(name || "");
-  return sendMailjet({
-    toEmail,
-    toName: name || "",
-    subject: "Your ID is approved ✅ You can start promoting",
-    html: `
-      <div style="font-family:Arial,sans-serif;line-height:1.5;">
-        <h2 style="margin:0 0 10px 0;">✅ ID Verification Approved</h2>
-        <p style="margin:0 0 10px 0;">${safeName ? `Hi ${safeName},` : "Hi,"}</p>
-        <p style="margin:0 0 10px 0;">
-          Your identity verification was approved. If you have an approved campaign, it can now appear publicly and you can start promoting it.
-        </p>
-        <p style="margin:0 0 10px 0;">
-          View campaigns: <a href="${campaignsUrl}">${campaignsUrl}</a><br/>
-          Your dashboard: <a href="${dashboardUrl}">${dashboardUrl}</a>
-        </p>
-        <p style="margin:14px 0 0 0;">— JoyFund</p>
-      </div>
-    `
-  });
-}
-
 function escapeHtml(s) {
   return String(s || "")
     .replaceAll("&", "&amp;")
@@ -2373,43 +2346,48 @@ app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
 app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
   try {
     console.log("✅ ADMIN campaign status PATCH:", req.params.id, req.body);
-    const id = String(req.params.id || "");
-    const { status } = req.body;
 
-    // ✅ "Approved" means: reviewed & approved, but NOT necessarily live.
-    // ✅ "Active" means: live/public (identity verified).
+    const id = String(req.params.id || "").trim();
+    const status = String(req.body?.status || "").trim();
+
+    // "Approved" = reviewed/accepted but not public. "Active" = public (ID verified).
     const allowed = ["Pending", "Approved", "Denied", "Closed", "Active"];
     if (!allowed.includes(status)) {
       return res.status(400).json({ success: false, message: "Invalid status" });
     }
 
-    // ✅ Match ObjectId _id, string _id, or legacy Id field
+    // Find campaign (supports ObjectId _id, string _id, legacy Id/id)
     const idVariants = [{ _id: id }, { Id: id }, { id: id }];
     if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
 
-    // Pull campaign first so we can look up owner email + title
     const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
     if (!campaign) return res.status(404).json({ success: false, message: "Not found" });
 
+    // Owner email normalization
     const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
-    const emailExactI = ownerEmail
-      ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i")
-      : null;
+    const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
 
-    // Find latest ID verification for owner (if any)
+    // Look up latest ID verification status (if any)
     let idvStatus = "";
-    if (emailExactI) {
-      const idv = await db.collection("ID_Verifications")
-        .find({ $or: [{ Email: emailExactI }, { email: emailExactI }] })
-        .sort({ createdAt: -1, CreatedAt: -1, _id: -1 })
+    if (ownerEmailRegex) {
+      const idvRows = await db.collection("ID_Verifications")
+        .find({
+          $or: [
+            { email: ownerEmail },
+            { Email: ownerEmail },
+            { email: ownerEmailRegex },
+            { Email: ownerEmailRegex }
+          ]
+        })
+        .sort({ ReviewedAt: -1, reviewedAt: -1, createdAt: -1, CreatedAt: -1, _id: -1 })
         .limit(1)
         .toArray();
-      idvStatus = String(idv?.[0]?.Status ?? idv?.[0]?.status ?? "").trim();
+
+      const latest = idvRows?.[0];
+      idvStatus = String(latest?.Status ?? latest?.status ?? "").trim();
     }
 
-    let finalStatus = status;
-
-    // If admin tries to set Active but identity isn't approved, block it.
+    // Prevent setting Active unless ID is approved
     if (status === "Active" && String(idvStatus).toLowerCase() !== "approved") {
       return res.status(409).json({
         success: false,
@@ -2417,68 +2395,60 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       });
     }
 
-    // If admin sets Approved:
-    // - If identity is already approved -> auto-promote to Active and email "live"
-    // - If identity not approved -> keep as Approved and email "verify identity"
-    if (status === "Approved") {
-      if (String(idvStatus).toLowerCase() === "approved") {
-        finalStatus = "Active";
-      } else {
-        finalStatus = "Approved";
-      }
-    }
+    // Update campaign fields
+    let verificationStatus = campaign.verificationStatus ?? "";
+    if (status === "Approved") verificationStatus = "needs_verification";
+    if (status === "Denied") verificationStatus = "denied";
+    if (status === "Active") verificationStatus = "verified";
 
-    
-    // Track per-campaign verification requirement for the user dashboard
-    // - Approved but not yet identity-approved => needs_verification
-    // - Active => verified
-    // - Otherwise leave as-is
-    const campaignIdForEmail = String(campaign._id || campaign.Id || campaign.id || id).trim();
+    const update = {
+      Status: status,
+      ReviewedAt: new Date(),
+      ReviewedBy: "admin",
+      verificationStatus,
+      verificationUpdatedAt: new Date()
+    };
 
-    let verificationStatusPatch = {};
-    if (finalStatus === "Active") {
-      verificationStatusPatch = { verificationStatus: "verified", verificationUpdatedAt: new Date() };
-    } else if (status === "Approved" && finalStatus === "Approved" && String(idvStatus).toLowerCase() !== "approved") {
-      verificationStatusPatch = { verificationStatus: "needs_verification", verificationUpdatedAt: new Date() };
+    // Keep lifecycleStatus consistent
+    if (status === "Active") {
+      update.lifecycleStatus = "Active";
+      if (!campaign.PublishedAt) update.PublishedAt = new Date();
+      update.activatedAt = new Date();
     }
-const setPatch = Object.assign(
-      {
-        Status: finalStatus,
-        ReviewedAt: new Date(),
-        ReviewedBy: String(req.session?.user?.email || "admin")
-      },
-      verificationStatusPatch,
-      finalStatus === "Active"
-        ? {
-            PublishedAt: new Date(),
-            activatedAt: new Date(),
-            lifecycleStatus: "Active"
-          }
-        : {}
-    );
 
     const result = await db.collection("Campaigns").findOneAndUpdate(
-      { $or: idVariants },
-      { $set: setPatch },
+      { _id: campaign._id },
+      { $set: update },
       { returnDocument: "after" }
     );
 
-    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
+    // EMAILS (await + log)
+    const title = String(result?.value?.title ?? result?.value?.Title ?? "your campaign");
+    const campaignIdForEmail = String(result?.value?._id ?? id);
 
-    // Emails (log + await; email failures won't fail the request)
     if (ownerEmail) {
-      const title = campaign.title ?? campaign.Title ?? "your campaign";
-      try {
-        if (status === "Approved" && finalStatus === "Approved") {
-          console.log("📧 Sending campaign-approved/ID-required email to:", ownerEmail);
-          await sendCampaignApprovalIdentityEmail({ toEmail: ownerEmail, campaignTitle: title, campaignId: campaignIdForEmail });
+      if (status === "Approved" && String(idvStatus).toLowerCase() !== "approved") {
+        console.log("📧 Triggering: campaign approved -> needs ID email ->", ownerEmail);
+        try {
+          await sendCampaignApprovalIdentityEmail({
+            toEmail: ownerEmail,
+            campaignTitle: title,
+            campaignId: campaignIdForEmail
+          });
+          console.log("✅ campaign approved -> needs ID email sent (attempted).");
+        } catch (e) {
+          console.error("❌ campaign approved -> needs ID email error:", e);
         }
-        if (finalStatus === "Active") {
-          console.log("📧 Sending campaign-live email to:", ownerEmail);
+      }
+
+      if (status === "Active") {
+        console.log("📧 Triggering: campaign LIVE email ->", ownerEmail);
+        try {
           await sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title });
+          console.log("✅ campaign LIVE email sent (attempted).");
+        } catch (e) {
+          console.error("❌ campaign LIVE email error:", e);
         }
-      } catch (e) {
-        console.error("approval email error:", e);
       }
     }
 
@@ -2513,8 +2483,12 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
   try {
     console.log("✅ ADMIN id-verification APPROVE:", req.params.id);
 
+    const idRaw = String(req.params.id || "").trim();
+    const idVars = [{ _id: idRaw }];
+    if (ObjectId.isValid(idRaw)) idVars.unshift({ _id: new ObjectId(idRaw) });
+
     const idvResult = await db.collection("ID_Verifications").findOneAndUpdate(
-      { $or: (function(){ const _idRaw = String(req.params.id||"").trim(); const vars = [{ _id: _idRaw }, { Id: _idRaw }, { id: _idRaw }]; if (ObjectId.isValid(_idRaw)) vars.unshift({ _id: new ObjectId(_idRaw) }); return vars; })() },
+      { $or: idVars },
       { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } },
       { returnDocument: "after" }
     );
@@ -2525,15 +2499,14 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
 
     const idv = idvResult.value;
 
-    // Identify owner email
     const ownerEmail = String(idv.Email ?? idv.email ?? "").trim().toLowerCase();
+    const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
 
-    // Try to identify a specific campaign ID on the IDV doc (optional)
+    // Specific campaign id from IDV (optional)
     const campaignIdRaw = String(
       idv.campaignId ?? idv.CampaignId ?? idv.campaignID ?? idv.campaign_id ?? ""
     ).trim();
 
-    // Helper: promote a campaign to Active by _id / Id / id
     async function promoteCampaignByAnyId(campaignId) {
       if (!campaignId) return null;
 
@@ -2557,36 +2530,41 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
         }
       );
 
-      return { ...c, Status: "Active", lifecycleStatus: "Active" };
+      return c;
     }
 
-    // 1) Promote the campaign tied to this ID verification (if we have an ID)
+    // 1) Promote the campaign tied to this IDV (if provided)
     let primaryCampaign = null;
     if (campaignIdRaw) {
       primaryCampaign = await promoteCampaignByAnyId(campaignIdRaw);
+      if (primaryCampaign) {
+        console.log("✅ Promoted primary campaign to Active:", String(primaryCampaign._id));
+      } else {
+        console.log("⚠️ Could not find primary campaign for campaignId on IDV:", campaignIdRaw);
+      }
     }
 
-    // 2) Promote any other approved campaigns for this owner email
+    // 2) Promote any other Approved campaigns for this owner
     let promotedCount = 0;
     if (ownerEmail) {
-      const emailExactI = new RegExp("^" + escapeRegex(ownerEmail) + "$", "i");
-
-      // Promote any approved campaigns for this user
-      const approvedCampaigns = await db.collection("Campaigns").find({
+      const filter = {
         $and: [
-          { $or: [{ Email: emailExactI }, { email: emailExactI }] },
+          {
+            $or: [
+              { Email: ownerEmail },
+              { email: ownerEmail },
+              ...(ownerEmailRegex ? [{ Email: ownerEmailRegex }, { email: ownerEmailRegex }] : [])
+            ]
+          },
           { $or: [{ Status: "Approved" }, { status: "Approved" }] }
         ]
-      }).toArray();
+      };
+
+      const approvedCampaigns = await db.collection("Campaigns").find(filter).toArray();
 
       if (approvedCampaigns.length) {
         await db.collection("Campaigns").updateMany(
-          {
-            $and: [
-              { $or: [{ Email: emailExactI }, { email: emailExactI }] },
-              { $or: [{ Status: "Approved" }, { status: "Approved" }] }
-            ]
-          },
+          filter,
           {
             $set: {
               Status: "Active",
@@ -2598,31 +2576,36 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
             }
           }
         );
+
         promotedCount = approvedCampaigns.length;
+        console.log("✅ Promoted approved campaigns to Active:", promotedCount);
 
-        // Send "live" email once per approved campaign (non-blocking)
+        // Email once per promoted campaign (await so we see logs)
         for (const c of approvedCampaigns) {
-          const title = c.title ?? c.Title ?? "your campaign";
-          sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
-            .catch(e => console.error("campaign live email error:", e));
+          const title = String(c.title ?? c.Title ?? "your campaign");
+          try {
+            console.log("📧 Triggering: campaign LIVE email ->", ownerEmail, "campaign:", title);
+            await sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title });
+            console.log("✅ campaign LIVE email sent (attempted).");
+          } catch (e) {
+            console.error("❌ campaign LIVE email error:", e);
+          }
         }
+      } else {
+        console.log("ℹ️ No Approved campaigns found to promote for:", ownerEmail);
       }
     }
 
-    // Send a dedicated "ID approved" email (separate from campaign-live)
-    if (ownerEmail) {
-      try {
-        await sendIdApprovedPromotionEmail({ toEmail: ownerEmail, name: String(idv.Name ?? idv.name ?? "") });
-      } catch (e) {
-        console.error("id-approved email error:", e);
-      }
-    }
-
-// If we promoted a primary campaign but it wasn't in the approved list, still send live email for it
+    // If we promoted only primary campaign (not in Approved list), still send live email for it
     if (primaryCampaign && ownerEmail && promotedCount === 0) {
-      const title = primaryCampaign.title ?? primaryCampaign.Title ?? "your campaign";
-      sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title })
-        .catch(e => console.error("campaign live email error:", e));
+      const title = String(primaryCampaign.title ?? primaryCampaign.Title ?? "your campaign");
+      try {
+        console.log("📧 Triggering: campaign LIVE email (primary only) ->", ownerEmail, "campaign:", title);
+        await sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title });
+        console.log("✅ campaign LIVE email sent (attempted).");
+      } catch (e) {
+        console.error("❌ campaign LIVE email error:", e);
+      }
     }
 
     return res.json({ success: true, data: normalizeIdv(idvResult.value) });
@@ -2969,12 +2952,13 @@ await sendSubmissionEmails({
 app.get("/api/public-campaigns", async (req, res) => {
   try {
     const rows = await db.collection("Campaigns").find({
-  Status: "Active",
-  $or: [
-    { lifecycleStatus: { $ne: "Expired" } },
-    { lifecycleStatus: { $exists: false } } // for older campaigns before expiration existed
-  ]
-}).toArray();
+      Status: "Active",
+      verificationStatus: { $in: ["verified", "Verified"] },
+      $or: [
+        { lifecycleStatus: { $ne: "Expired" } },
+        { lifecycleStatus: { $exists: false } }
+      ]
+    }).toArray();
 
     res.json({ success: true, campaigns: rows });
   } catch (err) {
@@ -3319,8 +3303,12 @@ app.post("/api/logout", (req, res) => {
 });
 
 // ==================== ID VERIFICATION (CAMPAIGN-BOUND) ====================
-app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
+app.post("/api/verify-id", upload.any(), async (req, res) => {
   try {
+    // Accept "idFile" or any single file field
+    if (!req.file && Array.isArray(req.files) && req.files.length) {
+      req.file = req.files[0];
+    }
     // must be logged in
     const user = req.session?.user;
     if (!user?.email) {
@@ -3335,32 +3323,20 @@ app.post("/api/verify-id", upload.single("idFile"), async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing ID file" });
     }
 
-    // campaignId is recommended (identityverification.html?campaignId=...)
-// but if it's missing, we'll fall back to the latest campaign for this user that needs verification.
-const campaignIdRaw = String(req.body.campaignId || "").trim();
+    // must include campaignId (from identityverification.html?campaignId=...)
+    const campaignIdRaw = String(req.body.campaignId || "").trim();
+    if (!campaignIdRaw) {
+      return res.status(400).json({ success: false, message: "Missing campaignId" });
+    }
 
-let campaign = null;
+    // Find campaign by _id OR legacy Id/id fields
+    const idVariants = [{ Id: campaignIdRaw }, { id: campaignIdRaw }];
+    if (ObjectId.isValid(campaignIdRaw)) idVariants.unshift({ _id: new ObjectId(campaignIdRaw) });
 
-if (campaignIdRaw) {
-  // Find campaign by _id OR legacy Id/id fields
-  const idVariants = [{ Id: campaignIdRaw }, { id: campaignIdRaw }];
-  if (ObjectId.isValid(campaignIdRaw)) idVariants.unshift({ _id: new ObjectId(campaignIdRaw) });
-  campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
-} else {
-  // Fallback: latest campaign by this user that is approved but still needs verification
-  campaign = await db.collection("Campaigns").findOne(
-    {
-      $or: [{ Email: email }, { email: email }],
-      Status: { $in: ["Approved", "approved"] },
-      verificationStatus: { $in: ["needs_verification", "Needs_Verification", "needs verification"] }
-    },
-    { sort: { createdAt: -1, CreatedAt: -1, _id: -1 } }
-  );
-}
-
-if (!campaign) {
-  return res.status(404).json({ success: false, message: "Campaign not found" });
-}
+    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
 
     // Ownership check (campaign must belong to logged-in user)
     const ownerEmail = String(campaign.email || campaign.Email || "").trim().toLowerCase();
