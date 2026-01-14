@@ -1088,6 +1088,42 @@ async function sendSubmissionEmails({
 
 
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
+
+async function sendIdApprovedEmail({ toEmail, name }) {
+  try {
+    if (!toEmail) return;
+
+    const safeName = String(name || "").trim() || "there";
+    const dashboardUrl = `${FRONTEND_URL}/dashboard.html`;
+
+    await sendMailjet({
+      toEmail,
+      toName: safeName,
+      subject: "✅ Your ID has been approved",
+      html: `
+        <div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;line-height:1.5;">
+          <h2 style="margin:0 0 10px 0;">✅ ID Verified</h2>
+          <p style="margin:0 0 12px 0;">Hi ${safeName},</p>
+          <p style="margin:0 0 12px 0;">
+            Your identity verification has been approved. If you have an approved campaign, it can now be published once it is set to <strong>Active</strong>.
+          </p>
+          <p style="margin:0 0 14px 0;">
+            You can check your dashboard here:
+            <a href="${dashboardUrl}">${dashboardUrl}</a>
+          </p>
+          <p style="margin:0;color:#666;font-size:13px;">
+            If you didn’t request this, please reply to this email.
+          </p>
+        </div>
+      `
+    });
+
+    console.log("✅ ID approved email sent (attempted) to:", toEmail);
+  } catch (err) {
+    console.error("❌ ID approved email error:", err);
+  }
+}
+
 async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
   console.log("📧 Campaign approved (needs ID) email sending to:", toEmail);
   const base = PUBLIC_BASE_URL;
@@ -1135,35 +1171,6 @@ You can also access this from your dashboard: ${dashboardUrl}
         </p>
         <p style="margin:14px 0 0 0;color:#777;font-size:12px;">
           If you didn’t request this, you can ignore this email.
-        </p>
-      </div>
-    `
-  });
-}
-
-async function sendIdApprovedEmail({ toEmail, name }) {
-  console.log("📧 ID approved email sending to:", toEmail);
-  const dashboardUrl = `${PUBLIC_BASE_URL}/dashboard.html`;
-  return sendMailjet({
-    toEmail,
-    toName: name || "",
-    subject: "Your ID was approved ✅",
-    html: `
-      <div style="font-family:Arial,sans-serif;line-height:1.5;">
-        <h2 style="margin:0 0 10px 0;">✅ Identity verified</h2>
-        <p style="margin:0 0 10px 0;">Hi ${escapeHtml(name || "")},</p>
-        <p style="margin:0 0 10px 0;">
-          Your identity verification has been <b>approved</b>.
-        </p>
-        <p style="margin:0 0 10px 0;">
-          If you already have an approved campaign, it will move forward in the review process and/or go live shortly.
-        </p>
-        <p style="margin:0 0 12px 0;">
-          You can always check your campaign status from your dashboard:
-          <a href="${dashboardUrl}">${dashboardUrl}</a>
-        </p>
-        <p style="margin:14px 0 0 0;color:#777;font-size:12px;">
-          If you didn’t request this, please contact support.
         </p>
       </div>
     `
@@ -2143,10 +2150,9 @@ app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
 
 // Normalize campaign fields so the admin page always gets consistent keys
 function normalizeCampaign(doc) {
-  if (!doc) return null;
   return {
     _id: String(doc._id),   // Mongo ID
-    Id: doc.Id || null,
+    Id: doc.Id || null,    // 👈 ADD THIS
     title: doc.title ?? doc.Title ?? "Untitled",
     email: doc.Email ?? doc.email ?? "—",
     goal: doc.Goal ?? doc.goal ?? "—",
@@ -2395,7 +2401,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
 
     // Owner email normalization
     const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
-    const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
+    let ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
 
     // Look up latest ID verification status (if any)
     let idvStatus = "";
@@ -2482,8 +2488,7 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       }
     }
 
-    const updated = result?.value || await db.collection("Campaigns").findOne({ _id: campaign._id });
-    return res.json({ success: true, campaign: normalizeCampaign(updated || campaign) });
+    return res.json({ success: true, campaign: normalizeCampaign(result.value) });
   } catch (err) {
     console.error("admin campaign status error:", err);
     return res.status(500).json({ success: false, message: "Failed to update campaign" });
@@ -2530,7 +2535,7 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
 
     const idv = idvResult.value;
 
-    const ownerEmail = String(idv.Email ?? idv.email ?? "").trim().toLowerCase();
+    let ownerEmail = String(idv.Email ?? idv.email ?? "").trim().toLowerCase();
     const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
 
     // Specific campaign id from IDV (optional)
@@ -2575,9 +2580,22 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       }
     }
 
+    // If the IDV record didn't include an email, derive it from the campaign we just promoted
+    if (!ownerEmail && primaryCampaign) {
+      ownerEmail = String(primaryCampaign.Email ?? primaryCampaign.email ?? "").trim().toLowerCase();
+      ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
+      console.log("ℹ️ Derived ownerEmail from campaign:", ownerEmail);
+    }
+
+    // Send an explicit ID-approved email (even if no campaign was found to promote)
+    if (ownerEmail) {
+      const safeName = String(idv.name ?? idv.Name ?? "").trim();
+      console.log("📧 Triggering: ID approved email ->", ownerEmail);
+      await sendIdApprovedEmail({ toEmail: ownerEmail, name: safeName });
+    }
+
     // 2) Promote any other Approved campaigns for this owner
     let promotedCount = 0;
-    let firstApprovedTitle = "";
     if (ownerEmail) {
       const filter = {
         $and: [
@@ -2595,7 +2613,6 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
       const approvedCampaigns = await db.collection("Campaigns").find(filter).toArray();
 
       if (approvedCampaigns.length) {
-        firstApprovedTitle = String((approvedCampaigns[0].title ?? approvedCampaigns[0].Title ?? "")).trim();
         await db.collection("Campaigns").updateMany(
           filter,
           {
@@ -2628,38 +2645,17 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
         console.log("ℹ️ No Approved campaigns found to promote for:", ownerEmail);
       }
     }
-    // 3) Notify the user: ID approved + campaign live (when at least one campaign is Active)
-    if (ownerEmail) {
-      const safeName = String(idv.name ?? idv.Name ?? "").trim();
-      const title = String(
-        primaryCampaign?.title ??
-        primaryCampaign?.Title ??
-        firstApprovedTitle ||
-        "your campaign"
-      ).trim();
 
-      const wentLive = !!primaryCampaign || promotedCount > 0;
-
+    // If we promoted only primary campaign (not in Approved list), still send live email for it
+    if (primaryCampaign && ownerEmail && promotedCount === 0) {
+      const title = String(primaryCampaign.title ?? primaryCampaign.Title ?? "your campaign");
       try {
-        console.log("📧 Triggering: ID approved email ->", ownerEmail);
-        await sendIdApprovedEmail({ toEmail: ownerEmail, name: safeName });
-        console.log("✅ ID approved email sent (attempted).");
+        console.log("📧 Triggering: campaign LIVE email (primary only) ->", ownerEmail, "campaign:", title);
+        await sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title });
+        console.log("✅ campaign LIVE email sent (attempted).");
       } catch (e) {
-        console.error("❌ ID approved email error:", e);
+        console.error("❌ campaign LIVE email error:", e);
       }
-
-      if (wentLive) {
-        try {
-          console.log("📧 Triggering: campaign LIVE email ->", ownerEmail, "campaign:", title);
-          await sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title });
-          console.log("✅ campaign LIVE email sent (attempted).");
-        } catch (e) {
-          console.error("❌ campaign LIVE email error:", e);
-        }
-      } else {
-        console.log("ℹ️ Skipping campaign LIVE email because no campaign was promoted to Active.");
-      }
-    }
     }
 
     return res.json({ success: true, data: normalizeIdv(idvResult.value) });
@@ -3005,9 +3001,9 @@ await sendSubmissionEmails({
 
 app.get("/api/public-campaigns", async (req, res) => {
   try {
-    // Public campaigns: show Approved and Active (Approved may still be pending ID verification)
     const rows = await db.collection("Campaigns").find({
-      Status: { $in: ["Approved", "Active"] },
+      Status: "Active",
+      verificationStatus: { $in: ["verified", "Verified"] },
       $or: [
         { lifecycleStatus: { $ne: "Expired" } },
         { lifecycleStatus: { $exists: false } }
