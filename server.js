@@ -1141,6 +1141,35 @@ You can also access this from your dashboard: ${dashboardUrl}
   });
 }
 
+async function sendIdApprovedEmail({ toEmail, name }) {
+  console.log("📧 ID approved email sending to:", toEmail);
+  const dashboardUrl = `${PUBLIC_BASE_URL}/dashboard.html`;
+  return sendMailjet({
+    toEmail,
+    toName: name || "",
+    subject: "Your ID was approved ✅",
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;">
+        <h2 style="margin:0 0 10px 0;">✅ Identity verified</h2>
+        <p style="margin:0 0 10px 0;">Hi ${escapeHtml(name || "")},</p>
+        <p style="margin:0 0 10px 0;">
+          Your identity verification has been <b>approved</b>.
+        </p>
+        <p style="margin:0 0 10px 0;">
+          If you already have an approved campaign, it will move forward in the review process and/or go live shortly.
+        </p>
+        <p style="margin:0 0 12px 0;">
+          You can always check your campaign status from your dashboard:
+          <a href="${dashboardUrl}">${dashboardUrl}</a>
+        </p>
+        <p style="margin:14px 0 0 0;color:#777;font-size:12px;">
+          If you didn’t request this, please contact support.
+        </p>
+      </div>
+    `
+  });
+}
+
 async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
   console.log("📧 Campaign live email sending to:", toEmail);
   const campaignsUrl = `${PUBLIC_BASE_URL}/campaigns.html`;
@@ -2114,9 +2143,10 @@ app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
 
 // Normalize campaign fields so the admin page always gets consistent keys
 function normalizeCampaign(doc) {
+  if (!doc) return null;
   return {
     _id: String(doc._id),   // Mongo ID
-    Id: doc.Id || null,    // 👈 ADD THIS
+    Id: doc.Id || null,
     title: doc.title ?? doc.Title ?? "Untitled",
     email: doc.Email ?? doc.email ?? "—",
     goal: doc.Goal ?? doc.goal ?? "—",
@@ -2367,6 +2397,16 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
     const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
     const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
 
+    // Send explicit ID-approved email (separate from campaign-live email)
+    if (ownerEmail) {
+      try {
+        await sendIdApprovedEmail({ toEmail: ownerEmail, name: idv.name ?? idv.Name ?? "" });
+        console.log("✅ ID approved email sent (attempted).");
+      } catch (e) {
+        console.error("❌ ID approved email error:", e);
+      }
+    }
+
     // Look up latest ID verification status (if any)
     let idvStatus = "";
     if (ownerEmailRegex) {
@@ -2452,7 +2492,8 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       }
     }
 
-    return res.json({ success: true, campaign: normalizeCampaign(result.value) });
+    const updated = result?.value || await db.collection("Campaigns").findOne({ _id: campaign._id });
+    return res.json({ success: true, campaign: normalizeCampaign(updated || campaign) });
   } catch (err) {
     console.error("admin campaign status error:", err);
     return res.status(500).json({ success: false, message: "Failed to update campaign" });
@@ -2951,9 +2992,9 @@ await sendSubmissionEmails({
 
 app.get("/api/public-campaigns", async (req, res) => {
   try {
+    // Public campaigns: show Approved and Active (Approved may still be pending ID verification)
     const rows = await db.collection("Campaigns").find({
-      Status: "Active",
-      verificationStatus: { $in: ["verified", "Verified"] },
+      Status: { $in: ["Approved", "Active"] },
       $or: [
         { lifecycleStatus: { $ne: "Expired" } },
         { lifecycleStatus: { $exists: false } }
