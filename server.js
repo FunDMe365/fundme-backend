@@ -1101,10 +1101,6 @@ async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campa
     toEmail,
     toName: "",
     subject: "Your campaign was approved — quick identity verification needed",
-    headers: {
-      "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
-      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
-    },
     text: `Good news — your campaign "${campaignTitle}" was approved.
 
 Before it can go live, we need a quick identity verification.
@@ -1155,10 +1151,6 @@ async function sendIdApprovedEmail({ toEmail, name }) {
     toEmail,
     toName: name || "",
     subject: "Your identity has been verified ✅",
-    headers: {
-      "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
-      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
-    },
     html: `
       <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.5;color:#111;">
         <h2 style="margin:0 0 10px 0;">Identity Verified ✅</h2>
@@ -1185,10 +1177,6 @@ async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
     toEmail,
     toName: "",
     subject: "Your campaign is live 🎉",
-    headers: {
-      "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
-      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
-    },
     html: `
       <p>Good news — your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> is now live on JoyFund.</p>
       <p>You can view it here: <a href="${campaignsUrl}">${campaignsUrl}</a></p>
@@ -2531,7 +2519,10 @@ app.get("/api/admin/id-verifications", requireAdmin, async (req, res) => {
 });
 
 // ==================== ADMIN: ID VERIFICATIONS ====================
-app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, res) => {
+// ==================== ADMIN: ID VERIFICATIONS ====================
+
+// Shared handler so both PATCH and POST work (prevents method-mismatch 404s from the admin UI)
+const approveIdVerificationHandler = async (req, res) => {
   try {
     console.log("✅ ADMIN id-verification APPROVE:", req.params.id);
 
@@ -2682,16 +2673,22 @@ app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, async (req, r
     console.error("admin idv approve error:", err);
     return res.status(500).json({ success: false, message: "Approve failed" });
   }
-});
+};
+
+app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, approveIdVerificationHandler);
+app.post("/api/admin/id-verifications/:id/approve", requireAdmin, approveIdVerificationHandler);
 
 // Deny an ID verification
-app.patch("/api/admin/id-verifications/:id/deny", requireAdmin, async (req, res) => {
+
+// Deny an ID verification
+// Shared handler so both PATCH and POST work (prevents method-mismatch 404s from the admin UI)
+const denyIdVerificationHandler = async (req, res) => {
   try {
-    const id = req.params.id;
+    const idRaw = String(req.params.id || "").trim();
     const { reason } = req.body;
 
     const result = await db.collection("ID_Verifications").findOneAndUpdate(
-      { _id: new ObjectId(id) },
+      { $or: (ObjectId.isValid(idRaw) ? [{ _id: new ObjectId(idRaw) }, { _id: idRaw }] : [{ _id: idRaw }]) },
       { $set: { Status: "Denied", ReviewedAt: new Date(), ReviewedBy: "admin", DenialReason: reason || "" } },
       { returnDocument: "after" }
     );
@@ -2703,9 +2700,12 @@ app.patch("/api/admin/id-verifications/:id/deny", requireAdmin, async (req, res)
     console.error("admin idv deny error:", err);
     res.status(500).json({ success: false, message: "Deny failed" });
   }
-});
+};
 
-// ==================== ADMIN: JOYBOOST REQUESTS ====================
+app.patch("/api/admin/id-verifications/:id/deny", requireAdmin, denyIdVerificationHandler);
+app.post("/api/admin/id-verifications/:id/deny", requireAdmin, denyIdVerificationHandler);
+
+// ==================== ADMIN: JOYBOOST REQUESTS// ==================== ADMIN: JOYBOOST REQUESTS ====================
 app.get("/api/admin/joyboost/requests", requireAdmin, async (req, res) => {
   try {
     const requests = await db.collection(JOYBOOST_REQUESTS)
@@ -2905,57 +2905,45 @@ if (status === "Approved") {
 });
 
 // ==================== PUBLIC: ACTIVE CAMPAIGNS (SEARCH/LIST) ====================
-// IMPORTANT: campaigns.html has changed over time. To avoid breakage, this endpoint returns BOTH:
-//   - success: true/false  (newer frontends)
-//   - ok: true/false       (older frontends)
-// and uses the same filtering as /api/public-campaigns.
 app.get("/api/campaigns", async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
+
+    // IMPORTANT: your Mongo collection is likely lowercase "campaigns"
     const col = db.collection("Campaigns");
 
-    const filter = {
-      $and: [
-        { $or: [{ Status: "Active" }, { status: "Active" }] },
-        { verificationStatus: { $in: ["verified", "Verified"] } },
-        {
-          $or: [
-            { lifecycleStatus: { $ne: "Expired" } },
-            { lifecycleStatus: { $exists: false } }
-          ]
-        },
-        {
-          $or: [
-            { lifecycleStatus: { $ne: "Deleted" } },
-            { lifecycleStatus: { $exists: false } }
-          ]
-        }
-      ]
-    };
+    // Status field in your docs appears to be "Status" (capital S)
+    // Accept a couple common "active" meanings to avoid mismatches.
+    const activeStatuses = ["Active"];
+
+    const statusOr = [
+      { Status: { $in: activeStatuses } },
+      { status: { $in: activeStatuses } },
+      { lifecycleStatus: { $in: activeStatuses } }
+    ];
+
+    // Always require "active" status, and optionally apply search terms.
+    const filter = { $and: [{ $or: statusOr }] };
 
     if (q) {
-      const rx = { $regex: q, $options: "i" };
       filter.$and.push({
         $or: [
-          { title: rx },
-          { Title: rx },
-          { Description: rx },
-          { description: rx },
-          { Category: rx },
-          { category: rx }
+          { title: { $regex: q, $options: "i" } },
+          { Description: { $regex: q, $options: "i" } },
+          { Category: { $regex: q, $options: "i" } }
         ]
       });
     }
 
     const campaigns = await col
       .find(filter)
-      .sort({ PublishedAt: -1, publishedAt: -1, activatedAt: -1, CreatedAt: -1, createdAt: -1, _id: -1 })
+      .sort({ CreatedAt: -1 })
       .toArray();
 
-    return res.json({ success: true, ok: true, campaigns });
+    res.json({ ok: true, campaigns });
   } catch (err) {
     console.error("GET /api/campaigns error:", err);
-    return res.status(500).json({ success: false, ok: false, message: "Failed to load campaigns" });
+    res.status(500).json({ ok: false, message: "Failed to load campaigns" });
   }
 });
 
@@ -3042,31 +3030,20 @@ await sendSubmissionEmails({
 app.get("/api/public-campaigns", async (req, res) => {
   try {
     const rows = await db.collection("Campaigns").find({
-      $and: [
-        { $or: [{ Status: "Active" }, { status: "Active" }] },
-        { verificationStatus: { $in: ["verified", "Verified"] } },
-        {
-          $or: [
-            { lifecycleStatus: { $ne: "Expired" } },
-            { lifecycleStatus: { $exists: false } }
-          ]
-        },
-        {
-          $or: [
-            { lifecycleStatus: { $ne: "Deleted" } },
-            { lifecycleStatus: { $exists: false } }
-          ]
-        }
+      Status: "Active",
+      verificationStatus: { $in: ["verified", "Verified"] },
+      $or: [
+        { lifecycleStatus: { $ne: "Expired" } },
+        { lifecycleStatus: { $exists: false } }
       ]
     }).toArray();
 
-    return res.json({ success: true, ok: true, campaigns: rows });
+    res.json({ success: true, campaigns: rows });
   } catch (err) {
-    console.error("GET /api/public-campaigns error:", err);
-    return res.status(500).json({ success: false, ok: false });
+    console.error(err);
+    res.status(500).json({ success: false });
   }
 });
-
 
 app.get("/api/my-campaigns", async (req, res) => {
   try {
