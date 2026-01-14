@@ -1101,6 +1101,10 @@ async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campa
     toEmail,
     toName: "",
     subject: "Your campaign was approved — quick identity verification needed",
+    headers: {
+      "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+    },
     text: `Good news — your campaign "${campaignTitle}" was approved.
 
 Before it can go live, we need a quick identity verification.
@@ -1151,6 +1155,10 @@ async function sendIdApprovedEmail({ toEmail, name }) {
     toEmail,
     toName: name || "",
     subject: "Your identity has been verified ✅",
+    headers: {
+      "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+    },
     html: `
       <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.5;color:#111;">
         <h2 style="margin:0 0 10px 0;">Identity Verified ✅</h2>
@@ -1177,6 +1185,10 @@ async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
     toEmail,
     toName: "",
     subject: "Your campaign is live 🎉",
+    headers: {
+      "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+    },
     html: `
       <p>Good news — your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> is now live on JoyFund.</p>
       <p>You can view it here: <a href="${campaignsUrl}">${campaignsUrl}</a></p>
@@ -2893,45 +2905,57 @@ if (status === "Approved") {
 });
 
 // ==================== PUBLIC: ACTIVE CAMPAIGNS (SEARCH/LIST) ====================
+// IMPORTANT: campaigns.html has changed over time. To avoid breakage, this endpoint returns BOTH:
+//   - success: true/false  (newer frontends)
+//   - ok: true/false       (older frontends)
+// and uses the same filtering as /api/public-campaigns.
 app.get("/api/campaigns", async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
-
-    // IMPORTANT: your Mongo collection is likely lowercase "campaigns"
     const col = db.collection("Campaigns");
 
-    // Status field in your docs appears to be "Status" (capital S)
-    // Accept a couple common "active" meanings to avoid mismatches.
-    const activeStatuses = ["Active"];
-
-    const statusOr = [
-      { Status: { $in: activeStatuses } },
-      { status: { $in: activeStatuses } },
-      { lifecycleStatus: { $in: activeStatuses } }
-    ];
-
-    // Always require "active" status, and optionally apply search terms.
-    const filter = { $and: [{ $or: statusOr }] };
+    const filter = {
+      $and: [
+        { $or: [{ Status: "Active" }, { status: "Active" }] },
+        { verificationStatus: { $in: ["verified", "Verified"] } },
+        {
+          $or: [
+            { lifecycleStatus: { $ne: "Expired" } },
+            { lifecycleStatus: { $exists: false } }
+          ]
+        },
+        {
+          $or: [
+            { lifecycleStatus: { $ne: "Deleted" } },
+            { lifecycleStatus: { $exists: false } }
+          ]
+        }
+      ]
+    };
 
     if (q) {
+      const rx = { $regex: q, $options: "i" };
       filter.$and.push({
         $or: [
-          { title: { $regex: q, $options: "i" } },
-          { Description: { $regex: q, $options: "i" } },
-          { Category: { $regex: q, $options: "i" } }
+          { title: rx },
+          { Title: rx },
+          { Description: rx },
+          { description: rx },
+          { Category: rx },
+          { category: rx }
         ]
       });
     }
 
     const campaigns = await col
       .find(filter)
-      .sort({ CreatedAt: -1 })
+      .sort({ PublishedAt: -1, publishedAt: -1, activatedAt: -1, CreatedAt: -1, createdAt: -1, _id: -1 })
       .toArray();
 
-    res.json({ ok: true, campaigns });
+    return res.json({ success: true, ok: true, campaigns });
   } catch (err) {
     console.error("GET /api/campaigns error:", err);
-    res.status(500).json({ ok: false, message: "Failed to load campaigns" });
+    return res.status(500).json({ success: false, ok: false, message: "Failed to load campaigns" });
   }
 });
 
@@ -3018,20 +3042,31 @@ await sendSubmissionEmails({
 app.get("/api/public-campaigns", async (req, res) => {
   try {
     const rows = await db.collection("Campaigns").find({
-      Status: "Active",
-      verificationStatus: { $in: ["verified", "Verified"] },
-      $or: [
-        { lifecycleStatus: { $ne: "Expired" } },
-        { lifecycleStatus: { $exists: false } }
+      $and: [
+        { $or: [{ Status: "Active" }, { status: "Active" }] },
+        { verificationStatus: { $in: ["verified", "Verified"] } },
+        {
+          $or: [
+            { lifecycleStatus: { $ne: "Expired" } },
+            { lifecycleStatus: { $exists: false } }
+          ]
+        },
+        {
+          $or: [
+            { lifecycleStatus: { $ne: "Deleted" } },
+            { lifecycleStatus: { $exists: false } }
+          ]
+        }
       ]
     }).toArray();
 
-    res.json({ success: true, campaigns: rows });
+    return res.json({ success: true, ok: true, campaigns: rows });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
+    console.error("GET /api/public-campaigns error:", err);
+    return res.status(500).json({ success: false, ok: false });
   }
 });
+
 
 app.get("/api/my-campaigns", async (req, res) => {
   try {
