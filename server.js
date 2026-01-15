@@ -2115,18 +2115,25 @@ app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
 // Normalize campaign fields so the admin page always gets consistent keys
 function normalizeCampaign(doc) {
   return {
-    _id: String(doc._id),   // Mongo ID
-    Id: doc.Id || null,    // 👈 ADD THIS
+    _id: String(doc._id),            // Mongo ID
+    Id: doc.Id || null,              // Optional custom ID if you use one
     title: doc.title ?? doc.Title ?? "Untitled",
     email: doc.Email ?? doc.email ?? "—",
     goal: doc.Goal ?? doc.goal ?? "—",
     status: doc.Status ?? doc.status ?? "—",
     createdAt: doc.CreatedAt ?? doc.createdAt ?? null,
-    imageUrl: doc.ImageURL ?? doc.imageUrl ?? null,
-    category: doc.Category ?? doc.category ?? null
+
+    // ✅ Extra fields for "View" modal
+    city: doc.City ?? doc.city ?? null,
+    state: doc.State ?? doc.state ?? null,
+    description: doc.Description ?? doc.description ?? doc.desc ?? null,
+
+    // Media / other
+    imageUrl: doc.ImageURL ?? doc.imageUrl ?? doc.ImageUrl ?? null,
+    category: doc.Category ?? doc.category ?? null,
+    publicUrl: doc.publicUrl ?? doc.PublicUrl ?? doc.link ?? doc.Link ?? null
   };
 }
-
 // Normalize ID verification fields
 function normalizeIdv(doc) {
   return {
