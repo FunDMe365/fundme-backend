@@ -2342,6 +2342,21 @@ app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
   }
 });
 
+// Get one campaign (full details)
+app.get("/api/admin/campaigns/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const campaign = await findCampaignByAnyId(id);
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+    return res.json({ success: true, campaign: normalizeCampaign(campaign) });
+  } catch (err) {
+    console.error("GET /api/admin/campaigns/:id error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 // Update campaign status (Approved/Denied/Closed/etc.)
 app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
   try {
