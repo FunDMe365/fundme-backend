@@ -1,2141 +1,3706 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Admin Dashboard - JoyFund INC.</title>
-<style>
-:root{
-  --accent:#6EC1E4;
-  --accent-2:#FF6B81;
-  --card-bg:#fff;
-  --muted:#666;
-  --radius:10px;
-  --shadow: 0 6px 18px rgba(18,35,50,0.08);
-}
-*{box-sizing:border-box}
-body{
-  margin:0;
-  font-family:"Segoe UI", Roboto, Arial, sans-serif;
-  background:linear-gradient(135deg,#FFDEE9 0%,#B5FFFC 100%);
-  color:#222;
-  min-height:100vh;
-  display:flex;
-  flex-direction:column;
-}
-header{
-  background:var(--accent);
-  color:#fff;
-  padding:12px 20px;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-}
-header h1{margin:0;font-size:18px;letter-spacing:0.2px;}
-header .top-controls{display:flex;gap:10px;align-items:center;}
-header .top-controls button{
-  background:transparent;
-  border:1px solid rgba(255,255,255,.2);
-  color:#fff;
-  padding:8px 12px;
-  border-radius:8px;
-  cursor:pointer;
-}
-header .top-controls button:hover{opacity:.95;transform:translateY(-1px);}
-.wrap{display:flex;gap:20px;width:100%;max-width:1200px;margin:20px auto;padding:0 16px;flex:1;}
-aside.sidebar{
-  width:220px;min-width:200px;background:var(--card-bg);
-  border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);
-  height:calc(100vh - 120px);position:sticky;top:20px;overflow:auto;
-}
-.sidebar h3{margin:0 0 12px;color:var(--accent-2);}
-.nav-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px;}
-.nav-list button{
-  text-align:left;background:transparent;border:none;padding:10px 12px;border-radius:8px;
-  cursor:pointer;font-weight:600;color:#333;
-}
-.nav-list button.active{background:linear-gradient(90deg,var(--accent),#8ED9F3);color:#fff;}
-main.content{flex:1;min-height:300px;}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;margin-bottom:18px;}
-.card{background:var(--card-bg);border-radius:12px;padding:18px;box-shadow:var(--shadow);text-align:center;}
-.card h2{margin:0 0 6px;color:var(--accent-2);font-size:14px;font-weight:700;}
-.card .val{font-size:28px;font-weight:800;color:#222;margin-top:6px;}
-.panel{background:var(--card-bg);border-radius:12px;padding:14px;box-shadow:var(--shadow);}
-.panel h3{margin:0 0 12px;color:var(--accent-2);}
-table{width:100%;border-collapse:collapse;font-size:14px;}
-table th,table td{padding:8px 10px;text-align:left;border-bottom:1px solid #f0f0f0;vertical-align:top;}
-table th{color:var(--muted);font-weight:600;background:transparent;}
-.small{font-size:13px;color:var(--muted);}
-footer{text-align:center;padding:10px;background:#fff;box-shadow:0 -2px 8px rgba(0,0,0,0.04);font-size:13px;}
-@media (max-width:900px){
-  .wrap{flex-direction:column;padding:0 12px;}
-  aside.sidebar{width:100%;height:auto;position:relative;top:auto;order:2;}
-  main.content{order:1;}
-}
-button.action-btn{padding:6px 10px;margin-right:6px;border:none;border-radius:6px;color:#fff;cursor:pointer;font-weight:700;}
-button.approve{background:#00b3ff;}
-button.reject{background:#ff4fa3;}
-button.neutral{background:#6b7280;}
-section{display:none;}
-section.active{display:block;}
-.notice{
-  padding:12px;
-  border-radius:10px;
-  background:#fff7fb;
-  border:1px solid #ffd1e3;
-  color:#8a2c55;
-  margin:12px 0;
-  font-size:14px;
-}
+// ==================== SERVER.JS - JOYFUND BACKEND ====================
+require("dotenv").config();
 
-/* Simple modal */
-.modal-backdrop{
-  position:fixed;inset:0;background:rgba(0,0,0,.45);
-  display:none;align-items:center;justify-content:center;
-  padding:18px;z-index:9999;
-}
-.modal{
-  width:min(820px, 100%);
-  background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.25);
-  overflow:hidden;
-}
-.modal header{
-  background:linear-gradient(90deg,var(--accent),#8ED9F3);
-  padding:12px 16px;
-}
-.modal header h2{margin:0;color:#fff;font-size:16px;}
-.modal .body{padding:14px 16px;}
-.modal .row{display:flex;gap:12px;flex-wrap:wrap;}
-.modal .col{flex:1;min-width:240px;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:10px;}
-.modal .col h4{margin:0 0 8px;color:#333;font-size:14px;}
-.modal .actions{padding:12px 16px;display:flex;gap:10px;justify-content:flex-end;border-top:1px solid #eee;background:#fff;flex-wrap:wrap;}
-.modal .actions button{border-radius:10px;padding:10px 12px;}
-.mono{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
-.tag{
-  display:inline-block;padding:3px 8px;border-radius:999px;
-  background:#f2f2f2;border:1px solid #e9e9e9;color:#444;font-size:12px;font-weight:700;
-}
-.tag.pending{background:#fff3cd;border-color:#ffeeba;}
-.tag.approved{background:#e8fff3;border-color:#c7f6de;}
-.tag.denied{background:#ffe1f1;border-color:#ffc6e4;}
+// ==================== CAMPAIGN EXPIRATION SETTINGS ====================
+const CAMPAIGN_ACTIVE_DAYS = Number(process.env.CAMPAIGN_ACTIVE_DAYS || 60);
 
-/* ===== Campaign details modal ===== */
-.modal-backdrop{
-  position:fixed; inset:0;
-  background:rgba(0,0,0,.55);
-  display:none;
-  align-items:center;
-  justify-content:center;
-  padding:18px;
-  z-index:9999;
-}
-.modal{
-  width:min(920px, 96vw);
-  max-height:90vh;
-  overflow:auto;
-  background:#0f172a;
-  border:1px solid rgba(255,255,255,.12);
-  border-radius:16px;
-  box-shadow:0 20px 60px rgba(0,0,0,.55);
-}
-.modal-header{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:12px;
-  padding:14px 16px;
-  border-bottom:1px solid rgba(255,255,255,.10);
-}
-.modal-body{ padding:16px; }
-.modal-grid{
-  display:grid;
-  grid-template-columns: 1.1fr .9fr;
-  gap:16px;
-}
-@media (max-width: 860px){
-  .modal-grid{ grid-template-columns: 1fr; }
-}
-.kv{
-  display:grid;
-  grid-template-columns: 140px 1fr;
-  gap:8px 12px;
-  align-items:start;
-  font-size:14px;
-}
-.kv .k{ opacity:.75; }
-.kv .v{ word-break:break-word; }
-.camp-img{
-  width:100%;
-  border-radius:14px;
-  border:1px solid rgba(255,255,255,.10);
-  background:rgba(255,255,255,.04);
-}
-.desc-box{
-  margin-top:14px;
-  padding:12px;
-  border-radius:14px;
-  border:1px solid rgba(255,255,255,.10);
-  background:rgba(255,255,255,.03);
-  white-space:pre-wrap;
-  line-height:1.35;
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + Number(days || 0));
+  return d;
 }
 
 
-
-/* ===== Fix: Campaign View Modal header text contrast ===== */
-#campaignModal .modal-header{
-  background:linear-gradient(90deg,var(--accent),#8ED9F3);
-  color:#fff;
-  padding:12px 16px;
+const express = require("express");
+const bodyParser = require("body-parser");
+const session = require("express-session");
+const bcrypt = require("bcryptjs");
+const multer = require("multer");
+const crypto = require("crypto");
+function safeEqual(a, b) {
+  const aa = Buffer.from(String(a ?? ""));
+  const bb = Buffer.from(String(b ?? ""));
+  if (aa.length !== bb.length) return false;
+  return crypto.timingSafeEqual(aa, bb);
 }
-#campaignModalTitle, #campaignModalMeta{ color:#fff; }
-#campaignModalClose{
-  background:rgba(255,255,255,.18);
-  border:1px solid rgba(255,255,255,.25);
-  color:#fff;
-  padding:8px 12px;
-  border-radius:10px;
-  cursor:pointer;
-  font-weight:700;
-}
-#campaignModalClose:hover{ opacity:.95; }
-#campaignModal .modal-body{
-  padding:14px 16px;
-  background:#fff;
-  color:#222;
-}
+const Stripe = require("stripe");
+const cloudinary = require("cloudinary").v2;
+const cors = require("cors");
+const fs = require("fs");
+const { ObjectId } = require("mongodb");
+const cron = require("node-cron");
+const rateLimit = require("express-rate-limit");
+const { Pool } = require("pg");
 
+const NodeCache = require("node-cache");
 
-/* Campaign View Modal: keep long descriptions visible */
-#campaignModalBody{max-height:70vh;overflow:auto;}
-#campaignModal{max-height:85vh;overflow:auto;}
-</style>
-</head>
-<body>
-<header>
-  <h1>JoyFund INC. — Admin</h1>
-  <div class="top-controls">
-    <div id="adminBadge" class="small">Admin</div>
-    <button id="refreshBtn" type="button">Refresh</button>
-    <button id="logoutBtn" type="button">Logout</button>
-  </div>
-</header>
-
-<div class="wrap">
-  <aside class="sidebar">
-    <h3>Management</h3>
-    <nav>
-      <ul class="nav-list">
-        <li><button id="nav-overview" class="active" type="button">Overview</button></li>
-        <li><button id="nav-users" type="button">Users</button></li>
-        <li><button id="nav-volunteers" type="button">Volunteers</button></li>
-        <li><button id="nav-streetteam" type="button">Street Team</button></li>
-        <li><button id="nav-campaigns" type="button">Campaigns</button></li>
-        <li><button id="nav-donations" type="button">Donations</button></li>
-        <li><button id="nav-joyboost" type="button">JoyBoost</button></li>
-        <li><button id="nav-settings" type="button">Settings</button></li>
-      </ul>
-    </nav>
-    <div style="margin-top:18px;">
-      <div class="small">Last refresh:</div>
-      <div id="lastRefresh" class="small">—</div>
-    </div>
-  </aside>
-
-  <main class="content" id="mainContent">
-    <!-- Overview Section -->
-    <section id="overviewSection" class="active">
-      <div class="grid">
-        <div class="card"><h2>Users</h2><div class="val" id="userCount">—</div><div class="small">From DB</div></div>
-        <div class="card"><h2>Volunteers</h2><div class="val" id="volunteerCount">—</div><div class="small">From DB</div></div>
-        <div class="card"><h2>Street Team</h2><div class="val" id="streetTeamCount">—</div><div class="small">From DB</div></div>
-        <div class="card"><h2>Active Campaigns</h2><div class="val" id="activeCount">—</div><div class="small">From DB</div></div>
-        <div class="card"><h2>Approved Campaigns</h2><div class="val" id="approvedCount">—</div><div class="small">From DB</div></div>
-        <div class="card"><h2>Pending ID Submissions</h2><div class="val" id="pendingIdCount">—</div><div class="small">From DB</div></div>
-        <div class="card"><h2>Approved IDs</h2><div class="val" id="approvedIdCount">—</div><div class="small">From DB</div></div>
-        <div class="card"><h2>Closed Campaigns</h2><div class="val" id="closedCount">—</div><div class="small">From DB</div></div>
-        <div class="card"><h2>Total Donations</h2><div class="val" id="donationCount">—</div><div class="small">From DB</div></div>
-        <div class="card"><h2>Live Visitors</h2><div class="val" id="visitorCount">—</div><div class="small">Realtime</div></div>
-        <div class="card"><h2>JoyBoost Apps</h2><div class="val" id="joyboostCount">—</div><div class="small">From DB</div></div>
-
-        <div class="card">
-          <h2>Expired Campaigns</h2>
-          <div class="val" id="expiredCampaignsCount">0</div>
-          <div class="small">Need review / action</div>
-          <button class="action-btn neutral" id="viewExpiredBtn" type="button" style="margin-top:10px;width:100%;">Review Expired Campaigns</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- Users Section -->
-    <section id="usersSection">
-      <h3>Users</h3>
-      <table id="usersTable">
-        <thead>
-          <tr>
-            <th>Join Date</th>
-            <th>Name</th>
-            <th>Email</th>
-            <th>ID Status</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </section>
-
-    <!-- Volunteers Section -->
-    <section id="volunteersSection">
-      <h3>Volunteers</h3>
-      <table id="volunteersTable">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Role</th>
-            <th>Reason</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </section>
-
-    <!-- Street Team -->
-    <section id="streetTeamSection">
-      <h3>Street Team</h3>
-      <table id="streetTeamTable">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Name</th>
-            <th>Email</th>
-            <th>City</th>
-            <th>Reason</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </section>
-
-    <!-- Campaigns Section -->
-    <section id="campaignsSection">
-      <h3>Campaigns</h3>
-      <div class="notice">
-        This tab pulls from MongoDB via admin endpoints and allows you to approve/deny.
-      </div>
-      <table id="campaignsTable">
-        <thead>
-          <tr><th>Title</th><th>Creator Email</th><th>Goal</th><th>Status</th><th>Created At</th><th>Actions</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-
-      <div class="panel" style="margin-top:14px;">
-        <h3>Expired Campaigns (Review)</h3>
-        <div class="small" style="margin-bottom:10px;">
-          Shows campaigns with <span class="tag">lifecycleStatus: Expired</span>. Track days expired, review status, and outcome.
-        </div>
-
-        <table id="expiredCampaignsTable">
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Creator Email</th>
-              <th>Expired</th>
-              <th>Days Expired</th>
-              <th>Review Status</th>
-              <th>Outcome</th>
-              <th>Notes</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-
-      <div class="panel" style="margin-top:14px;">
-        <h3>Identity Verifications (Pending)</h3>
-        <div class="small" style="margin-bottom:8px;">
-          Approve or deny identity verification submissions. Approved users can start campaigns.
-        </div>
-        <table id="idvTable">
-          <thead>
-            <tr><th>Date</th><th>Name</th><th>Email</th><th>ID Image</th><th>Status</th><th>Actions</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-
-      <div class="panel" style="margin-top:14px;">
-        <h3>Identity Verifications (Approved)</h3>
-        <div class="small" style="margin-bottom:8px;">
-          Read-only list of approved identity verifications.
-        </div>
-        <table id="idvApprovedTable">
-          <thead>
-            <tr><th>Date</th><th>Name</th><th>Email</th><th>ID Image</th><th>Status</th><th>Actions</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-
-    </section>
-
-    <!-- Donations Section -->
-    <section id="donationsSection">
-      <h3>Donations</h3>
-      <div class="notice">
-        This table is wired to <strong>GET /api/donations</strong>.
-      </div>
-      <table id="donationsTable">
-        <thead>
-          <tr><th>Date</th><th>Donor</th><th>Amount</th><th>Campaign</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </section>
-
-    <!-- JoyBoost Section -->
-    <section id="joyboostSection">
-      <h3>JoyBoost — Relief Applications</h3>
-      <div class="notice">
-        Approve or deny JoyBoost relief requests. Approved requests should trigger the payment-link email from the backend.
-      </div>
-
-      <div class="panel" style="margin-bottom:12px;">
-        <h3>Applications</h3>
-        <div class="small" style="margin-bottom:10px;">
-          Statuses: <span class="tag pending">Pending</span> <span class="tag approved">Approved</span> <span class="tag denied">Denied</span>
-        </div>
-        <table id="joyboostTable">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Applicant</th>
-              <th>Campaign</th>
-              <th>Goal</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-
-      <div class="panel" style="margin-top:14px;">
-        <h3>Supporters (Active Subscriptions)</h3>
-        <div class="small" style="margin-bottom:10px;">
-          These are users actively supporting JoyBoost via Stripe subscriptions.
-        </div>
-        <table id="joyboostSupportersTable">
-          <thead>
-            <tr>
-              <th>Started</th>
-              <th>Email</th>
-              <th>Tier</th>
-              <th>Status</th>
-              <th>Stripe Sub ID</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- Settings Section -->
-    <section id="settingsSection">
-      <h3>Settings</h3>
-      <p>Admin settings and site management options:</p>
-      <div><label><input type="checkbox" id="toggleDemoMode"> Enable Demo Mode</label></div>
-      <div><label><input type="checkbox" id="toggleVisitorLogging"> Enable Visitor Logging</label></div>
-      <div><label><input type="checkbox" id="toggleProfanityFilter"> Enable Profanity Filter</label></div>
-      <div><label><input type="checkbox" id="toggleCampaignApproval"> Require Campaign Approval</label></div>
-      <div><label><input type="checkbox" id="toggleAutoDonationEmail"> Auto-send Donation Receipts</label></div>
-      <div><label><input type="checkbox" id="toggleUserRegistration"> Allow User Registration</label></div>
-      <div><label><input type="checkbox" id="toggleVolunteerApplications"> Accept Volunteer Applications</label></div>
-      <div><label><input type="checkbox" id="toggleCampaignVisibility"> Publicly Display Campaigns</label></div>
-      <div><label><input type="checkbox" id="toggleEmailNotifications"> Enable Email Notifications</label></div>
-    </section>
-  </main>
-</div>
-
-<footer>&copy; 2025 JoyFund INC.</footer>
-
-<!-- JoyBoost Modal -->
-<div class="modal-backdrop" id="jbModalBackdrop" aria-hidden="true">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="jbModalTitle">
-    <header><h2 id="jbModalTitle">JoyBoost Application</h2></header>
-
-    <div class="body">
-      <div class="row">
-        <div class="col">
-          <h4>Applicant</h4>
-          <div><strong id="jbApplicantName">—</strong></div>
-          <div class="small" id="jbApplicantEmail">—</div>
-          <div style="margin-top:8px"><span class="tag" id="jbStatusTag">—</span></div>
-        </div>
-
-        <div class="col">
-          <h4>Campaign</h4>
-          <div><strong id="jbCampaignTitle">—</strong></div>
-          <div class="small" id="jbCampaignRef">—</div>
-          <div class="small" id="jbCampaignLinkWrap">—</div>
-        </div>
-
-        <div class="col">
-          <h4>Request</h4>
-          <div><strong id="jbGoal">—</strong></div>
-          <div class="small" id="jbJoy">—</div>
-          <div class="small" id="jbCreatedAt">—</div>
-        </div>
-      </div>
-
-      <div class="panel" style="margin-top:12px;">
-        <h3>Notes</h3>
-        <div class="small" id="jbNotes" style="white-space:pre-wrap">—</div>
-      </div>
-
-      <div class="panel" style="margin-top:12px;">
-        <h3>Admin Notes (internal)</h3>
-        <textarea id="jbAdminNotes" rows="4" style="width:100%;padding:10px;border-radius:10px;border:1px solid #e5e5e5;"></textarea>
-        <div class="small" style="margin-top:6px;">Optional: saved internally (only if your backend stores it).</div>
-      </div>
-    </div>
-
-    <div class="actions">
-      <button class="action-btn neutral" id="jbCloseBtn" type="button">Close</button>
-      <button class="action-btn reject" id="jbDeclineBtn" type="button">Deny</button>
-      <button class="action-btn approve" id="jbApproveBtn" type="button">Approve</button>
-    </div>
-  </div>
-</div>
-
-<!-- Expired Campaign Modal -->
-<div class="modal-backdrop" id="expModalBackdrop" aria-hidden="true">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="expModalTitle">
-    <header><h2 id="expModalTitle">Expired Campaign Review</h2></header>
-
-    <div class="body">
-      <div class="row">
-        <div class="col">
-          <h4>Campaign</h4>
-          <div><strong id="expTitle">—</strong></div>
-          <div class="small" id="expEmail">—</div>
-          <div class="small" id="expDates">—</div>
-          <div style="margin-top:8px"><span class="tag" id="expLifeTag">Expired</span></div>
-        </div>
-
-        <div class="col">
-          <h4>Review</h4>
-
-          <div class="small" style="margin:6px 0 4px;">Review Status</div>
-          <select id="expReviewStatus" style="width:100%;padding:10px;border-radius:10px;border:1px solid #e5e5e5;">
-            <option value="">(none)</option>
-            <option value="Needs Review">Needs Review</option>
-            <option value="In Review">In Review</option>
-            <option value="Reviewed">Reviewed</option>
-          </select>
-
-          <div class="small" style="margin:10px 0 4px;">Outcome</div>
-          <select id="expOutcome" style="width:100%;padding:10px;border-radius:10px;border:1px solid #e5e5e5;">
-            <option value="">(none)</option>
-            <option value="Closed">Closed</option>
-            <option value="Extended">Extended</option>
-            <option value="Reopened">Reopened</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="panel" style="margin-top:12px;">
-        <h3>Admin Notes</h3>
-        <textarea id="expNotes" rows="6" style="width:100%;padding:10px;border-radius:10px;border:1px solid #e5e5e5;"></textarea>
-        <div class="small" style="margin-top:6px;">Saved on the campaign document (internal admin-only).</div>
-      </div>
-    </div>
-
-    <div class="actions">
-      <select id="expRestoreDays" style="padding:10px;border-radius:10px;border:1px solid #e5e5e5;">
-        <option value="">Restore…</option>
-        <option value="7">Restore 7 days</option>
-        <option value="14">Restore 14 days</option>
-        <option value="30">Restore 30 days</option>
-      </select>
-
-      <button class="action-btn approve" id="expRestoreBtn" type="button">Restore</button>
-      <button class="action-btn neutral" id="expCloseBtn" type="button">Close</button>
-      <button class="action-btn approve" id="expSaveBtn" type="button">Save Review</button>
-    </div>
-  </div>
-</div>
-
-<!-- Campaign Details Modal -->
-<div class="modal-backdrop" id="campModalBackdrop" aria-hidden="true">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="campModalTitle">
-    <header><h2 id="campModalTitle">Campaign Details</h2></header>
-
-    <div class="body">
-      <div class="row">
-        <div class="col">
-          <h4>Campaign</h4>
-          <div><strong id="campTitle">—</strong></div>
-          <div class="small" id="campStatusLine">—</div>
-          <div style="margin-top:8px"><span class="tag" id="campStatusTag">—</span></div>
-        </div>
-
-        <div class="col">
-          <h4>Creator</h4>
-          <div><strong id="campCreatorName">—</strong></div>
-          <div class="small" id="campCreatorEmail">—</div>
-          <div class="small" id="campCreatedAt">—</div>
-        </div>
-
-        <div class="col">
-          <h4>Location / Category</h4>
-          <div><strong id="campLocation">—</strong></div>
-          <div class="small" id="campCategory">—</div>
-          <div class="small" id="campGoal">—</div>
-        </div>
-      </div>
-
-      <div class="panel" style="margin-top:12px;">
-        <h3>Description</h3>
-        <div class="small" id="campDescription" style="white-space:pre-wrap">—</div>
-      </div>
-
-      <div class="panel" style="margin-top:12px;">
-        <h3>Links / Media</h3>
-        <div class="small" id="campImageWrap">—</div>
-        <div class="small" id="campPublicLinkWrap" style="margin-top:8px;">—</div>
-        <div class="small mono" id="campIdLine" style="margin-top:8px;">—</div>
-      </div>
-    </div>
-
-    <div class="actions">
-      <button class="action-btn neutral" id="campCloseBtn" type="button">Close</button>
-    </div>
-  </div>
-</div>
-
-<script>
-/**
- * Cleaned + fixed version of your current admin dashboard.
- * Based on your uploaded file, this fixes the broken HTML/script placement
- * and keeps the identity verification approval workflow intact.
- */
-
-const backendURL = "https://api.fundasmile.net";
-const adminLoginPage = "portal-7k3p9.html"; // your hidden admin-login filename
-
-async function safeReadJson(res) {
-  const text = await res.text();
-  try { return JSON.parse(text); } catch { return { raw: text }; }
-}
-
-function escapeHtml(v) {
-  const s = String(v ?? "");
-  return s.replace(/[&<>"']/g, (ch) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;"
-  }[ch]));
-}
-
-async function fetchCampaignDetails(id) {
-  // Best-effort: try a dedicated details endpoint if your backend has it.
-  // If not, we'll fall back to the campaign object we already have in the table.
-  try {
-    const res = await fetch(`${backendURL}/api/admin/campaigns/${encodeURIComponent(id)}`, {
-      credentials: "include",
-      cache: "no-store"
-    });
-    if (!res.ok) return null;
-    const data = await safeReadJson(res);
-    // support multiple shapes
-    return data?.campaign || data?.data || data || null;
-  } catch (e) {
-    return null;
-  }
-}
-
-// ==================== ADMIN SESSION CHECK ====================
-async function checkAdminSession() {
-  try {
-    const res = await fetch(`${backendURL}/api/admin-check`, {
-      credentials: "include",
-      cache: "no-store"
-    });
-
-    const data = await res.json().catch(() => ({}));
-    console.log("admin-check:", res.status, data);
-
-    if (!res.ok || data.admin !== true) {
-      window.location.href = adminLoginPage;
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error("admin-check error:", err);
-    window.location.href = adminLoginPage;
-    return false;
-  }
-}
-
-// ==================== LOGOUT ====================
-document.getElementById("logoutBtn").addEventListener("click", async () => {
-  try {
-    await fetch(`${backendURL}/api/admin-logout`, { method: "POST", credentials: "include" });
-  } catch (e) {
-    console.warn("Logout failed", e);
-  }
-  window.location.href = adminLoginPage;
+const ipCache = new NodeCache({
+  stdTTL: 60 * 60 * 24 * 7, // 7 days
+  checkperiod: 60 * 60,     // cleanup hourly
+  useClones: false
 });
 
-// ==================== TAB NAVIGATION ====================
-const tabs = document.querySelectorAll(".nav-list button");
-const sections = document.querySelectorAll("main.content section");
+function getClientIp(req) {
+  const xff = (req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return xff || req.ip;
+}
 
-tabs.forEach(tab => {
-  tab.addEventListener("click", () => {
-    tabs.forEach(t => t.classList.remove("active"));
-    sections.forEach(s => s.classList.remove("active"));
-    tab.classList.add("active");
+function isPrivateIp(ip) {
+  return (
+    ip === "127.0.0.1" ||
+    ip === "::1" ||
+    ip.startsWith("10.") ||
+    ip.startsWith("192.168.") ||
+    ip.startsWith("172.16.") ||
+    ip.startsWith("172.17.") ||
+    ip.startsWith("172.18.") ||
+    ip.startsWith("172.19.") ||
+    ip.startsWith("172.2")
+  );
+}
 
-    const idMap = {
-      "nav-overview": "overviewSection",
-      "nav-users": "usersSection",
-      "nav-volunteers": "volunteersSection",
-      "nav-streetteam": "streetTeamSection",
-      "nav-campaigns": "campaignsSection",
-      "nav-donations": "donationsSection",
-      "nav-joyboost": "joyboostSection",
-      "nav-settings": "settingsSection"
+async function lookupCountry(ip) {
+  if (!ip || isPrivateIp(ip)) return null;
+
+  const cached = ipCache.get(ip);
+  if (cached) return cached;
+
+  const token = (process.env.IPINFO_TOKEN || "").trim();
+  if (!token) return null;
+
+  try {
+    const url = `https://ipinfo.io/${encodeURIComponent(ip)}/json?token=${encodeURIComponent(token)}`;
+    const resp = await fetch(url);
+
+    if (!resp.ok) return null;
+
+    const data = await resp.json();
+    const country = (data.country || "").trim().toUpperCase() || null;
+
+    if (country) ipCache.set(ip, country);
+    return country;
+  } catch {
+    return null; // fail open
+  }
+}
+
+const mongoose = require("./db");
+const db = mongoose.connection;
+
+db.on("error", console.error.bind(console, "MongoDB connection error:"));
+db.once("open", () => {
+  console.log("✅ MongoDB native db ready");
+  
+  // ==================== CAMPAIGN EXPIRATION CRON ====================
+// Runs daily at 2:15 AM server time
+cron.schedule("15 2 * * *", async () => {
+  try {
+    const now = new Date();
+
+    const result = await db.collection("Campaigns").updateMany(
+      {
+        lifecycleStatus: "Active",
+        expiresAt: { $exists: true, $lte: now }
+      },
+      {
+        $set: {
+          lifecycleStatus: "Expired",
+          expiredAt: now,
+          expiredReviewStatus: "Needs Review"
+        }
+      }
+    );
+
+    if (result?.modifiedCount) {
+      console.log("✅ Campaigns auto-expired:", result.modifiedCount);
+    } else {
+      console.log("⏰ Campaign expiration check complete (none expired).");
+    }
+  } catch (err) {
+    console.error("❌ Campaign expiration cron error:", err);
+  }
+});
+
+});
+
+// ==================== ENV VARIABLES ====================
+const PORT = process.env.PORT || 5000;
+const MONGO_URI = process.env.MONGO_URI;
+const DB_NAME = "joyfund";
+
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
+const MAILJET_API_KEY = process.env.MAILJET_API_KEY;
+const MAILJET_API_SECRET = process.env.MAILJET_API_SECRET;
+
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://fundasmile.net";
+
+
+// Public base URL used in emails/links (defaults to FRONTEND_URL)
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || FRONTEND_URL || "https://fundasmile.net").trim();
+// ==================== POSTGRES (JOYDROPS) ====================
+const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
+
+const pgPool = DATABASE_URL
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      // Render "Internal Database URL" usually does NOT need SSL.
+      // If you ever use an external URL that requires SSL, set PGSSLMODE or toggle below.
+      ssl: false
+    })
+  : null;
+
+async function ensureJoyDropsTable() {
+  if (!pgPool) {
+    console.warn("⚠️ Postgres not configured (missing DATABASE_URL). JoyDrops disabled.");
+    return;
+  }
+
+  // Create table if it doesn't exist
+  await pgPool.query(`
+    CREATE TABLE IF NOT EXISTS joydrops (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      micro_action TEXT DEFAULT ''
+    );
+  `);
+
+  console.log("✅ Postgres joydrops table ready");
+}
+
+// Escape a string for safe use inside a RegExp constructor
+function escapeRegex(str) {
+  return String(str || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || "").trim();
+const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || "").trim();
+const SESSION_SECRET = process.env.SESSION_SECRET || "supersecretkey";
+
+// ==================== APP ====================
+const app = express();
+const helmet = require("helmet");
+app.disable("x-powered-by");
+app.use(helmet());
+// ✅ IMPORTANT: Stripe webhook needs RAW body.
+// This middleware uses JSON parsing for everything EXCEPT /api/stripe/webhook
+app.use((req, res, next) => {
+  if (req.originalUrl === "/api/stripe/webhook") return next();
+  return bodyParser.json()(req, res, next);
+});
+app.use(bodyParser.urlencoded({ extended: true }));
+app.set("trust proxy", 1);
+// Nigeria block for sensitive routes only
+app.use(async (req, res, next) => {
+  const p = req.path || "";
+
+  // Only protect sensitive endpoints
+  const isSensitive =
+    p.startsWith("/api/") ||
+    p.startsWith("/admin") ||
+    p.startsWith("/dashboard");
+
+  if (!isSensitive) return next();
+
+  const ip = getClientIp(req);
+  const country = await lookupCountry(ip);
+
+  if (country === "NG") {
+    return res.status(403).json({ success: false, message: "Access restricted." });
+  }
+
+  next();
+});
+process.on("unhandledRejection", (err) => {
+  console.error("UNHANDLED REJECTION:", err);
+});
+
+app.get("/api/_debug/admin-env", (req, res) => {
+  // Never expose environment/security info in production
+  if (process.env.NODE_ENV === "production") {
+    return res.status(404).send("Not found");
+  }
+  return res.json({ ok: true });
+});
+
+
+
+// ==================== CORS (must be before routes) ====================
+const allowedOrigins = [
+  "https://fundasmile.net",
+  "https://www.fundasmile.net"
+];
+
+const corsOptions = {
+  origin: function(origin, cb) {
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error("CORS blocked: " + origin));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  exposedHeaders: ["set-cookie"]
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // ✅ this is the fix
+
+// ==================== BASIC BRUTE-FORCE PROTECTION ====================
+const resetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many attempts. Try again later." }
+});
+
+async function getIdentityStatus(email) {
+  if (!email) return "Not Submitted";
+
+  const cleanEmail = String(email).trim().toLowerCase();
+  const emailExactI = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
+
+  const latest = await db.collection("ID_Verifications")
+    .find({ $or: [{ email: emailExactI }, { Email: emailExactI }] })
+    .sort({ ReviewedAt: -1, createdAt: -1, CreatedAt: -1, _id: -1 })
+    .limit(1)
+    .toArray();
+
+  const row = latest[0];
+  if (!row) return "Not Submitted";
+  return row.Status ?? row.status ?? "Pending";
+}
+
+async function isIdentityApproved(email) {
+  if (!email) return false;
+
+  const cleanEmail = String(email).trim().toLowerCase();
+  const emailExactI = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
+
+  const row = await db.collection("ID_Verifications").findOne({
+    Status: "Approved",
+    $or: [{ email: emailExactI }, { Email: emailExactI }]
+  });
+
+  return !!row;
+}
+
+async function requireVerifiedIdentity(req, res, next) {
+  try {
+    const userEmail = req.session?.user?.email;
+    if (!userEmail) {
+      return res.status(401).json({ success: false, message: "Not logged in" });
+    }
+
+    const ok = await isIdentityApproved(userEmail);
+    if (!ok) {
+      return res.status(403).json({ success: false, message: "Identity not verified" });
+    }
+
+    next();
+  } catch (err) {
+    console.error("requireVerifiedIdentity error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+
+// ✅ Soft-gate identity verification: allow everyone EXCEPT users explicitly Denied
+async function requireIdentityIfDenied(req, res, next) {
+  try {
+    const userEmail = req.session?.user?.email;
+    if (!userEmail) {
+      return res.status(401).json({ success: false, message: "Not logged in" });
+    }
+
+    const status = await getIdentityStatus(userEmail);
+
+    if (status === "Denied") {
+      return res.status(403).json({
+        success: false,
+        message: "Your identity verification was denied. Please resubmit."
+      });
+    }
+
+    req.identityStatus = status;
+    return next();
+  } catch (err) {
+    console.error("requireIdentityIfDenied error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+// ==================== JOYBOOST HELPERS ====================
+const JOYBOOST_REQUESTS = "JoyBoost_Requests";
+const JOYBOOST_SETTINGS = "JoyBoost_Settings"; // per-campaign
+const CAMPAIGN_VIEWS = "CampaignViews";
+
+function now() { return new Date(); }
+
+function safeLower(s) { return String(s || "").trim().toLowerCase(); }
+
+function daysBetween(a, b) {
+  const ms = Math.abs(new Date(b).getTime() - new Date(a).getTime());
+  return Math.floor(ms / (1000 * 60 * 60 * 24));
+}
+
+app.get("/admin-login.html", (req, res) => {
+  return res.status(404).send("Not found");
+});
+
+
+// ==================== JOYBOOST: RESOLVE CAMPAIGN BY ANY ID ====================
+async function findCampaignByAnyId(campaignIdRaw) {
+  const campaignId = String(campaignIdRaw || "").trim();
+  if (!campaignId) return null;
+
+  const idVariants = [{ _id: campaignId }, { Id: campaignId }, { id: campaignId }];
+  if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
+
+  return db.collection("Campaigns").findOne({ $or: idVariants });
+}
+
+function normalizeJoyBoostSetting(doc) {
+  if (!doc) return null;
+  return {
+    _id: String(doc._id),
+    campaignId: doc.campaignId,
+    isActive: !!doc.isActive,
+    featured: !!doc.featured,
+    seoTitle: doc.seoTitle || "",
+    seoDescription: doc.seoDescription || "",
+    shareBlurb: doc.shareBlurb || "",
+    tags: Array.isArray(doc.tags) ? doc.tags : [],
+    rewrittenIntro: doc.rewrittenIntro || "",
+    campaignTitle: doc.campaignTitle || "",
+    campaignOwnerEmail: doc.campaignOwnerEmail || "",
+    updatedAt: doc.updatedAt || null,
+    createdAt: doc.createdAt || null,
+    lastCheckinSentAt: doc.lastCheckinSentAt || null
+  };
+}
+
+
+// ==================== STRIPE ====================
+const stripe = Stripe(STRIPE_SECRET_KEY);
+
+// ==================== STRIPE WEBHOOK (REQUIRED FOR RELIABLE DONATION SAVES) ====================
+app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("❌ Stripe webhook signature failed:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+    try {
+    // ✅ 1) Checkout completed (donations + JoyBoost subscription signups)
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+
+      // ================== JOYBOOST SUPPORTER SUBSCRIPTION (TIERS) ==================
+      if (session.mode === "subscription" && session.metadata?.type === "joyboost_supporter") {
+        const tier = session.metadata?.tier || "unknown";
+        const supporterEmail = (session.customer_details?.email || session.customer_email || "").trim().toLowerCase() || null;
+        const subscriptionId = session.subscription || null;
+        const customerId = session.customer || null;
+
+        // Upsert so webhook retries don't create duplicates
+        const filter = subscriptionId
+          ? { stripeSubscriptionId: subscriptionId }
+          : { stripeSessionId: session.id };
+
+        await db.collection("JoyBoost_Supporters").updateOne(
+          filter,
+          {
+            $set: {
+              tier,
+              supporterEmail,
+              stripeSessionId: session.id,
+              stripeSubscriptionId: subscriptionId,
+              stripeCustomerId: customerId,
+              status: "active",
+              updatedAt: new Date()
+            },
+            $setOnInsert: { createdAt: new Date() }
+          },
+          { upsert: true }
+        );
+
+
+// ✅ Also update the site user record so dashboard changes
+if (supporterEmail) {
+  const se = String(supporterEmail).trim().toLowerCase();
+  const emailRegex = new RegExp("^" + escapeRegex(se) + "$", "i");
+
+  await db.collection("Users").updateOne(
+    { $or: [ { Email: emailRegex }, { email: emailRegex } ] },
+    {
+      $set: {
+        joyboostSupporterActive: true,
+        joyboostSupporterTier: tier,
+        joyboostSupporterStatus: "active",
+        stripeCustomerId: customerId,
+        stripeSubscriptionId: subscriptionId,
+        joyboostSupporterUpdatedAt: new Date()
+      }
+    }
+  );
+}
+        console.log("✅ JoyBoost supporter activated (upsert):", supporterEmail, "tier:", tier);
+      }
+
+
+      // ================== DONATION RECORDING ==================
+      // (Skip JoyBoost payment + JoyBoost supporter subscriptions)
+      if (
+        !(session.metadata?.type === "joyboost") &&
+        !(session.metadata?.type === "joyboost_supporter")
+      ) {
+        const exists = await db.collection("Donations").findOne({ stripeSessionId: session.id });
+
+        if (!exists && session.payment_status === "paid") {
+          const email = session.customer_details?.email || null;
+          const name = session.customer_details?.name || null;
+          const chargedAmount = (session.amount_total || 0) / 100;
+
+          const originalDonation = session.metadata?.originalDonation || null;
+          const campaignId = session.metadata?.campaignId || null;
+          const campaignTitle = session.metadata?.campaignTitle || null;
+
+          const originalNum = Number(originalDonation);
+          const originalAmount = Number.isFinite(originalNum) ? originalNum : null;
+
+          await db.collection("Donations").insertOne({
+            stripeSessionId: session.id,
+            campaignId,
+            campaignTitle,
+
+            date: new Date(),
+            name,
+            email,
+            amount: originalAmount ?? chargedAmount,
+
+            originalDonation,
+            chargedAmount,
+            currency: session.currency,
+            createdAt: new Date(),
+            source: "stripe_webhook"
+          });
+
+          console.log("✅ Donation recorded via webhook:", session.id);
+        } else {
+          console.log("ℹ️ Donation already recorded or not paid:", session.id, session.payment_status);
+        }
+      }
+    } // ✅ CLOSE checkout.session.completed
+
+    // ✅ 2) Subscription canceled (turn JoyBoost OFF + Supporters OFF)
+    
+if (event.type === "customer.subscription.deleted") {
+  const sub = event.data.object;
+  // Turn OFF JoyBoost Supporter tier
+  await db.collection("JoyBoost_Supporters").updateOne(
+    { stripeSubscriptionId: sub.id },
+    { $set: { status: "canceled", canceledAt: new Date(), updatedAt: new Date() } }
+  );
+
+  // ✅ Keep Users in sync too
+  await db.collection("Users").updateMany(
+    { stripeSubscriptionId: sub.id },
+    { $set: { joyboostSupporterActive: false, joyboostSupporterStatus: "canceled", joyboostSupporterUpdatedAt: new Date() } }
+  );
+
+  console.log("🛑 Subscription canceled:", sub.id);
+} // ✅ CLOSE customer.subscription.deleted
+
+    // ✅ 2b) Subscription updated (track "canceling" status for supporters)
+    
+if (event.type === "customer.subscription.updated") {
+  const sub = event.data.object;
+  const status = sub.cancel_at_period_end ? "canceling" : "active";
+
+  await db.collection("JoyBoost_Supporters").updateOne(
+    { stripeSubscriptionId: sub.id },
+    {
+      $set: {
+        status,
+        cancelAtPeriodEnd: !!sub.cancel_at_period_end,
+        currentPeriodEnd: sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
+        updatedAt: new Date()
+      }
+    }
+  );
+
+  await db.collection("Users").updateMany(
+    { stripeSubscriptionId: sub.id },
+    {
+      $set: {
+        joyboostSupporterActive: status === "active" || status === "canceling",
+        joyboostSupporterStatus: status,
+        joyboostSupporterUpdatedAt: new Date()
+      }
+    }
+  );
+
+  console.log("🔁 Supporter subscription updated:", sub.id, status);
+} // ✅ CLOSE customer.subscription.updated
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error("❌ Webhook handler error:", err);
+    return res.status(500).json({ received: false });
+  }
+});
+
+// ==================== PRODUCTION-READY SESSION ====================
+const MongoStorePkg = require("connect-mongo");
+const MongoStore = MongoStorePkg.default || MongoStorePkg;
+
+// ✅ Reuse the already-connected Mongoose/Mongo client
+app.set("trust proxy", 1);
+
+app.use(session({
+  name: "joyfund.sid",
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+
+  store: MongoStore.create({
+    client: mongoose.connection.getClient(),   // <-- THIS FIXES THE AUTH ERROR
+    dbName: "joyfund",
+    collectionName: "sessions"
+  }),
+
+  cookie: {
+  secure: true,
+  sameSite: "lax",
+  httpOnly: true,
+  path: "/",
+  domain: ".fundasmile.net"
+	}
+}));
+
+// ===============================
+// JoyBoost: GET /api/joyboost/me
+// ===============================
+
+// If you already have a "requireLogin" middleware, use yours.
+// Otherwise, this works with typical express-session setup.
+function requireLogin(req, res, next) {
+  const isLoggedIn =
+    (req.session && (req.session.userId || req.session.user || req.session.userEmail)) ||
+    req.user;
+
+  if (!isLoggedIn) {
+    return res.status(401).json({ success: false, message: "Not logged in" });
+  }
+  next();
+}
+
+// ✅ Add this
+const requireAuth = requireLogin;
+
+// Helper: try to find the logged-in user's ID/email from the session
+function getSessionUserLookup(req) {
+  // Prefer userId if you store it
+  const userId =
+    (req.session && (req.session.userId || req.session.user?._id || req.session.user?.id)) ||
+    (req.user && (req.user._id || req.user.id)) ||
+    null;
+
+  // Sometimes apps store email
+  const email =
+    (req.session && (req.session.userEmail || req.session.user?.email)) ||
+    (req.user && req.user.email) ||
+    null;
+
+  return { userId, email };
+}
+
+// ===============================
+// JoyBoost: GET /api/joyboost/me  (NEW MODEL)
+// Applicants: FREE (no Stripe subscription/payment)
+// Supporters: Stripe subscriptions stored in JoyBoost_Supporters
+// ===============================
+app.get("/api/joyboost/me", requireLogin, async (req, res) => {
+  try {
+    if (!db) return res.status(500).json({ success: false, message: "DB not ready" });
+
+    const { email } = getSessionUserLookup(req);
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    if (!cleanEmail) return res.status(400).json({ success: false, message: "Missing session email" });
+
+    const emailExactI = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
+
+    // Latest applicant request (by email)
+    const latestReqArr = await db.collection(JOYBOOST_REQUESTS)
+      .find({ $or: [{ email: emailExactI }, { Email: emailExactI }] })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(1)
+      .toArray();
+
+    const reqDoc = latestReqArr[0] || null;
+    const applicant = reqDoc ? {
+      hasApplication: true,
+      id: String(reqDoc._id),
+      name: reqDoc.name || "",
+      email: (reqDoc.email || reqDoc.Email || "").toLowerCase(),
+      campaignId: reqDoc.campaignId || "",
+      status: reqDoc.status || "Pending",
+      denialReason: reqDoc.denialReason || "",
+      createdAt: reqDoc.createdAt || null,
+      approvalEmailSentAt: reqDoc.approvalEmailSentAt || null
+    } : {
+      hasApplication: false,
+      id: "",
+      name: "",
+      email: cleanEmail,
+      campaignId: "",
+      status: "Not Applied",
+      denialReason: "",
+      createdAt: null,
+      approvalEmailSentAt: null
     };
 
-    const sectionId = idMap[tab.id];
-    document.getElementById(sectionId).classList.add("active");
+    // Supporter status (optional) — stored by webhook when a supporter subscribes
+    const supporterRow = await db.collection("JoyBoost_Supporters")
+      .find({ supporterEmail: emailExactI })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(1)
+      .toArray();
 
-    if (sectionId === "overviewSection") refreshDashboard();
-    if (sectionId === "usersSection") loadUsers();
-    if (sectionId === "volunteersSection") loadVolunteers();
-    if (sectionId === "streetTeamSection") loadStreetTeam();
+    const sup = supporterRow[0] || null;
+    const supporter = sup ? {
+      active: sup.status === "active" || sup.status === "canceling",
+      status: sup.status || "inactive",
+      tier: sup.tier || "unknown",
+      cancelAtPeriodEnd: !!sup.cancelAtPeriodEnd,
+      currentPeriodEnd: sup.currentPeriodEnd ? new Date(sup.currentPeriodEnd).toISOString() : null,
+      stripeSubscriptionId: sup.stripeSubscriptionId || null
+    } : {
+      active: false,
+      status: "inactive",
+      tier: null,
+      cancelAtPeriodEnd: false,
+      currentPeriodEnd: null,
+      stripeSubscriptionId: null
+    };
 
-    if (sectionId === "campaignsSection") {
-      loadCampaigns();
-      loadPendingIdVerifications();
-      loadApprovedIdVerifications();
-      loadExpiredCampaigns();
+    // Compatibility fields (old frontend might expect these) — keep them empty so the UI doesn't show payment links
+    return res.json({
+      success: true,
+      model: "new",
+      applicant,
+      supporter,
+
+      // Legacy/compat (DO NOT use for applicants)
+      active: false,
+      planName: null,
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: null,
+      canceledAt: null,
+      subscriptionId: null,
+      customerId: null
+    });
+  } catch (err) {
+    console.error("GET /api/joyboost/me error:", err);
+    return res.status(500).json({ success: false, message: "JoyBoost lookup failed" });
+  }
+});
+
+// =======================================
+// JoyBoost: GET /api/joyboost/application
+// Returns the latest JoyBoost application for the logged-in user
+// =======================================
+app.get("/api/joyboost/application", requireLogin, async (req, res) => {
+  try {
+    if (!db) return res.status(500).json({ success: false, message: "DB not ready" });
+
+    const { email } = getSessionUserLookup(req);
+    const cleanEmail = String(email || "").trim().toLowerCase();
+
+    if (!cleanEmail) {
+      return res.status(400).json({ success: false, message: "Missing session email" });
     }
 
-    if (sectionId === "donationsSection") loadDonations();
+    const emailExactI = new RegExp(
+      "^" + escapeRegex(cleanEmail) + "$",
+      "i"
+    );
 
-    if (sectionId === "joyboostSection") {
-      loadJoyBoostApps();
-      loadJoyBoostSupporters();
+    // Pull the latest request for this user (by email)
+    const latest = await db.collection(JOYBOOST_REQUESTS)
+      .find({ $or: [{ email: emailExactI }, { Email: emailExactI }] })
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(1)
+      .toArray();
+
+    const reqDoc = latest[0];
+
+    // If they never applied
+    if (!reqDoc) {
+      return res.json({
+        success: true,
+        hasApplication: false,
+        application: null
+      });
     }
+
+    // Normalize for frontend
+    const application = {
+      id: String(reqDoc._id),
+      name: reqDoc.name || "",
+      email: reqDoc.email || reqDoc.Email || "",
+      campaignId: reqDoc.campaignId || "",
+      status: reqDoc.status || "Pending",
+      denialReason: reqDoc.denialReason || "",
+      createdAt: reqDoc.createdAt || null,
+
+      paymentUrl: "",
+	  stripeSessionId: "",
+	  paymentLinkSentAt: null,
+      approvalEmailSentAt: reqDoc.approvalEmailSentAt || null,
+
+      // Payment completion info (your webhook sets these)
+      paid: !!reqDoc.paid,
+      paidAt: reqDoc.paidAt || null,
+      paidAmount: reqDoc.paidAmount || null
+    };
+
+    return res.json({
+      success: true,
+      hasApplication: true,
+      application
+    });
+  } catch (err) {
+    console.error("GET /api/joyboost/application error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== CLOUDINARY ====================
+if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
+  cloudinary.config({
+    cloud_name: CLOUDINARY_CLOUD_NAME,
+    api_key: CLOUDINARY_API_KEY,
+    api_secret: CLOUDINARY_API_SECRET
+  });
+}
+
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    const ok = /^image\/(jpeg|png|gif|webp)$/.test(file.mimetype);
+    if (!ok) return cb(new Error("Only JPG/PNG/GIF/WEBP images are allowed."));
+    cb(null, true);
+  }
+});
+
+// ==================== STRIPE CHECKOUT (CAMPAIGN DONATIONS + MISSION GENERAL) ====================
+app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+  try {
+    const campaignId = String(req.params.campaignId || "").trim();
+    const rawAmount = Number(req.body.amount);
+    const target = Math.round(rawAmount * 100) / 100; // force 2 decimals
+
+    if (!campaignId) {
+      return res.status(400).json({ error: "Missing campaignId" });
+    }
+
+    if (!target || !isFinite(target) || target < 1) {
+      return res.status(400).json({ error: "Invalid donation amount" });
+    }
+
+    // ✅ Default info (MISSION general donation)
+    let donationType = "mission";
+    let campaignTitle = "JoyFund Mission (General Donation)";
+    let campaignDesc = "General donation supporting JoyFund’s mission.";
+
+    // ✅ Only look up real campaigns if NOT mission
+    if (campaignId !== "mission") {
+      donationType = "campaign";
+
+      // Find campaign by Mongo _id OR legacy Id field
+      const idVariants = [{ _id: campaignId }, { Id: campaignId }, { id: campaignId }];
+      if (ObjectId.isValid(campaignId)) idVariants.unshift({ _id: new ObjectId(campaignId) });
+
+      const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+
+if (!campaign) {
+  return res.status(404).json({ success: false, message: "Campaign not found." });
+}
+
+if (campaign.lifecycleStatus === "Expired") {
+  return res.status(403).json({
+    success: false,
+    message: "This campaign is no longer accepting donations."
+  });
+}
+      if (!campaign) {
+        return res.status(404).json({ error: "Campaign not found" });
+      }
+
+      campaignTitle = String(campaign.title || campaign.Title || "JoyFund Campaign").trim();
+      campaignDesc = String(campaign.Description || campaign.description || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .slice(0, 250) || "Campaign donation via JoyFund ❤️";
+    }
+
+    // ✅ Use frontend-provided URLs safely (avoid open redirects)
+    const successUrlRaw = String(req.body.successUrl || "").trim();
+    const cancelUrlRaw  = String(req.body.cancelUrl || "").trim();
+
+    const safeSuccessUrl = successUrlRaw.startsWith(FRONTEND_URL)
+      ? successUrlRaw
+      : `${FRONTEND_URL}/thankyou.html`;
+
+    const safeCancelUrl = cancelUrlRaw.startsWith(FRONTEND_URL)
+      ? cancelUrlRaw
+      : `${FRONTEND_URL}/campaigns.html`;
+
+       // ✅ Charge enough to cover BOTH: JoyFund 5% + Stripe fees
+    // target = amount the donor wants the campaign to receive (you already validated this)
+    const donation = target;
+
+    const joyfundFeeRate = 0.06;
+const stripePercent = 0.029;
+const stripeFixed = 0.30;
+
+// gross so that after Stripe fee, there’s enough to cover:
+// campaign donation + JoyFund fee
+const totalCharge =
+  (donation * (1 + joyfundFeeRate) + stripeFixed) / (1 - stripePercent);
+
+// Use CEIL so the campaign is never shorted due to rounding
+const unitAmount = Math.max(50, Math.ceil(totalCharge * 100));
+
+    // ✅ Create Stripe session using unitAmount
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: campaignTitle,
+            description: campaignDesc
+          },
+          unit_amount: unitAmount
+        },
+        quantity: 1
+      }],
+      success_url: `${safeSuccessUrl}${safeSuccessUrl.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: safeCancelUrl,
+      metadata: {
+        donationType,
+        campaignId,
+        campaignTitle,
+        originalDonation: target.toFixed(2),
+      }
+    });
+
+    return res.json({ sessionId: session.id });
+  } catch (err) {
+    console.error("Stripe Error:", err);
+    return res.status(500).json({ error: "Failed to create checkout session" });
+  }
+});
+
+// ✅ Confirm Stripe payment + record donation ONLY if paid
+app.post("/api/confirm-donation", async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) return res.status(400).json({ ok: false, error: "Missing sessionId" });
+
+    // Retrieve session from Stripe (expand payment_intent for more detail if needed)
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    // Stripe marks paid checkouts with payment_status === "paid"
+    if (session.payment_status !== "paid") {
+      return res.json({ ok: false, recorded: false, status: session.payment_status });
+    }
+
+    // ✅ Idempotent insert (prevents duplicates on refresh)
+    const existing = await db.collection("Donations").findOne({ stripeSessionId: sessionId });
+    if (existing) {
+      return res.json({ ok: true, recorded: false, message: "Already recorded" });
+    }
+
+    // Pull info from metadata you already attach in create-checkout-session
+    const campaignId = session?.metadata?.campaignId || null;
+    const originalDonation = session?.metadata?.originalDonation || null;
+
+    // Amount Stripe charged (this includes fee coverage since you’re doing that)
+    const chargedAmount = (session.amount_total || 0) / 100;
+
+    await db.collection("Donations").insertOne({
+      stripeSessionId: sessionId,
+      campaignId,
+      originalDonation,          // what donor intended (from metadata)
+      chargedAmount,             // what Stripe charged
+      currency: session.currency,
+      createdAt: new Date(),
+      source: "stripe_checkout"
+    });
+
+    return res.json({
+      ok: true,
+      recorded: true,
+      campaignId,
+      originalDonation,
+      chargedAmount,
+      currency: session.currency
+    });
+  } catch (err) {
+    console.error("confirm-donation error:", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// ==================== MAILJET ====================
+const Mailjet = require("node-mailjet");
+
+const mailjetClient =
+  process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET
+    ? Mailjet.connect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET)
+    : null;
+
+const FROM_EMAIL =
+  process.env.EMAIL_FROM ||
+  process.env.MAILJET_SENDER_EMAIL ||
+  "admin@joyfund.net";
+
+const FROM_NAME =
+  process.env.MAILJET_SENDER_NAME || "JoyFund INC";
+
+const ADMIN_EMAIL =
+  process.env.ADMIN_EMAIL ||
+  process.env.NOTIFY_EMAIL ||
+  process.env.EMAIL_TO;
+
+function htmlToText(html = "") {
+  return String(html)
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<\/(p|div|h1|h2|h3|li)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function sendMailjet({ toEmail, toName, subject, html, headers = {} }) {
+  if (!mailjetClient) {
+    console.warn("Mailjet not configured. Skipping email.");
+    return;
+  }
+  if (!toEmail) return;
+
+  const fromEmail = process.env.EMAIL_FROM || FROM_EMAIL;
+  const fromName = process.env.EMAIL_FROM_NAME || FROM_NAME;
+  const text = htmlToText(html);
+
+  try {
+    await mailjetClient.post("send", { version: "v3.1" }).request({
+      Messages: [{
+        From: { Email: fromEmail, Name: fromName },
+        ReplyTo: { Email: fromEmail, Name: fromName },
+        To: [{ Email: toEmail, Name: toName || "" }],
+        Subject: subject,
+        TextPart: text,
+        HTMLPart: html,
+        CustomID: "joyfund",
+        Headers: headers
+
+      }]
+    });
+  } catch (err) {
+    console.error("Mailjet send error:", err);
+    // don't throw
+  }
+}
+
+const EMAIL_FOOTER = `
+<hr style="border:none;border-top:1px solid #eee;margin:20px 0;" />
+<p style="font-size:12px;color:#888;margin-top:20px;">
+  Don’t want to receive JoyFund updates? Reply with “unsubscribe”.
+</p>
+`;
+
+// one call = sends admin + user confirmation
+async function sendSubmissionEmails({
+  type,
+  userEmail,
+  userName,
+  adminHtml,
+  userHtml,
+  adminSubject,
+  userSubject
+}) {
+  const tasks = [];
+
+  // Admin copy
+  tasks.push(
+    sendMailjet({
+      toEmail: ADMIN_EMAIL,
+      subject: adminSubject || `New ${type} submission`,
+      html: (adminHtml || "") + EMAIL_FOOTER,
+      headers: {
+        "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+      }
+    })
+  );
+
+  // User copy
+  if (userEmail) {
+    tasks.push(
+      sendMailjet({
+        toEmail: userEmail,
+        toName: userName || "",
+        subject: userSubject || `We received your ${type}`,
+        html: (userHtml || "") + EMAIL_FOOTER,
+        headers: {
+          "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+        }
+      })
+    );
+  }
+
+  await Promise.allSettled(tasks);
+}
+
+
+// ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
+async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
+  console.log("📧 Campaign approved (needs ID) email sending to:", toEmail);
+  const base = PUBLIC_BASE_URL;
+  const safeCampaignId = String(campaignId || "").trim();
+  const verifyUrl = safeCampaignId
+    ? `${base}/identityverification.html?campaignId=${encodeURIComponent(safeCampaignId)}`
+    : `${base}/identityverification.html`;
+  const dashboardUrl = `${base}/dashboard.html`;
+
+  return sendMailjet({
+    toEmail,
+    toName: "",
+    subject: "Your campaign was approved — quick identity verification needed",
+    text: `Good news — your campaign "${campaignTitle}" was approved.
+
+Before it can go live, we need a quick identity verification.
+
+1) Open: ${verifyUrl}
+2) Upload a clear photo of your ID
+
+You can also access this from your dashboard: ${dashboardUrl}
+
+— JoyFund`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;">
+        <h2 style="margin:0 0 10px 0;">✅ Your campaign was approved</h2>
+        <p style="margin:0 0 10px 0;">
+          Great news — <strong>${escapeHtml(String(campaignTitle || "your campaign"))}</strong> was approved.
+        </p>
+        <p style="margin:0 0 10px 0;">
+          Before it can go live, we need a quick identity verification:
+        </p>
+        <ol style="margin:0 0 12px 20px;padding:0;">
+          <li>Open the verification page</li>
+          <li>Upload a clear photo of your ID</li>
+        </ol>
+        <p style="margin:0 0 14px 0;">
+          <a href="${verifyUrl}" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#111;color:#fff;text-decoration:none;">
+            Upload ID for Verification
+          </a>
+        </p>
+        <p style="margin:0 0 8px 0;color:#555;">
+          Or open your dashboard:
+          <a href="${dashboardUrl}">${dashboardUrl}</a>
+        </p>
+        <p style="margin:14px 0 0 0;color:#777;font-size:12px;">
+          If you didn’t request this, you can ignore this email.
+        </p>
+      </div>
+    `
+  });
+}
+
+async function sendCampaignLiveEmail({ toEmail, campaignTitle }) {
+  console.log("📧 Campaign live email sending to:", toEmail);
+  const campaignsUrl = `${PUBLIC_BASE_URL}/campaigns.html`;
+  return sendMailjet({
+    toEmail,
+    toName: "",
+    subject: "Your campaign is live 🎉",
+    html: `
+      <p>Good news — your campaign <b>${escapeHtml(campaignTitle || "your campaign")}</b> is now live on JoyFund.</p>
+      <p>You can view it here: <a href="${campaignsUrl}">${campaignsUrl}</a></p>
+    `
+  });
+}
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+// ==================== JOYBOOST: DAILY CHECK-IN ====================
+cron.schedule("0 10 * * *", async () => { // daily at 10:00 server time
+  try {
+    const active = await db.collection(JOYBOOST_SETTINGS).find({ isActive: true }).toArray();
+
+    for (const jb of active) {
+      const campaignId = jb.campaignId;
+
+      // Skip if already sent recently
+      if (jb.lastCheckinSentAt && daysBetween(jb.lastCheckinSentAt, now()) < 7) continue;
+
+      // If no donation in last 7 days, send check-in
+      const since = new Date();
+      since.setDate(since.getDate() - 7);
+
+      const recentDonation = await db.collection("Donations").findOne({
+        campaignId,
+        createdAt: { $gte: since }
+      });
+
+      if (!recentDonation) {
+        // Get owner email from JoyBoost settings (preferred), fallback to Campaigns
+        let toEmail = String(jb.campaignOwnerEmail || "").trim().toLowerCase();
+        let toName = "Campaign Owner";
+
+        if (!toEmail) {
+          const campaign = await findCampaignByAnyId(campaignId);
+          toEmail = String(campaign?.Email ?? campaign?.email ?? "").trim().toLowerCase();
+        }
+
+        if (!toEmail) {
+          toEmail = ADMIN_EMAIL; // fallback so you still get notified
+          toName = "JoyFund Admin";
+        }
+
+        await sendMailjet({
+          toEmail,
+          toName,
+          subject: `JoyBoost Check-in Needed: ${jb.campaignTitle || campaignId}`,
+          html: `
+            <p>Your JoyBoost campaign <b>${jb.campaignTitle || campaignId}</b> has no donations in the last 7 days.</p>
+            <p>Suggested next step: refresh the story headline + repost the share blurb.</p>
+            ${jb.shareBlurb ? `<hr /><p><b>Suggested share blurb:</b><br/>${jb.shareBlurb}</p>` : ""}
+          `
+        });
+
+        // ✅ mark as sent so you don't spam
+        await db.collection(JOYBOOST_SETTINGS).updateOne(
+          { campaignId },
+          { $set: { lastCheckinSentAt: now() } }
+        );
+      }
+    }
+  } catch (err) {
+    console.error("JOYBOOST DAILY CHECK-IN error:", err);
+  }
+});
+
+// ==================== LIVE VISITOR TRACKING ====================
+const liveVisitors = {};
+app.post("/api/track-visitor", (req, res) => {
+  const { visitorId } = req.body;
+  if (!visitorId) return res.status(400).json({ success: false, message: "Missing visitorId" });
+
+  const now = Date.now();
+  liveVisitors[visitorId] = now;
+
+  for (const id in liveVisitors) {
+    if (now - liveVisitors[id] > 30000) delete liveVisitors[id];
+  }
+
+  res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
+});
+
+// Backwards-compatible analytics endpoint (older pages call this)
+app.post("/api/track/pageview", (req, res) => {
+  // Reuse the same lightweight visitor tracking
+  const { visitorId } = req.body || {};
+  if (!visitorId) return res.status(400).json({ success: false, message: "Missing visitorId" });
+
+  const now = Date.now();
+  liveVisitors[String(visitorId)] = now;
+
+  for (const id in liveVisitors) {
+    if (now - liveVisitors[id] > 30000) delete liveVisitors[id];
+  }
+
+  return res.json({ success: true, activeCount: Object.keys(liveVisitors).length });
+});
+
+// ==================== USERS & AUTH ====================
+
+// Sign up a new user
+app.post("/api/signup", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
+
+    const collection = db.collection("Users"); // ✅ FIXED (no db.db)
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanName = String(name).trim();
+
+    const existing = await collection.findOne({ Email: cleanEmail });
+    if (existing) return res.status(400).json({ error: "Email already exists" });
+
+    const hashed = await bcrypt.hash(String(password), 10);
+
+    const newUser = {
+      Name: cleanName,
+      Email: cleanEmail,
+      PasswordHash: hashed,
+      JoinDate: new Date()
+    };
+
+    await collection.insertOne(newUser);
+	
+	await sendSubmissionEmails({
+  type: "Signup",
+  userEmail: cleanEmail,
+  userName: cleanName,
+  adminSubject: "New User Signup",
+  userSubject: "Welcome to JoyFund 💙💗",
+  adminHtml: `
+    <h2>New User Signup</h2>
+    <p><b>Name:</b> ${cleanName}</p>
+    <p><b>Email:</b> ${cleanEmail}</p>
+    <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+  `,
+  userHtml: `
+    <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.5;">
+      <h2 style="margin:0 0 10px 0;">Welcome to JoyFund 💙💗</h2>
+
+      <p style="margin:0 0 12px 0;">Hi ${cleanName},</p>
+
+      <p style="margin:0 0 12px 0;">
+        I’m really glad you’re here. JoyFund exists to help people fund joy-based experiences that support mental health and healing —
+        the kind of moments that can bring someone back to themselves.
+      </p>
+
+      <p style="margin:0 0 12px 0;">
+        You don’t have to do anything right away. If you joined because you’re going through something,
+        or you’re just curious, either is perfectly okay.
+      </p>
+
+      <p style="margin:0 0 12px 0;">
+        If you ever want help getting started, just reply to this email and tell me what you’re hoping for.
+        I read every message.
+      </p>
+
+      <p style="margin:0 0 6px 0;">With love,</p>
+      <p style="margin:0;"><b>Corey</b><br/>Founder, JoyFund</p>
+    </div>
+  `,
+});
+
+    req.session.user = {
+      name: newUser.Name,
+      email: newUser.Email,
+      joinDate: newUser.JoinDate
+    };
+
+    // ✅ IMPORTANT: force session write before responding (mobile fix)
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error (signup):", err);
+        return res.status(500).json({ error: "Session failed to save" });
+      }
+      return res.json({ ok: true, loggedIn: true, user: req.session.user });
+    });
+
+  } catch (err) {
+    console.error("Signup error:", err);
+    res.status(500).json({ error: "Signup failed" });
+  }
+});
+
+// Sign in an existing user
+app.post("/api/signin", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Missing fields" });
+
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    const usersCollection = db.collection("Users");
+const emailRegex = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
+
+const user = await usersCollection.findOne({
+  $or: [
+    { Email: emailRegex },
+    { email: emailRegex }
+  ]
+});
+
+    if (!user) return res.status(401).json({ error: "Invalid credentials" });
+
+    const match = await bcrypt.compare(password, user.PasswordHash);
+    if (!match) return res.status(401).json({ error: "Invalid credentials" });
+
+    req.session.user = {
+      name: user.Name,
+      email: user.Email,
+      joinDate: user.JoinDate
+    };
+
+    // ✅ IMPORTANT: force session write before responding (mobile fix)
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error (signin):", err);
+        return res.status(500).json({ error: "Session failed to save" });
+      }
+      return res.json({ ok: true, loggedIn: true, user: req.session.user });
+    });
+
+  } catch (err) {
+    console.error("Signin error:", err);
+    res.status(500).json({ error: "Signin failed" });
+  }
+});
+
+// ==================== PASSWORD RESET ====================
+
+// Create a stable hash of the reset token so we never store the raw token in DB
+function hashResetToken(token) {
+  const secret = String(process.env.RESET_TOKEN_SECRET || "").trim();
+  return crypto
+    .createHash("sha256")
+    .update(token + "|" + secret)
+    .digest("hex");
+}
+
+// 1) Request reset link (always returns success to avoid email enumeration)
+app.post("/api/request-reset-password", resetLimiter, async (req, res) => {
+  try {
+    const emailRaw = String(req.body?.email || "").trim().toLowerCase();
+    if (!emailRaw) return res.status(400).json({ success: false, message: "Missing email" });
+
+    const collection = db.collection("Users");
+    const user = await usersCollection.findOne({ Email: { $regex: `^${emailRaw}$`, $options: "i" } });
+
+    // Always return success (prevents attackers from checking what emails exist)
+    if (!user) {
+      return res.json({ success: true, message: "If that email exists, a reset link was sent." });
+    }
+
+    // Create token + expiry
+    const token = crypto.randomBytes(32).toString("hex");
+    const tokenHash = hashResetToken(token);
+    const expires = new Date(Date.now() + 1000 * 60 * 30); // 30 minutes
+
+    await collection.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          resetTokenHash: tokenHash,
+          resetTokenExpiresAt: expires,
+          resetRequestedAt: new Date()
+        }
+      }
+    );
+
+    const resetLink = `${FRONTEND_URL}/set-new-password.html?token=${encodeURIComponent(token)}&email=${encodeURIComponent(emailRaw)}`;
+
+    // Send email
+    await sendMailjet({
+      toEmail: emailRaw,
+      toName: user.Name || "",
+      subject: "Reset your JoyFund password",
+      html: `
+        <p>Hi ${user.Name || "there"},</p>
+        <p>We received a request to reset your JoyFund password.</p>
+        <p><a href="${resetLink}">Click here to reset your password</a></p>
+        <p>This link expires in 30 minutes.</p>
+        <p>If you didn’t request this, you can ignore this email.</p>
+      `
+    });
+
+    return res.json({ success: true, message: "If that email exists, a reset link was sent." });
+  } catch (err) {
+    console.error("POST /api/request-reset-password error:", err);
+    // Still return success to avoid leaking internal errors
+    return res.json({ success: true, message: "If that email exists, a reset link was sent." });
+  }
+});
+
+// 2) Reset password using token
+app.post("/api/reset-password", resetLimiter, async (req, res) => {
+  try {
+    const emailRaw = String(req.body?.email || "").trim().toLowerCase();
+    const tokenRaw = String(req.body?.token || "").trim();
+    const newPassword = String(req.body?.password || "");
+
+    if (!emailRaw || !tokenRaw || !newPassword) {
+      return res.status(400).json({ success: false, message: "Missing email, token, or password" });
+    }
+
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, message: "Password must be at least 8 characters" });
+    }
+
+    const collection = db.collection("Users");
+    const tokenHash = hashResetToken(tokenRaw);
+
+    const user = await usersCollection.findOne({
+      Email: { $regex: `^${emailRaw}$`, $options: "i" },
+      resetTokenHash: tokenHash,
+      resetTokenExpiresAt: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: "Invalid or expired reset link" });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10);
+
+    await collection.updateOne(
+      { _id: user._id },
+      {
+        $set: { PasswordHash: hashed, passwordUpdatedAt: new Date() },
+        $unset: { resetTokenHash: "", resetTokenExpiresAt: "" }
+      }
+    );
+
+    return res.json({ success: true, message: "Password updated" });
+  } catch (err) {
+    console.error("POST /api/reset-password error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
+
+app.get("/api/_debug/session", (req, res) => {
+  if (process.env.NODE_ENV === "production") return res.status(404).send("Not found");
+  res.json({
+    hasCookieHeader: !!req.headers.cookie,
+    sidCookiePresent: (req.headers.cookie || "").includes("joyfund.sid="),
+    sessionID: req.sessionID || null,
+    hasSession: !!req.session,
+    isAdmin: !!(req.session && req.session.admin)
   });
 });
 
-// ==================== ADMIN ACTION HELPERS ====================
-async function setCampaignStatus(id, status) {
-  const res = await fetch(`${backendURL}/api/admin/campaigns/${encodeURIComponent(id)}/status`, {
-    method: "PATCH",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status })
-  });
-  const data = await safeReadJson(res);
-  if (!res.ok) throw new Error(data?.message || "Failed to update campaign");
-  return data;
-}
-
-async function approveIdv(id) {
-  const res = await fetch(`${backendURL}/api/admin/id-verifications/${encodeURIComponent(id)}/approve`, {
-    method: "PATCH",
-    credentials: "include"
-  });
-  const data = await safeReadJson(res);
-  if (!res.ok) throw new Error(data?.message || "Approve failed");
-  return data;
-}
-
-async function denyIdv(id) {
-  const reason = prompt("Reason for denial? (optional)") || "";
-  const res = await fetch(`${backendURL}/api/admin/id-verifications/${encodeURIComponent(id)}/deny`, {
-    method: "PATCH",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reason })
-  });
-  const data = await safeReadJson(res);
-  if (!res.ok) throw new Error(data?.message || "Deny failed");
-  return data;
-}
-
-// ==================== JOYBOOST ====================
-function jbTagClass(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "pending") return "pending";
-  if (s === "approved") return "approved";
-  if (s === "denied") return "denied";
-  return "";
-}
-
-async function setJoyBoostStatus(requestId, status, extra = {}) {
-  const res = await fetch(`${backendURL}/api/admin/joyboost/requests/${encodeURIComponent(requestId)}/status`, {
-    method: "PATCH",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status: String(status || "").trim(), ...extra })
-  });
-
-  const data = await safeReadJson(res);
-  if (!res.ok) throw new Error(data?.message || "Failed to update JoyBoost request");
-  return data;
-}
-
-async function loadJoyBoostApps() {
-  const tbody = document.querySelector("#joyboostTable tbody");
-  if (!tbody) return;
-
-  tbody.innerHTML = "";
+// ==================== DELETE ACCOUNT ====================
+// Deletes the currently logged-in user's account (and logs them out)
+app.delete("/api/delete-account", async (req, res) => {
   try {
-    const res = await fetch(`${backendURL}/api/admin/joyboost/requests`, {
-      credentials: "include",
-      cache: "no-store"
+    const userEmail = req.session?.user?.email;
+    if (!userEmail) {
+      return res.status(401).json({ ok: false, error: "Not logged in" });
+    }
+
+    const email = String(userEmail).trim().toLowerCase();
+
+    // ✅ delete campaigns owned by this account
+    const campaignsResult = await db.collection("Campaigns").deleteMany({
+      $or: [
+        { Email: email },
+        { email: email },
+        { Email: { $regex: `^${email}$`, $options: "i" } }
+      ]
     });
-    const data = await safeReadJson(res);
-    const apps = Array.isArray(data?.requests) ? data.requests : [];
 
-    apps.forEach(app => {
-      const id = app._id || app.id;
-      const status = app.status || "Pending";
+    // delete user
+    const userResult = await db.collection("Users").deleteOne({ Email: email });
 
-      const goal = app.goal || "—";
-      const campaignLabel = app.campaignTitle || app.campaignId || "—";
+    // logout
+    req.session.destroy((err) => {
+      if (err) {
+        console.error("delete-account session destroy error:", err);
+        return res.status(500).json({ ok: false, error: "Failed to logout after deletion" });
+      }
 
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${app.createdAt ? new Date(app.createdAt).toLocaleString() : "—"}</td>
-        <td>${app.name || "—"}<div class="small">${app.email || "—"}</div></td>
-        <td>${campaignLabel}</td>
-        <td>${goal}</td>
-        <td><span class="tag ${jbTagClass(status)}">${status}</span></td>
-        <td>
-          <button class="action-btn neutral" type="button">View</button>
-          <button class="action-btn approve" type="button">Approve</button>
-          <button class="action-btn reject" type="button">Deny</button>
-        </td>
-      `;
-      tbody.appendChild(tr);
+      res.clearCookie("joyfund.sid", {
+  path: "/",
+  secure: true,
+  sameSite: "lax",
+  domain: ".fundasmile.net"
+});
 
-      const [viewBtn, approveBtn, denyBtn] = tr.querySelectorAll("button");
 
-      viewBtn.addEventListener("click", () => openJoyBoostModal(app));
-
-      approveBtn.addEventListener("click", async () => {
-        try {
-          approveBtn.disabled = true; denyBtn.disabled = true; viewBtn.disabled = true;
-          const adminNotes = prompt("Optional internal notes for this approval?") || "";
-          await setJoyBoostStatus(id, "Approved", adminNotes ? { adminNotes } : {});
-          await loadJoyBoostApps();
-          await loadJoyBoostCount();
-        } catch (e) {
-          alert(e.message || "Approve failed");
-        } finally {
-          approveBtn.disabled = false; denyBtn.disabled = false; viewBtn.disabled = false;
-        }
-      });
-
-      denyBtn.addEventListener("click", async () => {
-        try {
-          approveBtn.disabled = true; denyBtn.disabled = true; viewBtn.disabled = true;
-          const reason = prompt("Reason for denial? (optional)") || "";
-          await setJoyBoostStatus(id, "Denied", reason ? { reason } : {});
-          await loadJoyBoostApps();
-          await loadJoyBoostCount();
-        } catch (e) {
-          alert(e.message || "Deny failed");
-        } finally {
-          approveBtn.disabled = false; denyBtn.disabled = false; viewBtn.disabled = false;
-        }
+      return res.json({
+        ok: true,
+        deleted: userResult.deletedCount === 1,
+        campaignsDeleted: campaignsResult.deletedCount
       });
     });
   } catch (err) {
-    console.error("loadJoyBoostApps error:", err);
+    console.error("DELETE /api/delete-account error:", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
   }
-}
+});
 
-async function loadJoyBoostSupporters() {
-  const tbody = document.querySelector("#joyboostSupportersTable tbody");
-  if (!tbody) return;
+// Sign out the current user
+app.post("/api/signout", (req, res) => {
+  req.session.destroy(err => {
+    if (err) return res.status(500).json({ success: false });
 
-  tbody.innerHTML = "";
-
-  try {
-    const res = await fetch(`${backendURL}/api/admin/joyboost/supporters`, {
-      credentials: "include",
-      cache: "no-store"
+    res.clearCookie("joyfund.sid", {
+      path: "/",
+      secure: true,
+      sameSite: "lax",
+      domain: ".fundasmile.net"
     });
 
-    const data = await safeReadJson(res);
-    const supporters = Array.isArray(data?.supporters) ? data.supporters : [];
+    res.json({ success: true });
+  });
+});
+// Check if the user is logged in
+app.get("/api/check-session", async (req, res) => {
+  try {
+    if (!req.session.user) {
+      return res.json({
+        loggedIn: false,
+        user: null,
+        identityVerified: false,
+        identityStatus: "Not Submitted"
+      });
+    }
 
-    supporters.forEach(s => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${s.createdAt ? new Date(s.createdAt).toLocaleString() : "—"}</td>
-        <td>${s.supporterEmail || "—"}</td>
-        <td>${s.tier || "—"}</td>
-        <td>${s.status || "active"}</td>
-        <td class="mono">${s.stripeSubscriptionId || "—"}</td>
-      `;
-      tbody.appendChild(tr);
+    const identityStatus = await getIdentityStatus(req.session.user.email);
+    const identityVerified = identityStatus === "Approved";
+
+    return res.json({
+      loggedIn: true,
+      user: req.session.user,
+      identityVerified,
+      identityStatus
     });
   } catch (err) {
-    console.error("loadJoyBoostSupporters error:", err);
-  }
-}
-
-// Modal wiring (JoyBoost)
-const jbModalBackdrop = document.getElementById("jbModalBackdrop");
-const jbCloseBtn = document.getElementById("jbCloseBtn");
-const jbDeclineBtn = document.getElementById("jbDeclineBtn");
-const jbApproveBtn = document.getElementById("jbApproveBtn");
-const jbAdminNotes = document.getElementById("jbAdminNotes");
-
-let jbCurrent = null;
-
-function closeJoyBoostModal() {
-  jbModalBackdrop.style.display = "none";
-  jbModalBackdrop.setAttribute("aria-hidden", "true");
-  jbCurrent = null;
-  jbAdminNotes.value = "";
-}
-jbCloseBtn.addEventListener("click", closeJoyBoostModal);
-jbModalBackdrop.addEventListener("click", (e) => {
-  if (e.target === jbModalBackdrop) closeJoyBoostModal();
-});
-
-function openJoyBoostModal(app) {
-  jbCurrent = app;
-  jbModalBackdrop.style.display = "flex";
-  jbModalBackdrop.setAttribute("aria-hidden", "false");
-
-  const status = app.status || "Pending";
-  const tag = document.getElementById("jbStatusTag");
-  tag.innerText = status;
-  tag.className = `tag ${jbTagClass(status)}`;
-
-  document.getElementById("jbApplicantName").innerText = app.name || "—";
-  document.getElementById("jbApplicantEmail").innerText = app.email || "—";
-
-  document.getElementById("jbCampaignTitle").innerText = app.campaignTitle || "—";
-  document.getElementById("jbCampaignRef").innerText = app.campaignId || "—";
-
-  const link = (app.campaignLink || "").trim();
-  document.getElementById("jbCampaignLinkWrap").innerHTML =
-    link ? `<a href="${link}" target="_blank" rel="noopener">Open campaign link</a>` : "—";
-
-  document.getElementById("jbGoal").innerText = app.goal || "—";
-  document.getElementById("jbJoy").innerText = app.joy ? `Joy: ${app.joy}` : "Joy: —";
-  document.getElementById("jbCreatedAt").innerText =
-    app.createdAt ? `Submitted: ${new Date(app.createdAt).toLocaleString()}` : "Submitted: —";
-
-  document.getElementById("jbNotes").innerText = (app.notes || "—");
-  jbAdminNotes.value = app.adminNotes || "";
-}
-
-jbDeclineBtn.addEventListener("click", async () => {
-  if (!jbCurrent) return;
-  try {
-    jbDeclineBtn.disabled = true;
-    const reason = prompt("Reason for denial? (optional)") || "";
-    await setJoyBoostStatus(jbCurrent._id || jbCurrent.id, "Denied", reason ? { reason } : {});
-    closeJoyBoostModal();
-    await loadJoyBoostApps();
-    await loadJoyBoostCount();
-  } catch (e) {
-    alert(e.message || "Deny failed");
-  } finally {
-    jbDeclineBtn.disabled = false;
+    console.error("check-session error:", err);
+    return res.json({
+      loggedIn: false,
+      user: null,
+      identityVerified: false,
+      identityStatus: "Not Submitted"
+    });
   }
 });
 
-jbApproveBtn.addEventListener("click", async () => {
-  if (!jbCurrent) return;
+//===================== JOYBOOST SUPPORTER TIERS CHECKOUT =====================
+// This is for "Support JoyBoost" (supporters), NOT applicants needing help.
+// Frontend sends: { tier: "bronze" | "silver" | "gold" | "diamond", email?: "" }
+
+app.post("/api/joyboost/supporter/checkout", requireLogin, async (req, res) => {
   try {
-    jbApproveBtn.disabled = true;
-    const adminNotes = jbAdminNotes.value.trim();
-    await setJoyBoostStatus(jbCurrent._id || jbCurrent.id, "Approved", adminNotes ? { adminNotes } : {});
-    closeJoyBoostModal();
-    await loadJoyBoostApps();
-    await loadJoyBoostCount();
+    const tierRaw = String(req.body?.tier || "").trim().toLowerCase();
+    // Use the logged-in user email first (most reliable)
+    const sessionEmail = String(req.session?.user?.email || "").trim().toLowerCase();
+    const email = sessionEmail || String(req.body?.email || "").trim().toLowerCase();
+    if (!email) return res.status(400).json({ error: "Missing supporter email" });
+
+    // ✅ Must be a real JoyFund user
+            const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
+    const userDoc = await db.collection("Users").findOne({ $or: [ { Email: emailRegex }, { email: emailRegex } ] });
+    if (!userDoc) return res.status(403).json({ error: "Please log in with a valid JoyFund account to support JoyBoost." });
+
+    const tierMap = {
+  bronze: process.env.JOYBOOST_SUPPORTER_BRONZE_PRICE_ID,
+  silver: process.env.JOYBOOST_SUPPORTER_SILVER_PRICE_ID,
+  gold: process.env.JOYBOOST_SUPPORTER_GOLD_PRICE_ID,
+  platinum: process.env.JOYBOOST_SUPPORTER_PLATINUM_PRICE_ID
+};
+
+    const priceId = tierMap[tierRaw];
+    if (!priceId) return res.status(400).json({ error: "Invalid tier" });
+	
+	// ❌ Block duplicate active subscriptions
+const existing = await db.collection("JoyBoost_Supporters").findOne({
+  supporterEmail: email,
+  status: { $in: ["active", "canceling"] }
+});
+
+if (existing) {
+  return res.status(400).json({
+    error: "You already have an active JoyBoost subscription."
+  });
+}
+
+
+    // 🔐 STRIPE IDEMPOTENCY KEY (this is the real fix)
+    const baseKey = `${email || "anon"}-${tierRaw}`;
+    const timeBucket = Math.floor(Date.now() / 60000); // 60-second window
+    const idemKey = crypto.createHash("sha256")
+      .update(baseKey + timeBucket)
+      .digest("hex");
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      payment_method_types: ["card"],
+      line_items: [{ price: priceId, quantity: 1 }],
+      customer_email: email || undefined,
+      metadata: { type: "joyboost_supporter", tier: tierRaw },
+      success_url: `${FRONTEND_URL}/dashboard.html?jb_supporter=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${FRONTEND_URL}/joyboost.html?support_canceled=1`
+    }, {
+      idempotencyKey: idemKey
+    });
+
+    return res.json({ url: session.url });
+
+  } catch (err) {
+    console.error("JoyBoost supporter checkout error:", err);
+    return res.status(500).json({ error: err.message || "Stripe error" });
+  }
+});
+
+// ==================== JOYBOOST: APPLY ====================
+app.post("/api/joyboost/apply", async (req, res) => {
+  try {
+    const { name, email, campaignId, goal, joy, notes } = req.body || {};
+
+    if (!name || !email || !campaignId || !goal || !joy) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const doc = {
+      name: String(name).trim(),
+      email: safeLower(email),
+      campaignId: String(campaignId).trim(),
+      goal: String(goal).trim(),
+      joy: String(joy).trim(),
+      notes: String(notes || "").trim(),
+      status: "Pending",
+      createdAt: now()
+    };
+
+    await db.collection(JOYBOOST_REQUESTS).insertOne(doc);
+
+    // Notify admin
+    if (typeof sendMailjet === "function") {
+      await sendMailjet({
+        toEmail: ADMIN_EMAIL,
+        toName: "JoyFund Admin",
+        subject: "New JoyBoost Request",
+        html: `
+          <h2>New JoyBoost Request</h2>
+          <p><b>Name:</b> ${doc.name}</p>
+          <p><b>Email:</b> ${doc.email}</p>
+          <p><b>Campaign ID:</b> ${doc.campaignId}</p>
+          <p><b>Main goal:</b> ${doc.goal}</p>
+          <p><b>Joy:</b> ${doc.joy}</p>
+          <p><b>Notes:</b> ${doc.notes || "—"}</p>
+          <p><b>Status:</b> ${doc.status}</p>
+        `
+      });
+    }
+
+    // Confirm requester
+    await sendMailjet({
+      toEmail: doc.email,
+      toName: doc.name,
+      subject: "We received your JoyBoost request 💛",
+      html: `
+        <p>Hi ${doc.name},</p>
+        <p>We received your JoyBoost request for campaign <b>${doc.campaignId}</b>.</p>
+        <p>We’ll review it and email you with next steps.</p>
+        <p>— JoyFund</p>
+      `
+    });
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("POST /api/joyboost/apply error:", err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ==================== JOYBOOST: FEATURED LIST ====================
+app.get("/api/joyboost/spotlight", async (req, res) => {
+  try {
+    const list = await db.collection(JOYBOOST_SETTINGS)
+      .find({ $or: [{ featured: true }, { isActive: true }] })
+      .sort({ featured: -1, updatedAt: -1, createdAt: -1 })
+      .limit(20)
+      .toArray();
+
+    return res.json({ success: true, spotlight: list });
+  } catch (err) {
+    console.error("GET /api/joyboost/spotlight error:", err);
+    return res.status(500).json({ success: false });
+  }
+});
+
+// ==================== TRACK CAMPAIGN VIEW ====================
+app.post("/api/track-view", async (req, res) => {
+  try {
+    const { campaignId } = req.body || {};
+    if (!campaignId) return res.status(400).json({ ok: false });
+
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").toString().split(",")[0].trim();
+    const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+    await db.collection(CAMPAIGN_VIEWS).updateOne(
+      { campaignId: String(campaignId).trim(), ip, day },
+      { $setOnInsert: { createdAt: now() } },
+      { upsert: true }
+    );
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /api/track-view error:", err);
+    return res.status(500).json({ ok: false });
+  }
+});
+
+// ==================== JOYBOOST: MOMENTUM ====================
+app.get("/api/joyboost/momentum/:campaignId", async (req, res) => {
+  try {
+    const campaignId = String(req.params.campaignId || "").trim();
+    if (!campaignId) return res.status(400).json({ success: false });
+
+    const last14 = new Date();
+    last14.setDate(last14.getDate() - 14);
+
+    const views14 = await db.collection(CAMPAIGN_VIEWS).countDocuments({
+      campaignId,
+      createdAt: { $gte: last14 }
+    });
+
+    const donations14 = await db.collection("Donations").countDocuments({
+      campaignId,
+      createdAt: { $gte: last14 }
+    });
+
+    const totalDonations = await db.collection("Donations").aggregate([
+  { $match: { campaignId } },
+  {
+    $group: {
+      _id: "$campaignId",
+      sum: {
+        $sum: {
+          $convert: { input: "$originalDonation", to: "double", onError: 0, onNull: 0 }
+        }
+      }
+    }
+  }
+]).toArray();
+
+    return res.json({
+      success: true,
+      campaignId,
+      views14,
+      donations14,
+      totalRaised: Number(totalDonations?.[0]?.sum || 0)
+    });
+  } catch (err) {
+    console.error("GET /api/joyboost/momentum error:", err);
+    return res.status(500).json({ success: false });
+  }
+});
+
+
+
+//=====================DONATION SUMMARY============
+app.get("/api/dashboard/donations-summary", async (req, res) => {
+  try {
+    const userEmail = req.session?.user?.email;
+    if (!userEmail) return res.status(401).json({ ok: false, error: "Not logged in" });
+
+    const email = String(userEmail).trim().toLowerCase();
+    const emailI = new RegExp("^" + escapeRegex(email) + "$", "i");
+
+    // 1) Find campaigns owned by this user
+    const ownedCampaigns = await db.collection("Campaigns").find({
+      $or: [{ Email: emailI }, { email: emailI }]
+    }, {
+      projection: { _id: 1, Id: 1, id: 1, Title: 1, title: 1 }
+    }).toArray();
+
+    // Build list of possible campaignId values that donations might store
+    const ownedIds = new Set();
+    for (const c of ownedCampaigns) {
+      if (c?._id) ownedIds.add(String(c._id));
+      if (c?.Id) ownedIds.add(String(c.Id));
+      if (c?.id) ownedIds.add(String(c.id));
+    }
+
+    if (ownedIds.size === 0) {
+      return res.json({ ok: true, totalRaised: 0, breakdown: [] });
+    }
+
+    // 2) Pull donations made TO those campaigns
+    const donationsToYou = await db.collection("Donations").find({
+      campaignId: { $in: Array.from(ownedIds) }
+    }).toArray();
+
+    // 3) Sum totals using originalDonation (what donor intended your campaign to receive)
+    const getOriginal = (d) => {
+      const n = Number(d.originalDonation ?? d.amount ?? d.Amount ?? 0);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const byCampaign = new Map();
+
+    for (const d of donationsToYou) {
+      const cid = String(d.campaignId || "");
+      const amt = getOriginal(d);
+      const title = d.campaignTitle || d.Title || "Untitled Campaign";
+
+      const prev = byCampaign.get(cid) || {
+        campaignId: cid,
+        campaignTitle: title,
+        total: 0,
+        count: 0,
+        lastDate: null
+      };
+
+      prev.total += amt;
+      prev.count += 1;
+
+      const dt = d.createdAt || d.CreatedAt || d.date || d.Date || null;
+      const parsed = dt ? new Date(dt) : null;
+      if (parsed && !isNaN(parsed.getTime())) {
+        if (!prev.lastDate || parsed > new Date(prev.lastDate)) prev.lastDate = parsed.toISOString();
+      }
+
+      if (title && title !== "Untitled Campaign") prev.campaignTitle = title;
+
+      byCampaign.set(cid, prev);
+    }
+
+    const breakdown = Array.from(byCampaign.values()).sort((a, b) => b.total - a.total);
+    const totalRaised = breakdown.reduce((s, x) => s + (Number(x.total) || 0), 0);
+
+    return res.json({ ok: true, totalRaised, breakdown });
+  } catch (err) {
+    console.error("GET /api/dashboard/donations-summary error:", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+
+// ==================== ADMIN ====================
+function requireAdmin(req, res, next) {
+  if (req.session && req.session.admin) return next();
+  res.status(403).json({ success: false, message: "Forbidden" });
+}
+
+// Protect ALL /api/admin/* routes by default
+app.use("/api/admin", requireAdmin);
+
+
+const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { success:false, message:"Too many attempts." }
+});
+
+// 🔒 Admin env sanity check (protected by ADMIN_KEY header)
+app.get("/api/admin/_envcheck", (req, res) => {
+  const key = req.headers["x-admin-key"];
+  if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
+    return res.status(404).send("Not found");
+  }
+
+  const u = String(process.env.ADMIN_USERNAME ?? "");
+  const p = String(process.env.ADMIN_PASSWORD ?? "");
+
+  return res.json({
+    ADMIN_USERNAME_set: !!u.trim(),
+    ADMIN_PASSWORD_set: !!p.trim(),
+    ADMIN_USERNAME_len: u.trim().length,
+    ADMIN_PASSWORD_len: p.trim().length
+  });
+});
+
+
+app.post("/api/admin-login", adminLimiter, (req, res) => {
+  const username = String(req.body?.username ?? req.body?.email ?? req.body?.user ?? "").trim();
+  const password = String(req.body?.password ?? req.body?.pass ?? "").trim();
+
+  const adminUser = String(process.env.ADMIN_USERNAME ?? "").trim();
+  const adminPass = String(process.env.ADMIN_PASSWORD ?? "").trim();
+
+  // Fail closed if env vars are missing
+  if (!adminUser || !adminPass) {
+    return res.status(500).json({ success: false, message: "Admin credentials not configured on server" });
+  }
+
+const okUser = safeEqual(String(username).toLowerCase(), String(adminUser).toLowerCase());
+const okPass = safeEqual(password, adminPass);
+
+  if (!okUser || !okPass) {
+    return res.status(401).json({ success: false, message: "Invalid admin username or password" });
+  }
+
+  // Regenerate session when elevating privileges (prevents session fixation)
+  req.session.regenerate((err) => {
+    if (err) return res.status(500).json({ success: false, message: "Session error" });
+
+    req.session.admin = true;
+    req.session.adminAt = Date.now();
+
+    req.session.save((err2) => {
+      if (err2) return res.status(500).json({ success: false, message: "Session save failed" });
+      return res.json({ success: true });
+    });
+  });
+});
+
+app.get("/api/admin-check", requireAdmin, (req, res) => {
+  return res.json({ admin: true });
+});
+
+app.post("/api/admin-logout", requireAdmin, (req, res) => {
+  req.session.destroy(() => {
+    // Use the same cookie name you set in express-session config:
+    // You are using name: "joyfund.sid"
+    res.clearCookie("joyfund.sid", {
+      path: "/",
+      secure: true,
+      sameSite: "lax",
+      domain: ".fundasmile.net"
+    });
+    return res.json({ success: true });
+  });
+});
+
+
+// ✅ ONE-TIME MAINTENANCE: normalize campaign owner emails to lowercase
+app.post("/api/admin/normalize-campaign-emails", async (req, res) => {
+  try {
+    // Simple protection: require a secret header
+    const key = req.headers["x-admin-key"];
+    if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+
+    // Normalize both Email and email fields (some old docs may use either)
+    const r1 = await db.collection("Campaigns").updateMany(
+      { Email: { $type: "string" } },
+      [{ $set: { Email: { $toLower: "$Email" } } }]
+    );
+
+    const r2 = await db.collection("Campaigns").updateMany(
+      { email: { $type: "string" } },
+      [{ $set: { email: { $toLower: "$email" } } }]
+    );
+
+    return res.json({
+      ok: true,
+      matchedEmail: r1.matchedCount,
+      modifiedEmail: r1.modifiedCount,
+      matchedemail: r2.matchedCount,
+      modifiedemail: r2.modifiedCount
+    });
+  } catch (err) {
+    console.error("normalize-campaign-emails error:", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+//======================ADMIN: GET EXPIRED CAMPAIGNS===============
+app.get("/api/admin/expired-campaigns", requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection("Campaigns")
+      .find({ lifecycleStatus: "Expired" })
+      .sort({ expiredAt: -1, expiresAt: -1 })
+      .toArray();
+
+    res.json({ success: true, campaigns: rows });
+  } catch (err) {
+    console.error("GET /api/admin/expired-campaigns error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
+// ==================== ADMIN: USERS LIST ====================
+app.get("/api/admin/users", requireAdmin, async (req, res) => {
+  try {
+    // ✅ Your real collection is "Users" (capital U)
+    const rawUsers = await db.collection("Users")
+      .find({})
+      .sort({ JoinDate: -1, _id: -1 })
+      .limit(2000)
+      .toArray();
+
+    // Pull latest verification per user by email (ID_Verifications stores lowercase email)
+    const users = await Promise.all(rawUsers.map(async (u) => {
+      const email = String(u.Email ?? u.email ?? "").trim().toLowerCase();
+
+      let identityStatus = "Not Submitted";
+let idvId = null;
+let idvStatus = "Not Submitted";
+
+if (email) {
+  const emailExactI = new RegExp("^" + escapeRegex(email) + "$", "i");
+
+  const v = await db.collection("ID_Verifications")
+    .find({ $or: [{ email: emailExactI }, { Email: emailExactI }] })
+    .sort({ ReviewedAt: -1, createdAt: -1, CreatedAt: -1, _id: -1 })
+    .limit(1)
+    .toArray();
+
+  const latest = v[0];
+  if (latest) {
+    idvId = String(latest._id);
+    idvStatus = latest.Status ?? latest.status ?? "Pending";
+    identityStatus = idvStatus;
+  }
+}
+
+return {
+  _id: String(u._id),
+  joinDate: u.JoinDate ?? u.joinDate ?? null,
+  name: u.Name ?? u.name ?? "—",
+  email: u.Email ?? u.email ?? "—",
+  identityStatus,
+
+  // ✅ add these for buttons
+  idvId,
+  idvStatus
+	};
+  }));
+
+    return res.json({ success: true, users });
+  } catch (err) {
+    console.error("❌ /api/admin/users error:", err);
+    // TEMP: return the real error so we can finish debugging fast
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load users",
+      error: String(err?.message || err)
+    });
+  }
+});
+
+// ==================== ADMIN: VOLUNTEERS LIST ====================
+app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
+  try {
+    const volunteers = await db.collection("Volunteers")
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(1000)
+      .toArray();
+
+    return res.json({ success: true, volunteers });
+  } catch (err) {
+    console.error("GET /api/admin/volunteers error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load volunteers" });
+  }
+});
+
+
+// Normalize campaign fields so the admin page always gets consistent keys
+function normalizeCampaign(doc) {
+  return {
+    _id: String(doc._id),            // Mongo ID
+    Id: doc.Id || null,              // Optional custom ID if you use one
+    title: doc.title ?? doc.Title ?? "Untitled",
+    email: doc.Email ?? doc.email ?? "—",
+    goal: doc.Goal ?? doc.goal ?? "—",
+    status: doc.Status ?? doc.status ?? "—",
+    createdAt: doc.CreatedAt ?? doc.createdAt ?? null,
+
+    // ✅ Extra fields for "View" modal
+    city: doc.City ?? doc.city ?? null,
+    state: doc.State ?? doc.state ?? null,
+    description: doc.Description ?? doc.description ?? doc.desc ?? null,
+
+    // Media / other
+    imageUrl: doc.ImageURL ?? doc.imageUrl ?? doc.ImageUrl ?? null,
+    category: doc.Category ?? doc.category ?? null,
+    publicUrl: doc.publicUrl ?? doc.PublicUrl ?? doc.link ?? doc.Link ?? null
+  };
+}
+// Normalize ID verification fields
+function normalizeIdv(doc) {
+  return {
+    _id: String(doc._id),
+    name: doc.name ?? doc.Name ?? "—",
+    email: doc.email ?? doc.Email ?? "—",
+    url: doc.url ?? doc.URL ?? null,
+    status: doc.Status ?? doc.status ?? "Pending",
+    createdAt: doc.createdAt ?? doc.CreatedAt ?? null,
+    reviewedAt: doc.ReviewedAt ?? null,
+    reviewedBy: doc.ReviewedBy ?? null,
+    denialReason: doc.DenialReason ?? null
+  };
+}
+
+// ==================== ADMIN: BACKFILL CAMPAIGN EXPIRATION FIELDS ====================
+// One-time helper: adds createdAt/expiresAt/lifecycleStatus to older campaigns that are missing them.
+app.post("/api/admin/campaigns/backfill-expiration", requireAdmin, async (req, res) => {
+  try {
+    const now = new Date();
+
+    // Default createdAt: use existing timestamp fields if you have them, otherwise "now"
+    // We'll set expiresAt = createdAt + CAMPAIGN_ACTIVE_DAYS
+    const cursor = db.collection("Campaigns").find({
+      $or: [
+        { expiresAt: { $exists: false } },
+        { lifecycleStatus: { $exists: false } },
+        { createdAt: { $exists: false } }
+      ]
+    });
+
+    let updated = 0;
+
+    while (await cursor.hasNext()) {
+      const c = await cursor.next();
+
+      // Choose best-guess createdAt:
+      const raw =
+        c.createdAt ||
+        c.CreatedAt ||
+        c.timestamp ||
+        c.TimeStamp ||
+        c.dateCreated ||
+        c.date ||
+        null;
+
+      const createdAt = raw ? new Date(raw) : now;
+      const safeCreatedAt = isNaN(createdAt.getTime()) ? now : createdAt;
+
+      const expiresAt = addDays(safeCreatedAt, CAMPAIGN_ACTIVE_DAYS);
+
+      await db.collection("Campaigns").updateOne(
+        { _id: c._id },
+        {
+          $set: {
+            createdAt: c.createdAt || safeCreatedAt,
+            expiresAt: c.expiresAt || expiresAt,
+            lifecycleStatus: c.lifecycleStatus || "Active"
+          },
+          $setOnInsert: {}
+        }
+      );
+
+      updated++;
+    }
+
+    res.json({ success: true, updated });
+  } catch (err) {
+    console.error("backfill-expiration error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== ADMIN: LIST EXPIRED CAMPAIGNS ====================
+app.get("/api/admin/campaigns/expired", requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection("Campaigns")
+      .find({ lifecycleStatus: "Expired" })
+      .sort({ expiredAt: -1, expiresAt: -1, createdAt: -1 })
+      .toArray();
+
+    res.json({ success: true, campaigns: rows });
+  } catch (err) {
+    console.error("GET /api/admin/campaigns/expired error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== ADMIN: UPDATE EXPIRED CAMPAIGN REVIEW STATUS ====================
+app.patch("/api/admin/campaigns/:id/expired-review", requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const {
+      expiredReviewStatus = "",
+      expiredOutcome = "",
+      expiredReviewNotes = ""
+    } = req.body || {};
+
+    const update = {
+      expiredReviewStatus: String(expiredReviewStatus || "").trim(),
+      expiredOutcome: String(expiredOutcome || "").trim(),
+      expiredReviewNotes: String(expiredReviewNotes || "")
+    };
+
+    await db.collection("Campaigns").updateOne(
+      { _id: new ObjectId(id) },
+      { $set: update }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("PATCH /api/admin/campaigns/:id/expired-review error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== ADMIN: RESTORE AN EXPIRED CAMPAIGN ====================
+// Admin can restore by giving "days" (example: 7, 14, 30) and an optional note.
+app.post("/api/admin/campaigns/:id/restore", requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const days = Number(req.body?.days || 0);
+    const note = String(req.body?.note || "").trim();
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid campaign id" });
+    }
+
+    if (!days || !Number.isFinite(days) || days < 1 || days > 365) {
+      return res.status(400).json({ success: false, message: "Days must be between 1 and 365" });
+    }
+
+    const now = new Date();
+    const newExpiresAt = addDays(now, days);
+
+    const result = await db.collection("Campaigns").findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          lifecycleStatus: "Active",
+          expiresAt: newExpiresAt,
+          // clear expired markers
+          expiredAt: null,
+
+          // optional: track restore info
+          restoredAt: now,
+          restoredDays: days,
+          restoreNote: note || "",
+          // optional: mark review status if you want
+          expiredReviewStatus: "Restored"
+        }
+      },
+      { returnDocument: "after" }
+    );
+
+    if (!result?.value) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+
+    return res.json({ success: true, campaign: result.value });
+  } catch (err) {
+    console.error("POST /api/admin/campaigns/:id/restore error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== ADMIN: STREET TEAM LIST ====================
+app.get("/api/admin/street-team", requireAdmin, async (req, res) => {
+  try {
+    const streetTeam = await db.collection("StreetTeam")
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(1000)
+      .toArray();
+
+    return res.json({ success: true, streetTeam });
+  } catch (err) {
+    console.error("GET /api/admin/street-team error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load street team" });
+  }
+});
+
+// ==================== ADMIN STATS (counts) ====================
+app.get("/api/admin/stats", requireAdmin, async (req, res) => {
+  try {
+   const [users, volunteers, streetTeam] = await Promise.all([
+  db.collection("Users").countDocuments({}),
+  db.collection("Volunteers").countDocuments({}),
+  db.collection("StreetTeam").countDocuments({}),
+]);
+
+    return res.json({
+      success: true,
+      users,
+      volunteers,
+	  streetTeam,
+    });
+  } catch (err) {
+    console.error("admin stats error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load stats" });
+  }
+});
+
+// ==================== ADMIN: CAMPAIGNS ====================
+// List ALL campaigns (Pending/Approved/Denied/etc.)
+app.get("/api/admin/campaigns", requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection("Campaigns").find({}).sort({ CreatedAt: -1 }).toArray();
+    res.json({ success: true, campaigns: rows.map(normalizeCampaign) });
+  } catch (err) {
+    console.error("admin campaigns error:", err);
+    res.status(500).json({ success: false, message: "Failed to load campaigns" });
+  }
+});
+
+// Get one campaign (full details)
+app.get("/api/admin/campaigns/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const campaign = await findCampaignByAnyId(id);
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+    return res.json({ success: true, campaign: normalizeCampaign(campaign) });
+  } catch (err) {
+    console.error("GET /api/admin/campaigns/:id error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Update campaign status (Approved/Denied/Closed/etc.)
+app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
+  try {
+    console.log("✅ ADMIN campaign status PATCH:", req.params.id, req.body);
+
+    const id = String(req.params.id || "").trim();
+    const status = String(req.body?.status || "").trim();
+
+    // "Approved" = reviewed/accepted but not public. "Active" = public (ID verified).
+    const allowed = ["Pending", "Approved", "Denied", "Closed", "Active"];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    // Find campaign (supports ObjectId _id, string _id, legacy Id/id)
+    const idVariants = [{ _id: id }, { Id: id }, { id: id }];
+    if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
+
+    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+    if (!campaign) return res.status(404).json({ success: false, message: "Not found" });
+
+    // Owner email normalization
+    const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
+    const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
+
+    // Look up latest ID verification status (if any)
+    let idvStatus = "";
+    if (ownerEmailRegex) {
+      const idvRows = await db.collection("ID_Verifications")
+        .find({
+          $or: [
+            { email: ownerEmail },
+            { Email: ownerEmail },
+            { email: ownerEmailRegex },
+            { Email: ownerEmailRegex }
+          ]
+        })
+        .sort({ ReviewedAt: -1, reviewedAt: -1, createdAt: -1, CreatedAt: -1, _id: -1 })
+        .limit(1)
+        .toArray();
+
+      const latest = idvRows?.[0];
+      idvStatus = String(latest?.Status ?? latest?.status ?? "").trim();
+    }
+
+    // Prevent setting Active unless ID is approved
+    if (status === "Active" && String(idvStatus).toLowerCase() !== "approved") {
+      return res.status(409).json({
+        success: false,
+        message: "Identity verification must be Approved before a campaign can go live."
+      });
+    }
+
+    // Update campaign fields
+    let verificationStatus = campaign.verificationStatus ?? "";
+    if (status === "Approved") verificationStatus = "needs_verification";
+    if (status === "Denied") verificationStatus = "denied";
+    if (status === "Active") verificationStatus = "verified";
+
+    const update = {
+      Status: status,
+      ReviewedAt: new Date(),
+      ReviewedBy: "admin",
+      verificationStatus,
+      verificationUpdatedAt: new Date()
+    };
+
+    // Keep lifecycleStatus consistent
+    if (status === "Active") {
+      update.lifecycleStatus = "Active";
+      if (!campaign.PublishedAt) update.PublishedAt = new Date();
+      update.activatedAt = new Date();
+    }
+
+    const result = await db.collection("Campaigns").findOneAndUpdate(
+      { _id: campaign._id },
+      { $set: update },
+      { returnDocument: "after" }
+    );
+
+    // EMAILS (await + log)
+    const title = String(result?.value?.title ?? result?.value?.Title ?? "your campaign");
+    const campaignIdForEmail = String(result?.value?._id ?? id);
+
+    if (ownerEmail) {
+      if (status === "Approved" && String(idvStatus).toLowerCase() !== "approved") {
+        console.log("📧 Triggering: campaign approved -> needs ID email ->", ownerEmail);
+        try {
+          await sendCampaignApprovalIdentityEmail({
+            toEmail: ownerEmail,
+            campaignTitle: title,
+            campaignId: campaignIdForEmail
+          });
+          console.log("✅ campaign approved -> needs ID email sent (attempted).");
+        } catch (e) {
+          console.error("❌ campaign approved -> needs ID email error:", e);
+        }
+      }
+
+      if (status === "Active") {
+        console.log("📧 Triggering: campaign LIVE email ->", ownerEmail);
+        try {
+          await sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title });
+          console.log("✅ campaign LIVE email sent (attempted).");
+        } catch (e) {
+          console.error("❌ campaign LIVE email error:", e);
+        }
+      }
+    }
+
+    return res.json({ success: true, campaign: normalizeCampaign(result.value) });
+  } catch (err) {
+    console.error("admin campaign status error:", err);
+    return res.status(500).json({ success: false, message: "Failed to update campaign" });
+  }
+});
+
+// ==================== ADMIN: ID VERIFICATIONS ====================
+
+// List ID verifications (default Pending)
+app.get("/api/admin/id-verifications", requireAdmin, async (req, res) => {
+  try {
+    const status = String(req.query.status || "Pending");
+    const filter = status ? { Status: status } : {};
+    const rows = await db.collection("ID_Verifications")
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json({ success: true, data: rows.map(normalizeIdv) });
+  } catch (err) {
+    console.error("admin idv list error:", err);
+    res.status(500).json({ success: false, message: "Failed to load ID verifications" });
+  }
+});
+
+// ==================== ADMIN: ID VERIFICATIONS ====================
+// ✅ Approve an ID verification (shared handler for PATCH + POST to avoid method mismatch 404s)
+const approveIdVerificationHandler = async (req, res) => {
+  try {
+    console.log("✅ ADMIN id-verification APPROVE:", req.params.id);
+
+    const idRaw = String(req.params.id || "").trim();
+
+    // Match by Mongo _id (ObjectId or string) OR legacy Id/id fields
+    const idVars = [
+      { _id: idRaw },
+      { Id: idRaw },
+      { id: idRaw }
+    ];
+    if (ObjectId.isValid(idRaw)) {
+      idVars.unshift({ _id: new ObjectId(idRaw) });
+    }
+
+    // 1) Load the ID verification first (reliable across Mongo driver versions)
+    const existing = await db.collection("ID_Verifications").findOne({ $or: idVars });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "ID verification not found" });
+    }
+
+    // 2) Update status to Approved
+    await db.collection("ID_Verifications").updateOne(
+      { _id: existing._id },
+      { $set: { Status: "Approved", ReviewedAt: new Date(), ReviewedBy: "admin" } }
+    );
+
+    // 3) Re-fetch the updated doc (so we always return the latest)
+    const idv = await db.collection("ID_Verifications").findOne({ _id: existing._id });
+
+    const ownerEmail = String(idv?.Email ?? idv?.email ?? "").trim().toLowerCase();
+    const ownerEmailRegex = ownerEmail ? new RegExp("^" + escapeRegex(ownerEmail) + "$", "i") : null;
+
+    // Specific campaign id from IDV (optional)
+    const campaignIdRaw = String(
+      idv?.campaignId ?? idv?.CampaignId ?? idv?.campaignID ?? idv?.campaign_id ?? ""
+    ).trim();
+
+    // ✅ Send "ID Approved" email to the user
+    if (ownerEmail) {
+      try {
+        const personName = String(idv?.name ?? idv?.Name ?? "").trim();
+        await sendIdApprovedEmail({ toEmail: ownerEmail, name: personName });
+        // Track it for debugging/auditing (safe even if field doesn't exist yet)
+        await db.collection("ID_Verifications").updateOne(
+          { _id: existing._id },
+          { $set: { approvalEmailSentAt: new Date() } }
+        );
+        console.log("✅ ID approved email sent (attempted).");
+      } catch (e) {
+        console.error("❌ ID approved email error:", e);
+      }
+    } else {
+      console.log("⚠️ ID approved email skipped (missing ownerEmail on IDV).");
+    }
+
+    // Helper: promote a campaign doc to Active + verified (safe even if it's already active)
+    async function promoteCampaignByAnyId(campaignId) {
+      if (!campaignId) return null;
+
+      const cid = String(campaignId).trim();
+      const variants = [{ _id: cid }, { Id: cid }, { id: cid }];
+      if (ObjectId.isValid(cid)) variants.unshift({ _id: new ObjectId(cid) });
+
+      const found = await db.collection("Campaigns").findOne({ $or: variants });
+      if (!found) return null;
+
+      await db.collection("Campaigns").updateOne(
+        { _id: found._id },
+        {
+          $set: {
+            Status: "Active",
+            status: "Active",
+            lifecycleStatus: "Active",
+            PublishedAt: found.PublishedAt || new Date(),
+            activatedAt: new Date(),
+            verificationStatus: "verified",
+            verificationUpdatedAt: new Date()
+          }
+        }
+      );
+
+      return found;
+    }
+
+    // 1) Promote the campaign tied to this IDV (if provided)
+    let primaryCampaign = null;
+    if (campaignIdRaw) {
+      primaryCampaign = await promoteCampaignByAnyId(campaignIdRaw);
+      if (primaryCampaign) {
+        console.log("✅ Promoted primary campaign to Active:", String(primaryCampaign._id));
+      } else {
+        console.log("⚠️ Could not find primary campaign for campaignId on IDV:", campaignIdRaw);
+      }
+    }
+
+    // 2) Promote any other Approved campaigns for this owner (covers cases where campaignId wasn't sent)
+    let promotedCount = 0;
+    if (ownerEmail) {
+      const filter = {
+        $and: [
+          {
+            $or: [
+              { Email: ownerEmail },
+              { email: ownerEmail },
+              ...(ownerEmailRegex ? [{ Email: ownerEmailRegex }, { email: ownerEmailRegex }] : [])
+            ]
+          },
+          { $or: [{ Status: "Approved" }, { status: "Approved" }] }
+        ]
+      };
+
+      const approved = await db.collection("Campaigns").find(filter).toArray();
+
+      if (approved.length) {
+        for (const c of approved) {
+          await db.collection("Campaigns").updateOne(
+            { _id: c._id },
+            {
+              $set: {
+                Status: "Active",
+                status: "Active",
+                lifecycleStatus: "Active",
+                PublishedAt: c.PublishedAt || new Date(),
+                activatedAt: new Date(),
+                verificationStatus: "verified",
+                verificationUpdatedAt: new Date()
+              }
+            }
+          );
+
+          promotedCount += 1;
+
+          const title = String(c.title ?? c.Title ?? "your campaign");
+          try {
+            console.log("📧 Triggering: campaign LIVE email ->", ownerEmail, "campaign:", title);
+            await sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title });
+            console.log("✅ campaign LIVE email sent (attempted).");
+          } catch (e) {
+            console.error("❌ campaign LIVE email error:", e);
+          }
+        }
+      } else {
+        console.log("ℹ️ No Approved campaigns found to promote for:", ownerEmail);
+      }
+    }
+
+    // If we promoted only primary campaign (not in Approved list), still send live email for it
+    if (primaryCampaign && ownerEmail && promotedCount === 0) {
+      const title = String(primaryCampaign.title ?? primaryCampaign.Title ?? "your campaign");
+      try {
+        console.log("📧 Triggering: campaign LIVE email (primary only) ->", ownerEmail, "campaign:", title);
+        await sendCampaignLiveEmail({ toEmail: ownerEmail, campaignTitle: title });
+        console.log("✅ campaign LIVE email sent (attempted).");
+      } catch (e) {
+        console.error("❌ campaign LIVE email error:", e);
+      }
+    }
+
+    return res.json({ success: true, data: normalizeIdv(idv) });
+  } catch (err) {
+    console.error("admin idv approve error:", err);
+    return res.status(500).json({ success: false, message: "Approve failed" });
+  }
+};
+
+app.patch("/api/admin/id-verifications/:id/approve", requireAdmin, approveIdVerificationHandler);
+app.post("/api/admin/id-verifications/:id/approve", requireAdmin, approveIdVerificationHandler);
+
+// Deny an ID verification
+app.patch("/api/admin/id-verifications/:id/deny", requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { reason } = req.body;
+
+    const result = await db.collection("ID_Verifications").findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: { Status: "Denied", ReviewedAt: new Date(), ReviewedBy: "admin", DenialReason: reason || "" } },
+      { returnDocument: "after" }
+    );
+
+    if (!result?.value) return res.status(404).json({ success: false, message: "Not found" });
+
+    res.json({ success: true, row: normalizeIdv(result.value) });
+  } catch (err) {
+    console.error("admin idv deny error:", err);
+    res.status(500).json({ success: false, message: "Deny failed" });
+  }
+});
+
+// ==================== ADMIN: JOYBOOST REQUESTS ====================
+app.get("/api/admin/joyboost/requests", requireAdmin, async (req, res) => {
+  try {
+    const requests = await db.collection(JOYBOOST_REQUESTS)
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(1000)
+      .toArray();
+    return res.json({ success: true, requests });
+  } catch (err) {
+    console.error("GET /api/admin/joyboost/requests error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load requests" });
+  }
+});
+
+// ================== ADMIN: JOYBOOST SUPPORTERS ==================
+app.get("/api/admin/joyboost/supporters", requireAdmin, async (req, res) => {
+  try {
+    const supporters = await db
+      .collection("JoyBoost_Supporters")
+      .find({ status: "active" })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    return res.json({
+      success: true,
+      supporters
+    });
+  } catch (err) {
+    console.error("GET /api/admin/joyboost/supporters error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load JoyBoost supporters"
+    });
+  }
+});
+
+// ==================== ADMIN: ACTIVATE/UPDATE JOYBOOST SETTINGS ====================
+app.post("/api/admin/joyboost/activate", requireAdmin, async (req, res) => {
+  try {
+    const { campaignId, isActive, featured, seoTitle, seoDescription, shareBlurb, tags, rewrittenIntro } = req.body || {};
+    if (!campaignId) return res.status(400).json({ success: false, message: "Missing campaignId" });
+
+    const campaign = await findCampaignByAnyId(campaignId);
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: "Campaign not found for campaignId" });
+    }
+
+    const ownerEmail = String(campaign.Email ?? campaign.email ?? "").trim().toLowerCase();
+    const campaignTitle = String(campaign.title ?? campaign.Title ?? "").trim();
+
+    const update = {
+      campaignId: String(campaignId).trim(),
+      isActive: Boolean(isActive),
+      featured: Boolean(featured),
+      seoTitle: String(seoTitle || "").trim(),
+      seoDescription: String(seoDescription || "").trim(),
+      shareBlurb: String(shareBlurb || "").trim(),
+      tags: Array.isArray(tags)
+        ? tags.map(t => String(t).trim()).filter(Boolean)
+        : String(tags || "").split(",").map(s => s.trim()).filter(Boolean),
+      rewrittenIntro: String(rewrittenIntro || "").trim(),
+
+      // ✅ store helpful campaign context
+      campaignOwnerEmail: ownerEmail,
+      campaignTitle: campaignTitle,
+
+      updatedAt: now()
+    };
+
+    await db.collection(JOYBOOST_SETTINGS).updateOne(
+      { campaignId: update.campaignId },
+      { $set: update, $setOnInsert: { createdAt: now() } },
+      { upsert: true }
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("POST /api/admin/joyboost/activate error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== ADMIN: JOYBOOST SETTINGS LIST ====================
+app.get("/api/admin/joyboost/settings", requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection(JOYBOOST_SETTINGS)
+      .find({})
+      .sort({ featured: -1, isActive: -1, updatedAt: -1, createdAt: -1 })
+      .limit(2000)
+      .toArray();
+
+    return res.json({ success: true, settings: rows.map(normalizeJoyBoostSetting) });
+  } catch (err) {
+    console.error("GET /api/admin/joyboost/settings error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load settings" });
+  }
+});
+
+app.get("/api/admin/joyboost/settings/:campaignId", requireAdmin, async (req, res) => {
+  try {
+    const campaignId = String(req.params.campaignId || "").trim();
+    const row = await db.collection(JOYBOOST_SETTINGS).findOne({ campaignId });
+    return res.json({ success: true, setting: normalizeJoyBoostSetting(row) });
+  } catch (err) {
+    console.error("GET /api/admin/joyboost/settings/:campaignId error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load setting" });
+  }
+});
+
+// ==================== ADMIN: UPDATE JOYBOOST REQUEST STATUS ====================
+// status: Pending | Approved | Denied
+app.patch("/api/admin/joyboost/requests/:id/status", requireAdmin, async (req, res) => {
+  console.log("✅ JOYBOOST STATUS ROUTE HIT", req.method, req.originalUrl, "body:", req.body, "cookie?", !!req.headers.cookie);
+
+  try {
+    const id = String(req.params.id || "").trim();
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid request id" });
+    }
+
+    const status = String(req.body.status || "").trim();
+    const reason = String(req.body.reason || "").trim();
+
+    const allowed = ["Pending", "Approved", "Denied"];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    // Load the request first
+    const reqDoc = await db.collection(JOYBOOST_REQUESTS).findOne({ _id: new ObjectId(id) });
+    if (!reqDoc) return res.status(404).json({ success: false, message: "Not found" });
+
+   // =========================
+// JOYBOOST (FREE APPROVAL):
+// Approvals are FREE for applicants.
+// Do NOT create or send any payment links.
+// =========================
+if (status === "Approved") {
+  const toEmail = String(reqDoc.email || "").trim().toLowerCase();
+  const toName = String(reqDoc.name || "").trim();
+
+  if (!toEmail) {
+    return res.status(400).json({ success: false, message: "Request has no email address" });
+  }
+
+  // Send approval email (NO payment link)
+  try {
+    await sendMailjet({
+      toEmail,
+      toName,
+      subject: "Your JoyBoost request was approved 🎉",
+      html: `
+        <p>Hi ${toName || ""},</p>
+        <p>Your JoyBoost request has been <b>approved</b>! 🎉</p>
+        <p><b>Good news:</b> JoyBoost is free for approved applicants. There is no payment required.</p>
+        <p>We’ll follow up with next steps and timing shortly.</p>
+        <p>— JoyFund</p>
+      `
+    });
   } catch (e) {
-    alert(e.message || "Approve failed");
-  } finally {
-    jbApproveBtn.disabled = false;
+    const msg = String(e?.message || e);
+    console.error("JOYBOOST APPROVE: Mailjet send failed:", msg);
+    return res.status(500).json({ success: false, message: "Failed to send approval email" });
+  }
+}
+
+    // 3) Now update the request status (only after strict approval steps succeed)
+    const update = {
+      status,
+      denialReason: status === "Denied" ? reason : "",
+      reviewedAt: new Date(),
+      reviewedBy: "admin"
+    };
+
+    // Approved = FREE (clear any old payment fields so dashboard can't show them)
+if (status === "Approved") {
+  update.paymentUrl = "";
+  update.stripeSessionId = "";
+  update.paymentLinkSentAt = null;
+  update.approvalEmailSentAt = new Date();
+  update.approvalEmailUsedLink = false;
+}
+
+
+    await db.collection(JOYBOOST_REQUESTS).updateOne(
+      { _id: new ObjectId(id) },
+      { $set: update }
+    );
+
+    const updated = await db.collection(JOYBOOST_REQUESTS).findOne({ _id: new ObjectId(id) });
+    return res.json({ success: true, request: updated });
+
+  } catch (err) {
+    console.error("PATCH /api/admin/joyboost/requests/:id/status error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== PUBLIC: ACTIVE CAMPAIGNS (SEARCH/LIST) ====================
+app.get("/api/campaigns", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+
+    // IMPORTANT: your Mongo collection is likely lowercase "campaigns"
+    const col = db.collection("Campaigns");
+
+    // Status field in your docs appears to be "Status" (capital S)
+    // Accept a couple common "active" meanings to avoid mismatches.
+    const activeStatuses = ["Active"];
+
+    const filter = { Status: { $in: activeStatuses } };
+
+    if (q) {
+      filter.$or = [
+        { title: { $regex: q, $options: "i" } },
+        { Description: { $regex: q, $options: "i" } },
+        { Category: { $regex: q, $options: "i" } }
+      ];
+    }
+
+    const campaigns = await col
+      .find(filter)
+      .sort({ CreatedAt: -1 })
+      .toArray();
+
+    res.json({ ok: true, campaigns });
+  } catch (err) {
+    console.error("GET /api/campaigns error:", err);
+    res.status(500).json({ ok: false, message: "Failed to load campaigns" });
   }
 });
 
 // ==================== CAMPAIGNS ====================
-async function loadCampaigns() {
+app.post("/api/create-campaign", requireIdentityIfDenied, upload.single("image"), async (req, res) => {
   try {
-    const res = await fetch(`${backendURL}/api/admin/campaigns`, { credentials: "include", cache: "no-store" });
-    const data = await safeReadJson(res);
-    const campaigns = Array.isArray(data?.campaigns) ? data.campaigns : [];
+    const { title, goal, description, category } = req.body;
 
-    const tbody = document.querySelector("#campaignsTable tbody");
-    tbody.innerHTML = "";
+const sessionEmail = req.session?.user?.email;
+if (!sessionEmail) {
+  return res.status(401).json({ success: false, message: "Not logged in" });
+}
+const email = String(sessionEmail).trim().toLowerCase();
 
-    campaigns.forEach(c => {
-      const id = c._id || c.id || c.Id;
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${c.title || "Untitled"}</td>
-        <td>${c.email || c.Email || "—"}</td>
-        <td>${c.goal ?? "—"}</td>
-        <td>${c.status || "—"}</td>
-        <td>${c.createdAt ? new Date(c.createdAt).toLocaleString() : "—"}</td>
-        <td>
-          <button class="action-btn neutral" type="button" title="View campaign details">View</button>
-          <button class="approve action-btn" type="button" title="Approve campaign">Approve</button>
-          <button class="reject action-btn" type="button" title="Deny campaign">Reject</button>
-        </td>
-      `;
-      tbody.appendChild(tr);
+if (!title || !goal || !description || !category || !req.file) {
+  return res.status(400).json({ success: false, message: "Missing fields" });
+}
 
-      const viewBtn = tr.querySelector("button.neutral");
-      const approveBtn = tr.querySelector("button.approve");
-      const rejectBtn = tr.querySelector("button.reject");
-
-      // Disable actions once a campaign is already decided / live / closed
-      const s = String(c.status || "").toLowerCase();
-      if (s === "approved" || s === "denied" || s === "active" || s === "closed") {
-        approveBtn.disabled = true;
-        rejectBtn.disabled = true;
-      }
-
-      
-      viewBtn?.addEventListener("click", async () => {
-        try {
-          viewBtn.disabled = true;
-          const details = await fetchCampaignDetails(id);
-          if (typeof window.openCampaignModal === "function") window.openCampaignModal(details || c);
-        } catch (e) {
-          if (typeof window.openCampaignModal === "function") window.openCampaignModal(c);
-        } finally {
-          viewBtn.disabled = false;
-        }
-      });
-
-approveBtn.addEventListener("click", async () => {
-        try {
-          approveBtn.disabled = true; rejectBtn.disabled = true;
-          await setCampaignStatus(id, "Approved");
-          await loadCampaigns();
-        } catch (e) {
-          alert(e.message || "Failed to approve");
-        } finally {
-          approveBtn.disabled = false; rejectBtn.disabled = false;
-        }
-      });
-
-      rejectBtn.addEventListener("click", async () => {
-        try {
-          approveBtn.disabled = true; rejectBtn.disabled = true;
-          await setCampaignStatus(id, "Denied");
-          await loadCampaigns();
-        } catch (e) {
-          alert(e.message || "Failed to deny");
-        } finally {
-          approveBtn.disabled = false; rejectBtn.disabled = false;
-        }
-      });
+    // Upload to Cloudinary
+    const cloudRes = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "joyfund/campaigns", use_filename: true, unique_filename: true },
+        (err, result) => (err ? reject(err) : resolve(result))
+      );
+      stream.end(req.file.buffer);
     });
 
-    const active = campaigns.filter(c => (c.status || "").toLowerCase() === "active").length;
-    const approved = campaigns.filter(c => (c.status || "").toLowerCase() === "approved").length;
-    const closed = campaigns.filter(c => (c.status || "").toLowerCase() === "closed").length;
+    const doc = {
+      Id: String(Date.now()),
+      title: String(title).trim(),
+      Email: String(email).trim().toLowerCase(),
+      Goal: String(goal).trim(),
+      Description: String(description).trim(),
+      Category: String(category).trim(),
+      Status: "Pending",
+      CreatedAt: new Date().toISOString(),
+      ImageURL: cloudRes.secure_url
+    };
+	
+	const createdAt = new Date();
+const expiresAt = addDays(createdAt, CAMPAIGN_ACTIVE_DAYS);
 
-    document.getElementById("activeCount").innerText = String(active);
-    const apprEl = document.getElementById("approvedCount");
-    if (apprEl) apprEl.innerText = String(approved);
-    document.getElementById("closedCount").innerText = String(closed);
+// attach expiration fields to the campaign document
+doc.createdAt = createdAt;
+doc.expiresAt = expiresAt;
+doc.lifecycleStatus = "Active";
+doc.expiredAt = null;
+doc.expiredReviewStatus = null;
+doc.expiredReviewNotes = "";
+doc.expiredOutcome = "";
+
+
+    await db.collection("Campaigns").insertOne(doc);
+
+console.log("📧 Campaign submission email sending:", { email, from: FROM_EMAIL, admin: ADMIN_EMAIL });
+
+await sendSubmissionEmails({
+  type: "Campaign",
+  userEmail: email,
+  userName: "", // optional
+  adminSubject: "New Campaign Submitted",
+  userSubject: "Your JoyFund campaign is under review",
+  adminHtml: `
+    <h2>New Campaign Submitted</h2>
+    <p><b>Title:</b> ${title}</p>
+    <p><b>Email:</b> ${email}</p>
+    <p><b>Goal:</b> ${goal}</p>
+  `,
+  userHtml: `
+    <h2>Your campaign was submitted 💙💗</h2>
+    <p>We received your campaign and it is now under review.</p>
+    <p>— JoyFund Team</p>
+  `
+});
+
+
+    return res.json({ success: true, campaign: doc });
   } catch (err) {
-    console.error("loadCampaigns error:", err);
+    console.error("create-campaign error:", err);
+    return res.status(500).json({ success: false, message: "Create campaign failed" });
   }
-}
+});
 
-// ==================== ID VERIFICATIONS (PENDING LIST) ====================
-async function loadPendingIdVerifications() {
+app.get("/api/public-campaigns", async (req, res) => {
   try {
-    const res = await fetch(`${backendURL}/api/admin/id-verifications?status=Pending`, {
-      credentials: "include",
-      cache: "no-store"
-    });
-    const data = await safeReadJson(res);
-    const rows = Array.isArray(data?.data) ? data.data : [];
+    const rows = await db.collection("Campaigns").find({
+      Status: "Active",
+      verificationStatus: { $in: ["verified", "Verified"] },
+      $or: [
+        { lifecycleStatus: { $ne: "Expired" } },
+        { lifecycleStatus: { $exists: false } }
+      ]
+    }).toArray();
 
-    const tbody = document.querySelector("#idvTable tbody");
-    if (!tbody) return;
-    tbody.innerHTML = "";
-
-    rows.forEach(r => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${r.createdAt ? new Date(r.createdAt).toLocaleString() : "—"}</td>
-        <td>${r.name || "—"}</td>
-        <td>${r.email || "—"}</td>
-        <td>${r.url ? `<a href="${r.url}" target="_blank" rel="noopener">View</a>` : "—"}</td>
-        <td>${r.status || "Pending"}</td>
-        <td>
-          <button class="approve action-btn" type="button" title="Approve ID Verification">Approve</button>
-          <button class="reject action-btn" type="button" title="Deny ID Verification">Reject</button>
-        </td>
-      `;
-      tbody.appendChild(tr);
-
-      const approveBtn = tr.querySelector("button.approve");
-      const rejectBtn = tr.querySelector("button.reject");
-
-      approveBtn.addEventListener("click", async () => {
-        try {
-          approveBtn.disabled = true; rejectBtn.disabled = true;
-          await approveIdv(r._id || r.id);
-          await Promise.all([loadPendingIdVerifications(), loadUsers()]);
-        } catch (e) {
-          alert(e.message || "Approve failed");
-        } finally {
-          approveBtn.disabled = false; rejectBtn.disabled = false;
-        }
-      });
-
-      rejectBtn.addEventListener("click", async () => {
-        try {
-          approveBtn.disabled = true; rejectBtn.disabled = true;
-          await denyIdv(r._id || r.id);
-          await Promise.all([loadPendingIdVerifications(), loadUsers()]);
-        } catch (e) {
-          alert(e.message || "Deny failed");
-        } finally {
-          approveBtn.disabled = false; rejectBtn.disabled = false;
-        }
-      });
-    });
+    res.json({ success: true, campaigns: rows });
   } catch (err) {
-    console.error("loadPendingIdVerifications error:", err);
+    console.error(err);
+    res.status(500).json({ success: false });
   }
-}
+});
 
-
-async function loadPendingIdCount() {
+app.get("/api/my-campaigns", async (req, res) => {
   try {
-    const res = await fetch(`${backendURL}/api/admin/id-verifications?status=Pending`, {
-      credentials: "include",
-      cache: "no-store"
-    });
-    const data = await safeReadJson(res);
-    const rows = Array.isArray(data?.data) ? data.data : [];
-    const el = document.getElementById("pendingIdCount");
-    if (el) el.innerText = String(rows.length);
+    // Must be logged in
+    const sessionEmail = req.session?.user?.email;
+    if (!sessionEmail) {
+      return res.status(401).json({ success: false, message: "Not logged in" });
+    }
+
+    const email = String(sessionEmail).trim().toLowerCase();
+
+    // Support both field names just in case (Email vs email)
+    const rows = await db.collection("Campaigns")
+      .find({ $or: [{ Email: email }, { email: email }], Status: { $ne: "Deleted" }, lifecycleStatus: { $ne: "Deleted" } })
+      .toArray();
+
+    return res.json({ success: true, campaigns: rows });
   } catch (err) {
-    console.error("loadPendingIdCount error:", err);
-    const el = document.getElementById("pendingIdCount");
-    if (el) el.innerText = "0";
+    console.error("my-campaigns error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
+});
+
+// ==================== USER: DELETE CAMPAIGN (SOFT DELETE) ====================
+app.delete("/api/campaigns/:id", requireLogin, async (req, res) => {
+  try {
+    const sessionEmail = req.session?.user?.email;
+    if (!sessionEmail) return res.status(401).json({ success: false, message: "Not logged in" });
+
+    const email = String(sessionEmail).trim().toLowerCase();
+    const emailExactI = new RegExp("^" + escapeRegex(email) + "$", "i");
+
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ success: false, message: "Missing id" });
+
+    const idVariants = [{ _id: id }, { Id: id }, { id: id }];
+    if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
+
+    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+    if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
+
+    // Ownership check (supports Email/email/OwnerEmail/ownerEmail)
+    const ownerFields = [
+      campaign.Email,
+      campaign.email,
+      campaign.OwnerEmail,
+      campaign.ownerEmail
+    ].filter(Boolean).map(v => String(v).trim().toLowerCase());
+
+    const isOwner = ownerFields.includes(email);
+    const isAdmin = !!req.session?.admin || (req.session?.user && req.session.user.isAdmin);
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: "Not allowed" });
+    }
+
+    await db.collection("Campaigns").updateOne(
+      { $or: idVariants },
+      { $set: { Status: "Deleted", lifecycleStatus: "Deleted", deletedAt: new Date(), deletedBy: isAdmin ? "admin" : "owner" } }
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("DELETE /api/campaigns/:id error:", err);
+    return res.status(500).json({ success: false, message: "Delete failed" });
+  }
+});
+
+
+
+// ==================== UPDATE CAMPAIGN (owner only) ====================
+async function updateCampaignHandler(req, res) {
+  try {
+    const sessionEmail = req.session?.user?.email;
+    if (!sessionEmail) {
+      return res.status(401).json({ success: false, message: "Not logged in" });
+    }
+
+    const ownerEmail = String(sessionEmail).trim().toLowerCase();
+    const ownerRegex = new RegExp(
+      "^" + escapeRegex(ownerEmail) + "$",
+      "i"
+    );
+
+    const id = String(req.params.id || "").trim();
+    if (!id) return res.status(400).json({ success: false, message: "Missing id" });
+
+    const { title, goal, description, category, imageUrl } = req.body || {};
+
+    const $set = {};
+    if (typeof title === "string") $set.title = title.trim();
+    if (typeof goal === "string" || typeof goal === "number") $set.Goal = String(goal).trim();
+    if (typeof description === "string") $set.Description = description.trim();
+    if (typeof category === "string") $set.Category = category.trim();
+    if (typeof imageUrl === "string" && imageUrl.trim()) $set.ImageURL = imageUrl.trim();
+	
+	if (req.file) {
+  console.log("UPLOAD DEBUG:", {
+    originalname: req.file.originalname,
+    mimetype: req.file.mimetype,
+    size: req.file.size
+  });
 }
 
-
-async function loadApprovedIdCount() {
-  try {
-    const res = await fetch(`${backendURL}/api/admin/id-verifications?status=Approved`, {
-      credentials: "include",
-      cache: "no-store"
-    });
-    const data = await safeReadJson(res);
-    const rows = Array.isArray(data?.data) ? data.data : (Array.isArray(data?.verifications) ? data.verifications : (Array.isArray(data) ? data : []));
-    const el = document.getElementById("approvedIdCount");
-    if (el) el.innerText = String(rows.length ?? 0);
-  } catch (e) {
-    const el = document.getElementById("approvedIdCount");
-    if (el) el.innerText = "—";
-  }
-}
-
-async function loadApprovedIdVerifications() {
-  const tbody = document.querySelector("#idvApprovedTable tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-
-  try {
-    const res = await fetch(`${backendURL}/api/admin/id-verifications?status=Approved`, {
-      credentials: "include",
-      cache: "no-store"
-    });
-    const data = await safeReadJson(res);
-    const rows = Array.isArray(data?.data) ? data.data : (Array.isArray(data?.verifications) ? data.verifications : (Array.isArray(data) ? data : []));
-
-    rows.forEach(v => {
-      const createdAtRaw = v?.createdAt || v?.CreatedAt || v?.created_at || v?.Date || v?.date;
-      const createdAt = createdAtRaw ? new Date(createdAtRaw).toLocaleString() : "—";
-
-      const name = v?.name || v?.Name || "—";
-      const email = v?.email || v?.Email || "—";
-      const status = v?.status || v?.Status || "Approved";
-
-      const img = v?.IDPhotoURL || v?.idPhotoUrl || v?.photoUrl || v?.url || v?.fileUrl || v?.FileURL || v?.IdFileUrl || v?.idFile || "";
-
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${escapeHtml(createdAt)}</td>
-        <td>${escapeHtml(name)}</td>
-        <td>${escapeHtml(email)}</td>
-        <td>${img ? `<a href="${escapeHtml(img)}" target="_blank" rel="noopener">View</a>` : "—"}</td>
-        <td><span class="tag approved">${escapeHtml(status)}</span></td>
-        <td>
-          <button class="action-btn neutral" type="button">View</button>
-        </td>
-      `;
-      tbody.appendChild(tr);
-
-      const viewBtn = tr.querySelector("button");
-      viewBtn.addEventListener("click", () => {
-        if (img) window.open(img, "_blank", "noopener");
-        else alert("No ID image found for this record.");
+    if (req.file) {
+      const cloudRes = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "joyfund/campaigns", use_filename: true, unique_filename: true },
+          (err, result) => (err ? reject(err) : resolve(result))
+        );
+        stream.end(req.file.buffer);
       });
-    });
+      $set.ImageURL = cloudRes.secure_url;
+    }
+
+    if (Object.keys($set).length === 0) {
+      return res.status(400).json({ success: false, message: "No fields to update" });
+    }
+
+    $set.UpdatedAt = new Date().toISOString();
+
+    // 1) Find campaign by id
+    const idVariants = [{ _id: id }, { Id: id }, { id: id }];
+    if (ObjectId.isValid(id)) idVariants.unshift({ _id: new ObjectId(id) });
+
+    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
+
+    // 2) Ownership check (supports Email/email/OwnerEmail/ownerEmail)
+    const ownerFields = [
+      campaign.Email,
+      campaign.email,
+      campaign.OwnerEmail,
+      campaign.ownerEmail
+    ]
+      .filter(Boolean)
+      .map(v => String(v).trim().toLowerCase());
+
+    if (!ownerFields.some(e => ownerRegex.test(e))) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to edit this campaign",
+        debug: { sessionEmail: ownerEmail, ownerFields }
+      });
+    }
+
+    // 3) Update using the campaign’s real _id (most reliable)
+    const result = await db.collection("Campaigns").findOneAndUpdate(
+      { _id: campaign._id },
+      { $set },
+      { returnDocument: "after" }
+    );
+
+    return res.json({ success: true, campaign: result.value });
   } catch (err) {
-    console.error("loadApprovedIdVerifications error:", err);
-  }
+  console.error("update campaign error:", err);
+  return res.status(500).json({
+    success: false,
+    message: err?.message || "Server error"
+  });
 }
+}  // ✅ CLOSE updateCampaignHandler HERE
+
+// IMPORTANT: must use multer for FormData
+app.put("/api/update-campaign/:id", upload.single("image"), updateCampaignHandler);
+app.put("/api/campaign/:id", upload.single("image"), updateCampaignHandler);
+app.put("/api/campaigns/:id", upload.single("image"), updateCampaignHandler);
+
 
 // ==================== DONATIONS ====================
-function pickDonationAmountRaw(d) {
-  return (
-    d.chargedAmount ??
-    d.originalDonation ??
-    d.amount ??
-    d.amountTotal ??
-    d.amount_total ??
-    d.amountCents ??
-    d.amount_cents ??
-    d.total ??
-    d.value ??
-    0
-  );
-}
-function normalizeDonationAmountToDollars(d) {
-  let raw = pickDonationAmountRaw(d);
-  if (typeof raw === "string") raw = raw.replace(/[^0-9.-]/g, "");
-  let n = Number(raw);
-  if (!Number.isFinite(n)) n = 0;
-
-  const looksStripe =
-    !!(d.currency || d.paymentIntentId || d.payment_intent || d.checkoutSessionId || d.sessionId || d.stripeSessionId);
-
-  if (looksStripe && Number.isInteger(n)) return n / 100;
-  return n;
-}
-function formatUSD(n) { return `$${Number(n || 0).toFixed(2)}`; }
-
-async function loadDonations() {
+app.post("/api/donation", async (req, res) => {
   try {
-    const res = await fetch(`${backendURL}/api/donations`, { credentials: "include", cache: "no-store" });
-    const data = await safeReadJson(res);
-    const donations = (Array.isArray(data?.donations) ? data.donations : []).filter(d => {
-      return !(
-        d.type === "owner_test" ||
-        d.metadata?.type === "owner_test" ||
-        d.description?.toLowerCase?.().includes("owner test")
-      );
+    const { name, email, amount, campaignId } = req.body;
+    if (!name || !email || !amount) return res.status(400).json({ success: false });
+
+    await db.collection("Donations").insertOne({ name, email, amount, campaignId, date: new Date() });
+
+
+    await sendSubmissionEmails({
+      type: "Donation",
+      userEmail: email,
+      userName: name,
+      adminSubject: "New Donation Received",
+      userSubject: "Thank you for your JoyFund donation 💙💗",
+      adminHtml: `
+        <h2>New Donation</h2>
+        <p><b>Name:</b> ${name}</p>
+        <p><b>Email:</b> ${email}</p>
+        <p><b>Amount:</b> $${amount}</p>
+      `,
+      userHtml: `
+        <h2>Thank you for your donation!</h2>
+        <p>Hi ${name},</p>
+        <p>We are deeply grateful for your $${amount} support.</p>
+      `
     });
 
-    document.getElementById("donationCount").innerText = String(donations.length);
-
-    const tbody = document.querySelector("#donationsTable tbody");
-    tbody.innerHTML = "";
-
-    donations.forEach((d) => {
-      const dollars = normalizeDonationAmountToDollars(d);
-
-      const campaignLabel =
-        d.campaignTitle ||
-        d.campaignName ||
-        d.campaignSlug ||
-        d.campaignId ||
-        "—";
-
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${d.date ? new Date(d.date).toLocaleString() : (d.createdAt ? new Date(d.createdAt).toLocaleString() : "—")}</td>
-        <td>${d.name || "—"} (${d.email || "—"})</td>
-        <td>${formatUSD(dollars)}</td>
-        <td>${campaignLabel}</td>
-      `;
-      tbody.appendChild(tr);
-    });
+    res.json({ success: true });
   } catch (err) {
-    console.error("loadDonations error:", err);
+    console.error("donation error:", err);
+    res.status(500).json({ success: false });
   }
-}
+});
 
-// ==================== STATS ====================
-async function loadAdminStats() {
-  const res = await fetch(`${backendURL}/api/admin/stats`, {
-    credentials: "include",
-    cache: "no-store"
-  });
-  const data = await safeReadJson(res);
-
-  if (!res.ok || !data?.success) {
-    throw new Error(data?.message || "Failed to load admin stats");
-  }
-
-  document.getElementById("userCount").innerText = String(data.users ?? 0);
-  document.getElementById("volunteerCount").innerText = String(data.volunteers ?? 0);
-  document.getElementById("streetTeamCount").innerText = String(data.streetTeam ?? 0);
-}
-
-async function loadJoyBoostCount() {
+app.get("/api/donations", async (req, res) => {
   try {
-    const res = await fetch(`${backendURL}/api/admin/joyboost/requests`, {
-      credentials: "include",
-      cache: "no-store"
-    });
-    const data = await safeReadJson(res);
-    const apps = Array.isArray(data?.requests) ? data.requests : [];
-    const el = document.getElementById("joyboostCount");
-    if (el) el.innerText = String(apps.length);
+    const sessionEmail = req.session?.user?.email;
+    const email = sessionEmail ? String(sessionEmail).trim().toLowerCase() : null;
+
+    const filter = email
+      ? {
+          $or: [
+            { email: email },
+            { Email: email }
+          ]
+        }
+      : {};
+
+    const rows = await db.collection("Donations")
+      .find(filter)
+      .sort({ createdAt: 1, date: 1, _id: 1 })
+      .toArray();
+
+    res.json({ success: true, donations: rows });
   } catch (err) {
-    console.error("loadJoyBoostCount error:", err);
+    console.error("GET /api/donations error:", err);
+    res.status(500).json({ success: false });
   }
-}
+});
 
-// ==================== VOLUNTEERS / STREET TEAM / USERS ====================
-async function loadVolunteers() {
+// ==================== WAITLIST / VOLUNTEERS / STREET TEAM ====================
+
+app.post("/api/volunteer", async (req, res) => {
   try {
-    const res = await fetch(`${backendURL}/api/admin/volunteers`, {
-      credentials: "include",
-      cache: "no-store"
+    const { name, email, role, reason } = req.body;
+
+    if (!name || !email || !reason) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    const row = { name, email, role: role || "Volunteer", reason, createdAt: new Date() };
+    await db.collection("Volunteers").insertOne(row);
+
+    await sendSubmissionEmails({
+      type: "Volunteer",
+      userEmail: email,
+      userName: name,
+      adminSubject: "New Volunteer Submission",
+      userSubject: "We received your volunteer submission",
+      adminHtml: `
+        <h2>New Volunteer Submission</h2>
+        <p><b>Name:</b> ${name || "—"}</p>
+        <p><b>Email:</b> ${email || "—"}</p>
+        <p><b>Role:</b> ${role || "—"}</p>
+        <p><b>Reason:</b> ${reason || "—"}</p>
+        <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+      `,
+      userHtml: `
+        <h2>Thanks for volunteering with JoyFund 💙💗</h2>
+        <p>Hi ${name || ""},</p>
+        <p>We received your volunteer submission. Our team will review it and reach out with next steps.</p>
+        <p>— JoyFund Team</p>
+      `
     });
 
-    const data = await safeReadJson(res);
-    const volunteers = Array.isArray(data?.volunteers) ? data.volunteers : [];
-
-    const tbody = document.querySelector("#volunteersTable tbody");
-    if (!tbody) return;
-
-    tbody.innerHTML = "";
-
-    volunteers.forEach(v => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${v.createdAt ? new Date(v.createdAt).toLocaleString() : "—"}</td>
-        <td>${v.name || "—"}</td>
-        <td>${v.email || "—"}</td>
-        <td>${v.role || "—"}</td>
-        <td>${v.reason || v.availability || "—"}</td>
-      `;
-      tbody.appendChild(tr);
-    });
+    return res.json({ success: true });
   } catch (err) {
-    console.error("loadVolunteers error:", err);
+    console.error("POST /api/volunteer error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
-}
+});
 
-async function loadStreetTeam() {
+app.post("/api/street-team", async (req, res) => {
   try {
-    const res = await fetch(`${backendURL}/api/admin/street-team`, {
-      credentials: "include",
-      cache: "no-store"
+    const { name, email, city, reason } = req.body;
+
+    if (!name || !email || !city || !reason) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    const row = { name, email, city, reason, createdAt: new Date() };
+    await db.collection("StreetTeam").insertOne(row);
+
+    await sendSubmissionEmails({
+      type: "Street Team",
+      userEmail: email,
+      userName: name,
+      adminSubject: "New Street Team Submission",
+      userSubject: "We received your Street Team submission",
+      adminHtml: `
+        <h2>New Street Team Submission</h2>
+        <p><b>Name:</b> ${name || "—"}</p>
+        <p><b>Email:</b> ${email || "—"}</p>
+        <p><b>City:</b> ${city || "—"}</p>
+        <p><b>Reason:</b> ${reason || "—"}</p>
+        <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+      `,
+      userHtml: `
+        <h2>Thanks for joining the JoyFund Street Team 💙💗</h2>
+        <p>Hi ${name || ""},</p>
+        <p>We received your Street Team submission. Our team will review it and reach out with next steps.</p>
+        <p>— JoyFund Team</p>
+      `
     });
-    const data = await safeReadJson(res);
-    const rows = Array.isArray(data?.streetTeam) ? data.streetTeam : [];
 
-    const tbody = document.querySelector("#streetTeamTable tbody");
-    if (!tbody) return;
-
-    tbody.innerHTML = "";
-
-    rows.forEach(r => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${r.createdAt ? new Date(r.createdAt).toLocaleString() : "—"}</td>
-        <td>${r.name || "—"}</td>
-        <td>${r.email || "—"}</td>
-        <td>${r.city || "—"}</td>
-        <td>${r.reason || r.hoursAvailable || "—"}</td>
-      `;
-      tbody.appendChild(tr);
-    });
+    return res.json({ success: true });
   } catch (err) {
-    console.error("loadStreetTeam error:", err);
+    console.error("POST /api/street-team error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
-}
+});
 
-async function loadUsers() {
+//====================LOGOUT=============================
+app.post("/api/logout", (req, res) => {
   try {
-    const res = await fetch(`${backendURL}/api/admin/users`, { credentials: "include", cache: "no-store" });
-    const data = await safeReadJson(res);
-    const users = Array.isArray(data?.users) ? data.users : [];
+    req.session.destroy((err) => {
+      if (err) return res.status(500).json({ ok: false, error: "Logout failed" });
 
-    const tbody = document.querySelector("#usersTable tbody");
-    tbody.innerHTML = "";
+      // IMPORTANT: clear the same cookie name/path your session uses
+      res.clearCookie("joyfund.sid", {
+  path: "/",
+  secure: true,
+  sameSite: "lax",
+  domain: ".fundasmile.net"
+});
 
-    users.forEach(u => {
-      const idvId = u.idvId || u.idVerificationId || u.idv?._id;
-      const idvStatus = (u.idvStatus || u.identityStatus || u.idv?.status || "").toString();
-
-      const canDecide = idvId && idvStatus.toLowerCase() === "pending";
-
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${u.joinDate ? new Date(u.joinDate).toLocaleString() : (u.createdAt ? new Date(u.createdAt).toLocaleString() : "—")}</td>
-        <td>${u.name || "—"}</td>
-        <td>${u.email || "—"}</td>
-        <td>${idvStatus || "—"}</td>
-        <td>
-          ${
-            canDecide
-              ? `<button class="approve action-btn" type="button">Approve</button>
-                 <button class="reject action-btn" type="button">Deny</button>`
-              : "—"
-          }
-        </td>
-      `;
-      tbody.appendChild(tr);
-
-      if (canDecide) {
-        const approveBtn = tr.querySelector(".approve");
-        const denyBtn = tr.querySelector(".reject");
-
-        approveBtn.onclick = async () => {
-          approveBtn.disabled = true;
-          denyBtn.disabled = true;
-          try {
-            await approveIdv(idvId);
-            await Promise.all([loadUsers(), loadPendingIdVerifications()]);
-          } catch (e) {
-            alert(e.message || "Approve failed");
-          } finally {
-            approveBtn.disabled = false;
-            denyBtn.disabled = false;
-          }
-        };
-
-        denyBtn.onclick = async () => {
-          approveBtn.disabled = true;
-          denyBtn.disabled = true;
-          try {
-            await denyIdv(idvId);
-            await Promise.all([loadUsers(), loadPendingIdVerifications()]);
-          } catch (e) {
-            alert(e.message || "Deny failed");
-          } finally {
-            approveBtn.disabled = false;
-            denyBtn.disabled = false;
-          }
-        };
-      }
+      return res.json({ ok: true });
     });
-  } catch (err) {
-    console.error("loadUsers error:", err);
-  }
-}
-
-// ===== Live visitors (real-time) =====
-const VISITOR_KEY = "jf_admin_visitor_id";
-const visitorId = sessionStorage.getItem(VISITOR_KEY) || ("admin-" + Math.random().toString(36).substring(2,10));
-sessionStorage.setItem(VISITOR_KEY, visitorId);
-
-async function trackLiveVisitors() {
-  try {
-    const res = await fetch(`${backendURL}/api/track-visitor`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ visitorId })
-    });
-    const data = await safeReadJson(res);
-    if (data?.success) document.getElementById("visitorCount").innerText = String(data.activeCount ?? "—");
-  } catch (err) {
-    console.error("Visitor tracking error", err);
-  }
-}
-setInterval(trackLiveVisitors, 5000);
-
-// ==================== EXPIRED CAMPAIGNS ====================
-function daysBetween(a, b) {
-  const ms = Math.abs((+a) - (+b));
-  return Math.floor(ms / (1000 * 60 * 60 * 24));
-}
-function shortText(s, n=60) {
-  const t = String(s || "").trim();
-  if (!t) return "—";
-  return t.length > n ? (t.slice(0, n) + "…") : t;
-}
-
-async function loadExpiredCampaigns() {
-  const tbody = document.querySelector("#expiredCampaignsTable tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-
-  try {
-    const res = await fetch(`${backendURL}/api/admin/expired-campaigns`, {
-      credentials: "include",
-      cache: "no-store"
-    });
-    const data = await safeReadJson(res);
-    const rows = Array.isArray(data?.campaigns) ? data.campaigns : [];
-
-    rows.forEach(c => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${c.title || c.Title || "Untitled"}</td>
-        <td>${c.Email || c.email || c.creatorEmail || "—"}</td>
-        <td>${(c.expiredAt || c.expiresAt) ? new Date(c.expiredAt || c.expiresAt).toLocaleDateString() : "—"}</td>
-        <td>${(c.expiredAt || c.expiresAt) ? daysBetween(new Date(), new Date(c.expiredAt || c.expiresAt)) : "—"}</td>
-        <td><span class="tag">${c.expiredReviewStatus || "Needs Review"}</span></td>
-        <td>${c.expiredOutcome || "—"}</td>
-        <td class="small">${shortText(c.expiredReviewNotes || "", 70)}</td>
-        <td><button class="action-btn neutral" type="button">Review</button></td>
-      `;
-      tbody.appendChild(tr);
-
-      tr.querySelector("button").addEventListener("click", () => openExpiredModal(c));
-    });
-
-  } catch (err) {
-    console.error("loadExpiredCampaigns error:", err);
-  }
-}
-
-async function loadExpiredCampaignsCount() {
-  try {
-    const res = await fetch(`${backendURL}/api/admin/expired-campaigns`, {
-      credentials: "include",
-      cache: "no-store"
-    });
-    const data = await safeReadJson(res);
-    const campaigns = Array.isArray(data?.campaigns) ? data.campaigns : [];
-    const el = document.getElementById("expiredCampaignsCount");
-    if (el) el.textContent = String(campaigns.length);
   } catch (e) {
-    console.error("loadExpiredCampaignsCount error:", e);
-    const el = document.getElementById("expiredCampaignsCount");
-    if (el) el.textContent = "0";
+    return res.status(500).json({ ok: false, error: "Logout failed" });
   }
-}
+});
 
-// Modal wiring (Expired)
-const expModalBackdrop = document.getElementById("expModalBackdrop");
-const expCloseBtn = document.getElementById("expCloseBtn");
-const expSaveBtn  = document.getElementById("expSaveBtn");
-const expRestoreBtn = document.getElementById("expRestoreBtn");
-const expRestoreDays = document.getElementById("expRestoreDays");
+// ==================== ID VERIFICATION (CAMPAIGN-BOUND) ====================
+app.post("/api/verify-id", upload.any(), async (req, res) => {
+  try {
+    // Accept "idFile" or any single file field
+    if (!req.file && Array.isArray(req.files) && req.files.length) {
+      req.file = req.files[0];
+    }
+    // must be logged in
+    const user = req.session?.user;
+    if (!user?.email) {
+      return res.status(401).json({ success: false, message: "Not logged in" });
+    }
 
-let expCurrent = null;
+    const email = String(user.email).trim().toLowerCase();
+    const name  = String(user.name || "").trim();
 
-function closeExpiredModal() {
-  expModalBackdrop.style.display = "none";
-  expModalBackdrop.setAttribute("aria-hidden", "true");
-  expCurrent = null;
-}
-expCloseBtn.addEventListener("click", closeExpiredModal);
-expModalBackdrop.addEventListener("click", (e) => {
-  if (e.target === expModalBackdrop) closeExpiredModal();
+    // must include a file
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: "Missing ID file" });
+    }
 
+    // must include campaignId (from identityverification.html?campaignId=...)
+    const campaignIdRaw = String(req.body.campaignId || "").trim();
+    if (!campaignIdRaw) {
+      return res.status(400).json({ success: false, message: "Missing campaignId" });
+    }
 
-// ==================== CAMPAIGN DETAILS MODAL ====================
-const campModalBackdrop = document.getElementById("campModalBackdrop");
-const campCloseBtn = document.getElementById("campCloseBtn");
+    // Find campaign by _id OR legacy Id/id fields
+    const idVariants = [{ Id: campaignIdRaw }, { id: campaignIdRaw }];
+    if (ObjectId.isValid(campaignIdRaw)) idVariants.unshift({ _id: new ObjectId(campaignIdRaw) });
 
+    const campaign = await db.collection("Campaigns").findOne({ $or: idVariants });
+    if (!campaign) {
+      return res.status(404).json({ success: false, message: "Campaign not found" });
+    }
 
-function ensureCampaignModalDom(){
-  // If markup exists, just map elements.
-  let backdrop = document.getElementById("campaignModalBackdrop");
-  if (!backdrop){
-    // Safety: create DOM if someone removed markup.
-    backdrop = document.createElement("div");
-    backdrop.id = "campaignModalBackdrop";
-    backdrop.className = "modal-backdrop";
-    backdrop.style.display = "none";
-    backdrop.setAttribute("aria-hidden","true");
-    backdrop.innerHTML = `
-      <div id="campaignModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="campaignModalTitle">
-        <div class="modal-header">
-          <div style="display:flex;flex-direction:column;gap:4px;">
-            <h2 id="campaignModalTitle" style="margin:0;font-size:18px;">Campaign Details</h2>
-            <div id="campaignModalMeta" style="font-size:12px;opacity:.8;"></div>
-          </div>
-          <button id="campaignModalClose" class="btn btn-secondary" type="button" aria-label="Close">Close</button>
-        </div>
-        <div id="campaignModalBody" class="modal-body"></div>
-      </div>`;
-    document.body.appendChild(backdrop);
-  }
-  const modal = document.getElementById("campaignModal");
-  const body = document.getElementById("campaignModalBody");
-  const closeBtn = document.getElementById("campaignModalClose");
-  const meta = document.getElementById("campaignModalMeta");
+    // Ownership check (campaign must belong to logged-in user)
+    const ownerEmail = String(campaign.email || campaign.Email || "").trim().toLowerCase();
+    if (!ownerEmail || ownerEmail !== email) {
+      return res.status(403).json({ success: false, message: "Not allowed for this campaign" });
+    }
 
-  // Wire close events once
-  if (!backdrop.dataset.wired){
-    closeBtn?.addEventListener("click", closeCampaignModal);
-    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeCampaignModal(); });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeCampaignModal(); });
-    backdrop.dataset.wired = "1";
-  }
+    // Optional: only allow upload when campaign is waiting on verification
+    // If you haven't added a campaign verificationStatus yet, this won't block anything.
+    const vStatus = String(campaign.verificationStatus || "").trim();
+    if (vStatus && vStatus !== "needs_verification" && vStatus !== "verification_rejected") {
+      return res.status(409).json({
+        success: false,
+        message: "This campaign is not currently requesting ID verification."
+      });
+    }
 
-  return { backdrop, modal, body, closeBtn, meta };
-}
-
-
-function closeCampaignModal() {
-  // Close BOTH possible campaign modals (some versions use campModalBackdrop, others use campaignModalBackdrop)
-  const b1 = document.getElementById("campModalBackdrop");
-  if (b1) {
-    b1.style.display = "none";
-    b1.setAttribute("aria-hidden", "true");
-  }
-  const b2 = document.getElementById("campaignModalBackdrop");
-  if (b2) {
-    b2.style.display = "none";
-    b2.setAttribute("aria-hidden", "true");
-  }
-}
-
-// Wire up close actions for Campaign Details modal (button, backdrop click, Esc)
-(function wireCampaignModalClose(){
-  const backdrop = document.getElementById("campModalBackdrop");
-  const btn = document.getElementById("campCloseBtn");
-
-  if (btn && !btn.dataset.wired){
-    btn.addEventListener("click", closeCampaignModal);
-    btn.dataset.wired = "1";
-  }
-
-  if (backdrop && !backdrop.dataset.wiredClose){
-    // Click outside the modal closes
-    backdrop.addEventListener("click", (e) => {
-      if (e.target === backdrop) closeCampaignModal();
+    // Upload to Cloudinary (same approach you already used)
+    const cloudRes = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "joyfund/id-verifications", use_filename: true, unique_filename: true },
+        (err, result) => (err ? reject(err) : resolve(result))
+      );
+      stream.end(req.file.buffer);
     });
-    backdrop.dataset.wiredClose = "1";
-  }
 
-  if (!window.__campEscWired){
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape"){
-        const bd = document.getElementById("campModalBackdrop");
-        if (bd && bd.style.display !== "none" && bd.getAttribute("aria-hidden") === "false"){
-          closeCampaignModal();
+    // Save verification record (NOW includes campaignId)
+    const verificationDoc = {
+      name,
+      email,
+      campaignId: campaignIdRaw,
+      url: cloudRes.secure_url,
+      Status: "Pending",
+      createdAt: new Date()
+    };
+
+    await db.collection("ID_Verifications").insertOne(verificationDoc);
+
+    // Update campaign so dashboard/admin can track it
+    await db.collection("Campaigns").updateOne(
+      { _id: campaign._id },
+      {
+        $set: {
+          verificationStatus: "verification_submitted",
+          verificationSubmittedAt: new Date(),
+          verificationIdUrl: cloudRes.secure_url
         }
       }
+    );
+
+    // Emails (admin + user)
+    await sendSubmissionEmails({
+      type: "Identity Verification",
+      userEmail: email,
+      userName: name,
+      adminSubject: "New Identity Verification Uploaded",
+      userSubject: "Your ID has been received",
+      adminHtml: `
+        <h2>New ID Verification</h2>
+        <p><b>User:</b> ${email}</p>
+        <p><b>Name:</b> ${name || "—"}</p>
+        <p><b>CampaignId:</b> ${campaignIdRaw}</p>
+        <p><b>File:</b> <a href="${cloudRes.secure_url}">View upload</a></p>
+        <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+      `,
+      userHtml: `
+        <h2>Thanks for verifying your identity 💙💗</h2>
+        <p>Hi ${name || ""},</p>
+        <p>We received your ID and will review it shortly.</p>
+        <p>You can always check your status from your Dashboard.</p>
+        <p>— JoyFund</p>
+      `
     });
-    window.__campEscWired = true;
-  }
-})();
 
-
-campCloseBtn?.addEventListener("click", closeCampaignModal);
-campModalBackdrop?.addEventListener("click", (e) => {
-  if (e.target === campModalBackdrop) closeCampaignModal();
-});
-
-function statusTagClass(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "pending") return "pending";
-  if (s === "approved") return "approved";
-  if (s === "denied") return "denied";
-  if (s === "active") return "approved";
-  if (s === "closed") return "denied";
-  return "";
-}
-
-
-
-function openCampaignModal(c) {
-  // Accept either {success, campaign} or the campaign object directly
-  const camp = c?.campaign ? c.campaign : c;
-
-  const backdrop = document.getElementById("campModalBackdrop");
-  if (!backdrop) return;
-
-  // Elements
-  const elTitle = document.getElementById("campTitle");
-  const elStatusLine = document.getElementById("campStatusLine");
-  const elStatusTag = document.getElementById("campStatusTag");
-  const elCreatorName = document.getElementById("campCreatorName");
-  const elCreatorEmail = document.getElementById("campCreatorEmail");
-  const elCreatedAt = document.getElementById("campCreatedAt");
-  const elLocation = document.getElementById("campLocation");
-  const elCategory = document.getElementById("campCategory");
-  const elGoal = document.getElementById("campGoal");
-  const elDesc = document.getElementById("campDescription");
-  const elImageWrap = document.getElementById("campImageWrap");
-  const elPublicLinkWrap = document.getElementById("campPublicLinkWrap");
-  const elIdLine = document.getElementById("campIdLine");
-
-  // Normalize fields
-  const id = camp?._id || camp?.id || camp?.Id || "—";
-  const title = camp?.title || camp?.Title || "Untitled";
-  const status = camp?.status || camp?.Status || "—";
-  const email = camp?.email || camp?.Email || camp?.creatorEmail || camp?.CreatorEmail || "—";
-  const createdAt = camp?.createdAt || camp?.CreatedAt || camp?.created_at || camp?.created || camp?.dateSubmitted;
-
-  const goal = camp?.goal || camp?.Goal || "—";
-  const city = camp?.city || camp?.City || "";
-  const state = camp?.state || camp?.State || "";
-  const location = [city, state].filter(Boolean).join(", ") || "—";
-  const category = camp?.category || camp?.Category || "—";
-
-  const description = camp?.description || camp?.Description || camp?.desc || camp?.Desc || "";
-  const imageUrl = camp?.imageUrl || camp?.ImageURL || camp?.ImageUrl || camp?.imageURL || camp?.image || camp?.Image || "";
-  const publicUrl = camp?.publicUrl || camp?.PublicUrl || camp?.link || camp?.Link || "";
-
-  // Fill UI
-  if (elTitle) elTitle.textContent = title;
-  if (elStatusLine) elStatusLine.textContent = `Status: ${status}`;
-  if (elStatusTag) {
-    elStatusTag.textContent = status;
-    elStatusTag.className = `tag ${statusTagClass(status)}`;
-  }
-
-  if (elCreatorName) elCreatorName.textContent = "—";
-  if (elCreatorEmail) elCreatorEmail.textContent = email;
-
-  if (elCreatedAt) {
-    const dt = createdAt ? new Date(createdAt) : null;
-    elCreatedAt.textContent = dt && !isNaN(dt) ? `Submitted: ${dt.toLocaleString()}` : "Submitted: —";
-  }
-
-  if (elLocation) elLocation.textContent = location;
-  if (elCategory) elCategory.textContent = category;
-  if (elGoal) elGoal.textContent = `Goal: $${goal}`;
-
-  if (elDesc) elDesc.textContent = description || "—";
-
-  if (elImageWrap) {
-    if (imageUrl) {
-      elImageWrap.innerHTML = `
-        <img src="${escapeAttr(imageUrl)}" alt="Campaign image" style="width:100%;max-width:520px;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.04);" />
-        <div style="margin-top:8px;opacity:.8;word-break:break-word;">${escapeHtml(imageUrl)}</div>
-      `;
-    } else {
-      elImageWrap.textContent = "—";
-    }
-  }
-
-  if (elPublicLinkWrap) {
-    if (publicUrl) {
-      elPublicLinkWrap.innerHTML = `Public link: <a href="${escapeAttr(publicUrl)}" target="_blank" rel="noopener">Open</a>`;
-    } else {
-      elPublicLinkWrap.textContent = "—";
-    }
-  }
-
-  if (elIdLine) elIdLine.textContent = `ID: ${id}`;
-
-  // Show
-  backdrop.style.display = "flex";
-  backdrop.setAttribute("aria-hidden", "false");
-}
-
-/** Close helpers for Campaign Details modal */
-function closeCampaignModal() {
-  const backdrop = document.getElementById("campModalBackdrop");
-  if (!backdrop) return;
-  backdrop.style.display = "none";
-  backdrop.setAttribute("aria-hidden", "true");
-}
-
-// Wire close actions (button, click outside, ESC)
-(function wireCampaignModalClose() {
-  const backdrop = document.getElementById("campModalBackdrop");
-  const closeBtn = document.getElementById("campCloseBtn");
-  if (closeBtn) closeBtn.addEventListener("click", closeCampaignModal);
-
-  if (backdrop) {
-    backdrop.addEventListener("click", (e) => {
-      if (e.target === backdrop) closeCampaignModal();
-    });
-  }
-
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      const bd = document.getElementById("campModalBackdrop");
-      if (bd && bd.style.display !== "none") closeCampaignModal();
-    }
-  });
-})();
-
-
-// Escape helpers to avoid breaking the modal if someone enters HTML
-function escapeHtml(str){
-  return String(str ?? "")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#39;");
-}
-function escapeAttr(str){ return escapeHtml(str); }
-
-});
-
-function openExpiredModal(c) {
-  expCurrent = c;
-  expModalBackdrop.style.display = "flex";
-  expModalBackdrop.setAttribute("aria-hidden", "false");
-
-  const title = c.title || c.Title || "Untitled";
-  const email = c.Email || c.email || c.creatorEmail || "—";
-
-  const expiredAt = c.expiredAt ? new Date(c.expiredAt) : null;
-  const expiresAt = c.expiresAt ? new Date(c.expiresAt) : null;
-
-  document.getElementById("expTitle").innerText = title;
-  document.getElementById("expEmail").innerText = email;
-  document.getElementById("expDates").innerText =
-    `expiresAt: ${expiresAt ? expiresAt.toLocaleString() : "—"} • expiredAt: ${expiredAt ? expiredAt.toLocaleString() : "—"}`;
-
-  document.getElementById("expReviewStatus").value = c.expiredReviewStatus || "Needs Review";
-  document.getElementById("expOutcome").value = c.expiredOutcome || "";
-  document.getElementById("expNotes").value = c.expiredReviewNotes || "";
-}
-
-async function saveExpiredReview(campaignId, payload) {
-  const res = await fetch(`${backendURL}/api/admin/campaigns/${encodeURIComponent(campaignId)}/expired-review`, {
-    method: "PATCH",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const data = await safeReadJson(res);
-  if (!res.ok) throw new Error(data?.message || "Failed to save review");
-  return data;
-}
-
-async function restoreExpiredCampaign(campaignId, days, note) {
-  const res = await fetch(`${backendURL}/api/admin/campaigns/${encodeURIComponent(campaignId)}/restore`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ days, note })
-  });
-  const data = await safeReadJson(res);
-  if (!res.ok) throw new Error(data?.message || "Restore failed");
-  return data;
-}
-
-expSaveBtn.addEventListener("click", async () => {
-  if (!expCurrent) return;
-
-  const id = expCurrent._id || expCurrent.Id || expCurrent.id;
-  const expiredReviewStatus = document.getElementById("expReviewStatus").value.trim();
-  const expiredOutcome = document.getElementById("expOutcome").value.trim();
-  const expiredReviewNotes = document.getElementById("expNotes").value;
-
-  try {
-    expSaveBtn.disabled = true;
-    await saveExpiredReview(id, { expiredReviewStatus, expiredOutcome, expiredReviewNotes });
-    closeExpiredModal();
-    await loadExpiredCampaigns();
-  } catch (e) {
-    alert(e.message || "Save failed");
-  } finally {
-    expSaveBtn.disabled = false;
-  }
-});
-
-expRestoreBtn.addEventListener("click", async () => {
-  if (!expCurrent) return;
-
-  const days = Number(expRestoreDays.value);
-  if (!days) {
-    alert("Please choose how many days to restore the campaign for.");
-    return;
-  }
-
-  const id = expCurrent._id || expCurrent.Id || expCurrent.id;
-  const note = document.getElementById("expNotes").value.trim();
-
-  try {
-    expRestoreBtn.disabled = true;
-    await restoreExpiredCampaign(id, days, note);
-    alert(`Campaign restored for ${days} days.`);
-    closeExpiredModal();
-    await loadExpiredCampaigns();
-    await loadExpiredCampaignsCount();
-  } catch (e) {
-    alert(e.message || "Restore failed");
-  } finally {
-    expRestoreBtn.disabled = false;
-  }
-});
-
-document.getElementById("viewExpiredBtn")?.addEventListener("click", async () => {
-  document.getElementById("nav-campaigns")?.click();
-  await loadExpiredCampaigns();
-  document.getElementById("expiredCampaignsTable")?.scrollIntoView({ behavior: "smooth", block: "start" });
-});
-
-
-// ===== Campaign "View" popup (robust) =====
-function openCampaignModal(data) {
-  const camp = data?.campaign ? data.campaign : data;
-
-  // Prefer the simple modal appended at bottom of the HTML (IDs below)
-  const backdrop = document.getElementById("campaignModalBackdrop") || document.getElementById("campModalBackdrop");
-  if (!backdrop) return;
-
-  // If we're using the simple modal (campaignModalBackdrop)
-  const titleEl = document.getElementById("campaignModalTitle");
-  const metaEl = document.getElementById("campaignModalMeta");
-  const bodyEl = document.getElementById("campaignModalBody");
-
-  // Normalize fields (support many key names)
-  const id = camp?._id || camp?.id || camp?.Id || "—";
-  const title = camp?.title || camp?.Title || "Untitled";
-  const email = camp?.email || camp?.Email || camp?.creatorEmail || camp?.CreatorEmail || "—";
-  const goal = camp?.goal || camp?.Goal || "—";
-  const status = camp?.status || camp?.Status || "—";
-  const createdAtRaw = camp?.createdAt || camp?.CreatedAt || camp?.created_at || camp?.created || camp?.dateSubmitted;
-  const createdAt = createdAtRaw ? new Date(createdAtRaw).toLocaleString() : "—";
-
-  const city = camp?.city || camp?.City || "—";
-  const state = camp?.state || camp?.State || "—";
-
-  const desc = camp?.description || camp?.Description || camp?.desc || camp?.Desc || "";
-  const description = String(desc || "").trim() || "—";
-
-  const imageUrl =
-    camp?.imageUrl ||
-    camp?.ImageURL ||
-    camp?.image ||
-    camp?.Image ||
-    camp?.photoUrl ||
-    camp?.PhotoUrl ||
-    "";
-
-  // If the rich modal (campModalBackdrop) exists, try to populate it too (best effort)
-  const richBackdrop = document.getElementById("campModalBackdrop");
-  if (richBackdrop && backdrop === richBackdrop) {
-    try {
-      document.getElementById("campTitle").innerText = title;
-      document.getElementById("campCreatorEmail").innerText = email;
-      document.getElementById("campCreatedAt").innerText = createdAt;
-      document.getElementById("campGoal").innerText = `Goal: $${goal}`;
-      document.getElementById("campCategory").innerText = camp?.category || camp?.Category || "—";
-      document.getElementById("campLocation").innerText = `${city}${city !== "—" && state !== "—" ? ", " : ""}${state}`;
-      document.getElementById("campDescription").innerText = description;
-
-      const wrap = document.getElementById("campImageWrap");
-      if (wrap) {
-        wrap.innerHTML = imageUrl
-          ? `<img src="${escapeHtml(imageUrl)}" alt="Campaign Image" style="max-width:100%;border-radius:12px;border:1px solid #e5e5e5;" />`
-          : "—";
-      }
-      const idLine = document.getElementById("campIdLine");
-      if (idLine) idLine.innerText = `ID: ${id}`;
-    } catch (e) {
-      // fall back to simple modal below
-    }
-    richBackdrop.style.display = "flex";
-    richBackdrop.setAttribute("aria-hidden", "false");
-    return;
-  }
-
-  // Simple modal rendering
-  if (titleEl) titleEl.textContent = title;
-  if (metaEl) metaEl.textContent = `Submitted: ${createdAt} • Status: ${status} • Creator: ${email}`;
-
-  if (bodyEl) {
-    bodyEl.innerHTML = `
-      <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:14px;">
-        <div>
-          <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 12px;font-size:14px;">
-            <div style="opacity:.7;">Goal</div><div><b>$${escapeHtml(goal)}</b></div>
-            <div style="opacity:.7;">City</div><div>${escapeHtml(city)}</div>
-            <div style="opacity:.7;">State</div><div>${escapeHtml(state)}</div>
-            <div style="opacity:.7;">Campaign ID</div><div class="mono">${escapeHtml(id)}</div>
-          </div>
-
-          <div style="margin-top:14px;padding:12px;border-radius:12px;border:1px solid #e5e5e5;background:#fafafa;">
-            <div style="font-weight:800;margin-bottom:6px;">Description</div>
-            <div style="white-space:pre-wrap;line-height:1.35;">${escapeHtml(description)}</div>
-          </div>
-        </div>
-
-        <div>
-          <div style="font-weight:800;margin-bottom:8px;">Image</div>
-          ${
-            imageUrl
-              ? `<img src="${escapeHtml(imageUrl)}" alt="Campaign Image" style="width:100%;border-radius:12px;border:1px solid #e5e5e5;" />`
-              : `<div style="padding:12px;border-radius:12px;border:1px dashed #ccc;color:#666;">No image found for this campaign.</div>`
-          }
-        </div>
-      </div>
-    `;
-  }
-
-  backdrop.style.display = "flex";
-  backdrop.setAttribute("aria-hidden", "false");
-}
-
-function closeCampaignModal() {
-  const backdrops = [
-    document.getElementById("campaignModalBackdrop"),
-    document.getElementById("campModalBackdrop")
-  ].filter(Boolean);
-
-  backdrops.forEach((bd) => {
-    bd.style.display = "none";
-    bd.setAttribute("aria-hidden", "true");
-  });
-}
-
-// Wire the close buttons (both modal variants)
-document.getElementById("campaignModalClose")?.addEventListener("click", closeCampaignModal);
-document.getElementById("campCloseBtn")?.addEventListener("click", closeCampaignModal);
-
-// Close on backdrop click (optional)
-document.getElementById("campaignModalBackdrop")?.addEventListener("click", (e) => {
-  if (e.target?.id === "campaignModalBackdrop") closeCampaignModal();
-});
-document.getElementById("campModalBackdrop")?.addEventListener("click", (e) => {
-  if (e.target?.id === "campModalBackdrop") closeCampaignModal();
-});
-
-// Expose modal helpers
-window.openCampaignModal = openCampaignModal;
-window.closeCampaignModal = closeCampaignModal;
-
-// ==================== REFRESH ====================
-async function refreshDashboard() {
-  try {
-    await Promise.all([
-      loadCampaigns(),
-      loadDonations(),
-      loadAdminStats(),
-      loadJoyBoostCount(),
-      loadExpiredCampaignsCount(),
-      loadPendingIdCount(),
-      loadApprovedIdCount()
-    ]);
+    return res.json({ success: true, url: cloudRes.secure_url });
   } catch (err) {
-    console.error("refreshDashboard error:", err);
+    console.error("POST /api/verify-id error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
-  document.getElementById("lastRefresh").innerText = new Date().toLocaleTimeString();
-}
-
-document.getElementById("refreshBtn").addEventListener("click", refreshDashboard);
-
-// ✅ Init
-(async function initAdminPage(){
-  const ok = await checkAdminSession();
-  if (!ok) return;
-  await refreshDashboard();
-  trackLiveVisitors();
-})();
-</script>
-
-<!-- Campaign Details Modal -->
-<div id="campaignModalBackdrop" class="modal-backdrop" aria-hidden="true" style="display:none;">
-  <div id="campaignModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="campaignModalTitle">
-    <div class="modal-header">
-      <div style="display:flex;flex-direction:column;gap:4px;">
-        <h2 id="campaignModalTitle" style="margin:0;font-size:18px;">Campaign Details</h2>
-        <div id="campaignModalMeta" style="font-size:12px;opacity:.8;"></div>
-      </div>
-      <button id="campaignModalClose" class="btn btn-secondary" type="button" aria-label="Close">Close</button>
-    </div>
-    <div id="campaignModalBody" class="modal-body"></div>
-  </div>
-</div>
-<script>
-  function closeCampaignModal() {
-    const ids = ["campModalBackdrop", "campaignModalBackdrop"];
-    ids.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = "none";
-    });
-  }
-
-  document.addEventListener("click", function (e) {
-    if (e.target.id === "campModalBackdrop" || e.target.id === "campaignModalBackdrop") {
-      closeCampaignModal();
-    }
-    if (e.target.id === "campCloseBtn") {
-      closeCampaignModal();
-    }
-  });
-
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") closeCampaignModal();
-  });
-
-  // make modal content scrollable so long text is visible
-  const style = document.createElement("style");
-  style.innerHTML = `
-    #campModalBackdrop .modal,
-    #campaignModalBackdrop .modal {
-      max-height: 90vh;
-      overflow: hidden;
-    }
-    #campModalBackdrop .modal-body,
-    #campaignModalBackdrop .modal-body {
-      max-height: 70vh;
-      overflow-y: auto;
-    }
-  `;
-  document.head.appendChild(style);
-</script>
-
-<script>
-async function loadSettings(){
-  const res = await fetch(backendURL + "/api/admin/settings",{credentials:"include"});
-  const data = await res.json();
-  const s = data.settings || {};
-  document.getElementById("toggleDemoMode").checked = !!s.demoMode;
-  document.getElementById("toggleVisitorLogging").checked = !!s.visitorLogging;
-  document.getElementById("toggleProfanityFilter").checked = !!s.profanityFilter;
-  document.getElementById("toggleCampaignApproval").checked = !!s.requireCampaignApproval;
-  document.getElementById("toggleAutoDonationEmail").checked = !!s.autoDonationEmail;
-  document.getElementById("toggleUserRegistration").checked = !!s.allowUserRegistration;
-  document.getElementById("toggleVolunteerApplications").checked = !!s.acceptVolunteerApplications;
-  document.getElementById("toggleCampaignVisibility").checked = !!s.publicCampaignVisibility;
-  document.getElementById("toggleEmailNotifications").checked = !!s.emailNotifications;
-}
-
-async function saveSettings(){
-  const body = {
-    demoMode: document.getElementById("toggleDemoMode").checked,
-    visitorLogging: document.getElementById("toggleVisitorLogging").checked,
-    profanityFilter: document.getElementById("toggleProfanityFilter").checked,
-    requireCampaignApproval: document.getElementById("toggleCampaignApproval").checked,
-    autoDonationEmail: document.getElementById("toggleAutoDonationEmail").checked,
-    allowUserRegistration: document.getElementById("toggleUserRegistration").checked,
-    acceptVolunteerApplications: document.getElementById("toggleVolunteerApplications").checked,
-    publicCampaignVisibility: document.getElementById("toggleCampaignVisibility").checked,
-    emailNotifications: document.getElementById("toggleEmailNotifications").checked
-  };
-  await fetch(backendURL + "/api/admin/settings",{
-    method:"PUT",
-    credentials:"include",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify(body)
-  });
-}
-
-document.querySelectorAll("#settingsSection input[type=checkbox]").forEach(cb=>{
-  cb.addEventListener("change", saveSettings);
 });
 
-window.addEventListener("DOMContentLoaded", loadSettings);
-</script>
+// ==================== ID VERIFICATION: CURRENT USER (DASHBOARD) ====================
+app.get("/api/id-verification/me", async (req, res) => {
+  try {
+    const email = req.session?.user?.email;
+    if (!email) return res.status(401).json({ success: false, message: "Not logged in" });
 
-</body>
-</html>
+    const cleanEmail = String(email).trim().toLowerCase();
+    const emailExactI = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
+
+    const latest = await db.collection("ID_Verifications")
+      .find({ $or: [{ email: emailExactI }, { Email: emailExactI }] })
+      .sort({ ReviewedAt: -1, createdAt: -1, CreatedAt: -1, _id: -1 })
+      .limit(1)
+      .toArray();
+
+    const row = latest[0] || null;
+
+    // normalize photo url field names
+    const rawPhoto =
+      row?.IDPhotoURL ||
+      row?.idPhotoUrl ||
+      row?.photoUrl ||
+      row?.url ||
+      row?.fileUrl ||
+      row?.FileURL ||
+      row?.IdFileUrl ||
+      row?.idFile ||
+      "";
+
+    return res.json({
+      success: true,
+      verification: row,
+      status: row?.Status || row?.status || "Pending",
+      photoUrl: rawPhoto
+    });
+  } catch (err) {
+    console.error("id-verification/me error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+app.use((err, req, res, next) => {
+  if (err && (err.message?.includes("Only JPG") || err.code === "LIMIT_FILE_SIZE")) {
+    return res.status(400).json({ success: false, message: err.message || "Invalid upload" });
+  }
+  return next(err);
+});
+
+// ==================== JOYDROP: WEEKLY AUTO-PUBLISH ====================
+// Runs every Monday (NY time by default) and inserts a new JoyDrop into Postgres.
+//
+// IMPORTANT:
+// - This does NOT change your existing /api/joydrop/current endpoint.
+// - It only adds NEW rows to Postgres so "current" naturally updates.
+
+const JOYDROP_CRON_TZ = String(process.env.JOYDROP_CRON_TZ || "America/New_York").trim();
+
+// Edit these anytime (title/body/micro_action)
+const JOYDROP_LIBRARY = [
+  {
+    title: "JoyNow: One small win 💙",
+    body: "Pick one tiny thing you can finish today — even if it’s 2 minutes. A small win counts.",
+    micro_action: "Text yourself: “I did one thing today.”"
+  },
+  {
+    title: "JoyNow: Reset your nervous system 💗",
+    body: "When your mind is loud, your body needs a signal that you’re safe. Slow down on purpose.",
+    micro_action: "Do 4 slow breaths: in 4… out 6… (x4)."
+  },
+  {
+    title: "JoyNow: Kindness counts",
+    body: "Do one kind thing for yourself today — the same way you’d treat someone you love.",
+    micro_action: "Drink water and stand in sunlight for 30 seconds."
+  },
+  {
+    title: "JoyNow: Move it out",
+    body: "Emotions get stuck when we don’t move. You don’t need a workout — you need a release.",
+    micro_action: "Shake your arms + shoulders for 20 seconds."
+  }
+];
+
+// Simple stable week-ish index so you rotate through the library
+function getWeekRotationIndex() {
+  const now = new Date();
+  const start = new Date(Date.UTC(2025, 0, 1)); // Jan 1, 2025 (arbitrary anchor)
+  const diffDays = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+  const weekNum = Math.floor(diffDays / 7);
+  return Math.abs(weekNum) % JOYDROP_LIBRARY.length;
+}
+
+async function getLatestJoyDrop() {
+  if (!pgPool) return null;
+  const r = await pgPool.query(
+    `SELECT id, created_at, title, body, micro_action
+     FROM joydrops
+     ORDER BY created_at DESC
+     LIMIT 1`
+  );
+  return r.rows?.[0] || null;
+}
+
+async function publishJoyDropIfNeeded({ force = false } = {}) {
+  try {
+    if (!pgPool) {
+      console.warn("⚠️ JoyDrop auto-publish skipped: Postgres not configured.");
+      return;
+    }
+
+    // Guard: if we already published within the last ~5 days, skip
+    // (prevents duplicates on restarts; weekly schedule means this is safe)
+    const latest = await getLatestJoyDrop();
+    if (!force && latest?.created_at) {
+      const ageMs = Date.now() - new Date(latest.created_at).getTime();
+      const ageDays = ageMs / (1000 * 60 * 60 * 24);
+      if (ageDays < 5) {
+        console.log("⏭️ JoyDrop auto-publish: latest is recent, skipping.");
+        return;
+      }
+    }
+
+    const idx = getWeekRotationIndex();
+    const pick = JOYDROP_LIBRARY[idx];
+
+    await pgPool.query(
+      `INSERT INTO joydrops (title, body, micro_action)
+       VALUES ($1, $2, $3)`,
+      [pick.title, pick.body, pick.micro_action || ""]
+    );
+
+    console.log("✅ JoyDrop auto-published:", pick.title);
+  } catch (err) {
+    console.error("❌ JoyDrop auto-publish error:", err);
+  }
+}
+
+// Every Monday at 9:00 AM New York time
+cron.schedule(
+  "0 9 * * 1",
+  async () => {
+    await publishJoyDropIfNeeded();
+  },
+  { timezone: JOYDROP_CRON_TZ }
+);
+
+// ==================== JOYDROP: GET CURRENT ====================
+app.get("/api/joydrop/current", async (req, res) => {
+  try {
+    if (!pgPool) {
+      return res.status(500).json({ success: false, message: "JoyDrop DB not configured" });
+    }
+
+    const result = await pgPool.query(
+      `SELECT id, created_at, title, body, micro_action
+       FROM joydrops
+       ORDER BY created_at DESC
+       LIMIT 1`
+    );
+
+    const row = result.rows?.[0] || null;
+
+    // If none exist yet, return a friendly default instead of error
+    if (!row) {
+      return res.json({
+        success: true,
+        joydrop: {
+          id: null,
+          created_at: new Date().toISOString(),
+          title: "Your first JoyDrop is coming 💙",
+          body: "Check back soon — we’ll have a fresh drop here weekly.",
+          micro_action: "Take one slow breath in… and one slow breath out."
+        }
+      });
+    }
+
+    return res.json({ success: true, joydrop: row });
+  } catch (err) {
+    console.error("GET /api/joydrop/current error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ==================== STATIC FILES ====================
+app.use(express.static("public"));
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
+
+ensureJoyDropsTable().catch((e) => {
+  console.error("❌ ensureJoyDropsTable failed:", e);
+});
+
+// ==================== START SERVER ====================
+app.listen(PORT, () => console.log(`JoyFund backend running on port ${PORT}`));
+
+// ==================== ADMIN SETTINGS (READ/WRITE) ====================
+app.get("/api/admin/settings", requireAdmin, async (req, res) => {
+  const settings = await db.collection("Admin_Settings").findOne({ key: "global" });
+  res.json({ success: true, settings });
+});
+
+app.put("/api/admin/settings", requireAdmin, async (req, res) => {
+  const allowed = [
+    "demoMode",
+    "visitorLogging",
+    "profanityFilter",
+    "requireCampaignApproval",
+    "autoDonationEmail",
+    "allowUserRegistration",
+    "acceptVolunteerApplications",
+    "publicCampaignVisibility",
+    "emailNotifications"
+  ];
+
+  const update = {};
+  for (const k of allowed) {
+    if (typeof req.body[k] === "boolean") update[k] = req.body[k];
+  }
+
+  update.updatedAt = new Date();
+
+  await db.collection("Admin_Settings").updateOne(
+    { key: "global" },
+    { $set: update },
+    { upsert: true }
+  );
+
+  res.json({ success: true, settings: update });
+});
