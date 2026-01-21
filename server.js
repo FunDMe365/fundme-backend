@@ -1086,6 +1086,199 @@ async function sendSubmissionEmails({
   await Promise.allSettled(tasks);
 }
 
+// ==================== MONTHLY STATUS-BASED EMAIL ENGINE ====================
+// Segments users by campaign activity and sends tailored monthly emails.
+// Called by your internal cron endpoint: POST /api/internal/run-monthly-email-blast
+
+const EMAIL_BLAST_LOGS = "Email_Blast_Log";
+
+function getMonthKey(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+function signInUrl() {
+  // You said the URL should be the sign-in URL
+  return `${PUBLIC_BASE_URL}/signin.html`;
+}
+
+// Determine segment from Mongo (no schema changes needed)
+async function segmentUserByEmail(emailRaw) {
+  const email = String(emailRaw || "").trim().toLowerCase();
+  if (!email) return "observer";
+
+  const campaigns = await db.collection("Campaigns").find({
+    $or: [
+      { Email: { $regex: `^${escapeRegex(email)}$`, $options: "i" } },
+      { email: { $regex: `^${escapeRegex(email)}$`, $options: "i" } }
+    ]
+  }).toArray();
+
+  if (!campaigns.length) return "observer";
+
+  // "Campaigner" = has Active (or Approved if you use it)
+  const isCampaigner = campaigns.some(c => {
+    const lifecycle = String(c.lifecycleStatus || "").trim();
+    const status = String(c.Status || c.status || "").trim();
+    return lifecycle === "Active" || status === "Active" || status === "Approved" || lifecycle === "Approved";
+  });
+
+  if (isCampaigner) return "campaigner";
+
+  // Otherwise they started something but not active/approved
+  return "in_progress";
+}
+
+// === Templates (HTML) ===
+function tplObserver(name) {
+  const url = signInUrl();
+  return {
+    template: "observer",
+    subject: "A quick JoyFund update for you 💙",
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.55;color:#111;">
+        <p>Hi ${escapeHtml(name || "there")}!</p>
+
+        <p>Happy new month! We wanted to share a quick update on what’s been happening at JoyFund — and thank you again for creating an account with us.</p>
+
+        <p>
+          JoyFund exists to help people raise money for small, joyful experiences that support mental well-being —
+          things like family outings, art classes, short getaways, and more. We’re continuing to refine the platform and
+          prepare for more real campaigns to launch in the coming weeks.
+        </p>
+
+        <p>
+          <b>Whenever you’re ready, you can sign back into your account here:</b><br/>
+          <a href="${url}">${url}</a>
+        </p>
+
+        <p>
+          If the time feels right, we’d love for you to consider starting a campaign — even something small.
+          Your idea matters, and JoyFund is here to support you every step of the way.
+          Of course, if you just want to look around for now, that’s completely fine too.
+        </p>
+
+        <p>Thanks for being part of this journey 💙<br/>
+        <b>Corey</b><br/>Founder, JoyFund</p>
+      </div>
+    `
+  };
+}
+
+function tplInProgress(name) {
+  const url = signInUrl();
+  return {
+    template: "in_progress",
+    subject: "Want to finish your JoyFund campaign? 💙",
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.55;color:#111;">
+        <p>Hi ${escapeHtml(name || "there")}!</p>
+
+        <p>Happy new month 💙 We noticed you started setting something up on JoyFund.</p>
+
+        <p>
+          If you still want to move forward, you can sign in anytime and continue where you left off:<br/>
+          <a href="${url}">${url}</a>
+        </p>
+
+        <p>If you got stuck, reply to this email and tell me what happened — I’ll help you finish it.</p>
+
+        <p>With love,<br/>
+        <b>Corey</b><br/>Founder, JoyFund</p>
+      </div>
+    `
+  };
+}
+
+function tplCampaigner(name) {
+  const url = signInUrl();
+  return {
+    template: "campaigner",
+    subject: "Your JoyFund monthly update 💙",
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.55;color:#111;">
+        <p>Hi ${escapeHtml(name || "there")}!</p>
+
+        <p>Happy new month 💙 Just checking in to thank you for being part of JoyFund.</p>
+
+        <p>
+          If you ever want to manage your campaign or start another one, you can sign in anytime:<br/>
+          <a href="${url}">${url}</a>
+        </p>
+
+        <p>With love,<br/>
+        <b>Corey</b><br/>Founder, JoyFund</p>
+      </div>
+    `
+  };
+}
+
+// === Main runner ===
+// force=false prevents duplicate sends in same month (recommended)
+// limit=0 means no limit (send to all)
+async function runMonthlyStatusEmails({ force = false, limit = 0 } = {}) {
+  const mk = getMonthKey(new Date());
+
+  // Pull users (your app stores users in "Users" with Email/Name in multiple places)
+  const users = await db.collection("Users").find({
+    Email: { $exists: true, $ne: "" }
+  }).toArray();
+
+  let sent = 0;
+  let skipped = 0;
+
+  for (const u of users) {
+    const email = String(u.Email || u.email || "").trim().toLowerCase();
+    if (!email) continue;
+
+    const name = String(u.Name || u.name || "").trim();
+
+    const segment = await segmentUserByEmail(email);
+
+    let msg;
+    if (segment === "observer") msg = tplObserver(name);
+    else if (segment === "in_progress") msg = tplInProgress(name);
+    else msg = tplCampaigner(name);
+
+    // Duplicate prevention per month + template
+    if (!force) {
+      const already = await db.collection(EMAIL_BLAST_LOGS).findOne({
+        email,
+        monthKey: mk,
+        template: msg.template
+      });
+      if (already) {
+        skipped++;
+        continue;
+      }
+    }
+
+    await sendMailjet({
+      toEmail: email,
+      toName: name,
+      subject: msg.subject,
+      html: msg.html + EMAIL_FOOTER,
+      headers: {
+        "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+      }
+    });
+
+    await db.collection(EMAIL_BLAST_LOGS).updateOne(
+      { email, monthKey: mk, template: msg.template },
+      { $set: { email, monthKey: mk, template: msg.template, sentAt: new Date() } },
+      { upsert: true }
+    );
+
+    sent++;
+    if (limit && sent >= limit) break;
+  }
+
+  console.log(`📣 Monthly status emails done. month=${mk} sent=${sent} skipped=${skipped}`);
+  return { monthKey: mk, sent, skipped };
+}
+
 // ==================== MONTHLY STATUS-BASED EMAIL BLASTS ====================
 
 // Collection that prevents sending the same email twice in the same month
@@ -2139,6 +2332,45 @@ function requireAdmin(req, res, next) {
   if (req.session && req.session.admin) return next();
   res.status(403).json({ success: false, message: "Forbidden" });
 }
+
+// ==================== INTERNAL CRON TRIGGER (NOT ADMIN-SESSION PROTECTED) ====================
+// This endpoint is meant to be called by a Render Cron Job (server-to-server).
+// It is protected by a secret header so random people cannot trigger blasts.
+function requireCronKey(req, res, next) {
+  const key = req.headers["x-cron-key"];
+  const expected = String(process.env.CRON_KEY || "").trim();
+
+  // Fail closed if CRON_KEY is not set
+  if (!expected) {
+    return res.status(500).json({ success: false, message: "CRON_KEY not configured" });
+  }
+
+  // Use your existing timing-safe compare helper
+  if (!safeEqual(String(key || ""), expected)) {
+    return res.status(403).json({ success: false, message: "Forbidden" });
+  }
+
+  return next();
+}
+
+app.post("/api/internal/run-monthly-email-blast", requireCronKey, async (req, res) => {
+  try {
+    // IMPORTANT: we will plug the real monthly sender function into here in Step 2.
+    // For now, this keeps your server from crashing even if the function isn't added yet.
+    if (typeof runMonthlyStatusEmails !== "function") {
+      return res.status(501).json({
+        success: false,
+        message: "Monthly email engine not added yet (next step)."
+      });
+    }
+
+    const result = await runMonthlyStatusEmails({ force: false, limit: 0 });
+    return res.json({ success: true, result });
+  } catch (err) {
+    console.error("POST /api/internal/run-monthly-email-blast error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 // Protect ALL /api/admin/* routes by default
 app.use("/api/admin", requireAdmin);
