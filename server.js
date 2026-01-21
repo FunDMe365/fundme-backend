@@ -1086,6 +1086,241 @@ async function sendSubmissionEmails({
   await Promise.allSettled(tasks);
 }
 
+// ==================== MONTHLY STATUS-BASED EMAIL BLASTS ====================
+
+// Collection that prevents sending the same email twice in the same month
+const EMAIL_LOGS = "Email_Blast_Log";
+
+// Helper: YYYY-MM
+function monthKey(d = new Date()) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+// Helper: build sign-in link (you requested sign-in URL)
+function getSignInUrl() {
+  const base = (process.env.PUBLIC_BASE_URL || PUBLIC_BASE_URL || FRONTEND_URL || "https://fundasmile.net").trim();
+  return `${base}/signin.html`;
+}
+
+// Decide the user's segment based on what exists in Mongo (no schema changes needed)
+async function getUserSegmentByEmail(emailRaw) {
+  const email = String(emailRaw || "").trim().toLowerCase();
+  if (!email) return "observer";
+
+  // Find campaigns owned by this email (your code supports Email/email in other places)
+  const campaigns = await db.collection("Campaigns").find({
+    $or: [{ Email: email }, { email: email }, { Email: { $regex: `^${escapeRegex(email)}$`, $options: "i" } }]
+  }).toArray();
+
+  if (!campaigns.length) return "observer";
+
+  // Campaigner = has an Active or Approved campaign (your system uses lifecycleStatus a lot)
+  const isCampaigner = campaigns.some(c => {
+    const ls = String(c.lifecycleStatus || "").trim();
+    const st = String(c.Status || c.status || "").trim();
+    return (
+      ls === "Active" ||
+      st === "Active" ||
+      st === "Approved" ||
+      ls === "Approved"
+    );
+  });
+
+  if (isCampaigner) return "campaigner";
+
+  // Otherwise they started something but didn't get to active/approved yet
+  return "in_progress";
+}
+
+// EMAIL TEMPLATES (3)
+// 1) Created account but did nothing else (includes your requested language + sign-in link)
+function emailObserver(userName) {
+  const url = getSignInUrl();
+  return {
+    template: "observer",
+    subject: "A quick JoyFund update for you 💙",
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.55;">
+        <p>Hi ${escapeHtml(userName || "there")},</p>
+
+        <p>Quick monthly check-in from JoyFund 💙</p>
+
+        <p>
+          You created your JoyFund account (thank you for joining us), but it looks like you haven’t taken the next step yet — and that’s totally okay.
+          Sometimes people sign up just to check things out… and sometimes they’re not ready to ask for help yet.
+        </p>
+
+        <p>
+          <b>Whenever you’re ready</b>, you can sign back in here:
+          <br/>
+          <a href="${url}">${url}</a>
+        </p>
+
+        <p>
+          If the time feels right, we’d love for you to start a campaign. JoyFund is built for “joy-based” needs that support mental wellness —
+          family days, small getaways, classes, simple resets… the kind of moments that help someone breathe again.
+        </p>
+
+        <p style="margin:16px 0 0 0;">With love,</p>
+        <p style="margin:0;"><b>Corey</b><br/>Founder, JoyFund</p>
+      </div>
+    `
+  };
+}
+
+// 2) Started a campaign but didn’t finish / not active
+function emailInProgress(userName) {
+  const url = getSignInUrl();
+  return {
+    template: "in_progress",
+    subject: "Want to finish your JoyFund campaign? 💙",
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.55;">
+        <p>Hi ${escapeHtml(userName || "there")},</p>
+
+        <p>Happy new month 💙 We noticed you started setting something up on JoyFund.</p>
+
+        <p>
+          If you still want to move forward, you can sign in anytime and continue where you left off:
+          <br/>
+          <a href="${url}">${url}</a>
+        </p>
+
+        <p>
+          If you got stuck, reply to this email and tell me what happened — I’ll help you finish it.
+        </p>
+
+        <p style="margin:16px 0 0 0;">With love,</p>
+        <p style="margin:0;"><b>Corey</b><br/>Founder, JoyFund</p>
+      </div>
+    `
+  };
+}
+
+// 3) Campaigner (active/approved)
+function emailCampaigner(userName) {
+  const url = getSignInUrl();
+  return {
+    template: "campaigner",
+    subject: "Your JoyFund monthly update 💙",
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.55;">
+        <p>Hi ${escapeHtml(userName || "there")},</p>
+
+        <p>Happy new month 💙 Just checking in to thank you for being part of JoyFund.</p>
+
+        <p>
+          If you ever want to manage your campaign or start another one, you can sign in here anytime:
+          <br/>
+          <a href="${url}">${url}</a>
+        </p>
+
+        <p style="margin:16px 0 0 0;">With love,</p>
+        <p style="margin:0;"><b>Corey</b><br/>Founder, JoyFund</p>
+      </div>
+    `
+  };
+}
+
+// MAIN SENDER (runs once/month)
+async function runMonthlyStatusEmails({ force = false, limit = 0 } = {}) {
+  const mk = monthKey(new Date());
+
+  // Pull all users (your Users collection uses Name/Email)
+  const users = await db.collection("Users").find({
+    Email: { $exists: true, $ne: "" }
+  }).toArray();
+
+  let sent = 0;
+  let skipped = 0;
+
+  for (const u of users) {
+    const email = String(u.Email || u.email || "").trim().toLowerCase();
+    if (!email) continue;
+
+    const name = String(u.Name || u.name || "").trim();
+
+    const segment = await getUserSegmentByEmail(email);
+
+    let msg;
+    if (segment === "observer") msg = emailObserver(name);
+    else if (segment === "in_progress") msg = emailInProgress(name);
+    else msg = emailCampaigner(name);
+
+    // prevent duplicates per month per template
+    if (!force) {
+      const existing = await db.collection(EMAIL_LOGS).findOne({
+        email,
+        monthKey: mk,
+        template: msg.template
+      });
+      if (existing) {
+        skipped++;
+        continue;
+      }
+    }
+
+    await sendMailjet({
+      toEmail: email,
+      toName: name,
+      subject: msg.subject,
+      html: msg.html + EMAIL_FOOTER,
+      headers: {
+        "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+      }
+    });
+
+    await db.collection(EMAIL_LOGS).updateOne(
+      { email, monthKey: mk, template: msg.template },
+      { $set: { email, monthKey: mk, template: msg.template, sentAt: new Date() } },
+      { upsert: true }
+    );
+
+    sent++;
+    if (limit && sent >= limit) break;
+  }
+
+  console.log(`📣 Monthly status emails done. month=${mk} sent=${sent} skipped=${skipped}`);
+  return { monthKey: mk, sent, skipped };
+}
+
+// Schedule: First Monday of every month at 10:00am New York time
+// "0 10 1-7 * 1" = 10:00 on any Monday between the 1st–7th (aka first Monday)
+cron.schedule(
+  "0 10 1-7 * 1",
+  async () => {
+    try {
+      await runMonthlyStatusEmails();
+    } catch (err) {
+      console.error("❌ Monthly status email cron error:", err);
+    }
+  },
+  { timezone: "America/New_York" }
+);
+
+// OPTIONAL: test endpoint (admin-only via x-admin-key)
+app.post("/api/admin/test-monthly-emails", async (req, res) => {
+  try {
+    const key = req.headers["x-admin-key"];
+    if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
+      return res.status(401).json({ ok: false, error: "Unauthorized" });
+    }
+
+    // You can send to everyone (force=false) OR just send a few (limit)
+    const force = String(req.body?.force || "false") === "true";
+    const limit = Number(req.body?.limit || 3);
+
+    const result = await runMonthlyStatusEmails({ force, limit });
+    return res.json({ ok: true, result });
+  } catch (err) {
+    console.error("test-monthly-emails error:", err);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
 
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
 async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
