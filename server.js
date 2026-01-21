@@ -4134,6 +4134,26 @@ ensureJoyDropsTable().catch((e) => {
   console.error("❌ ensureJoyDropsTable failed:", e);
 });
 
+// ==================== MONTHLY AUTOMATIC EMAIL SCHEDULE (NODE-CRON) ====================
+// Runs on the FIRST MONDAY of every month at 10:00 AM EASTERN TIME
+
+cron.schedule(
+  "0 10 1-7 * 1",
+  async () => {
+    console.log("🕙 Running automatic monthly JoyFund email blast (Eastern Time)...");
+
+    try {
+      await runMonthlyStatusEmails({ force: false, limit: 0 });
+      console.log("✅ Monthly JoyFund email blast completed successfully.");
+    } catch (err) {
+      console.error("❌ Monthly JoyFund email cron error:", err);
+    }
+  },
+  {
+    timezone: "America/New_York"
+  }
+);
+
 // ==================== START SERVER ====================
 app.listen(PORT, () => console.log(`JoyFund backend running on port ${PORT}`));
 
