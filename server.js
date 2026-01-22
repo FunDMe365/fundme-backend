@@ -3907,6 +3907,49 @@ app.post("/api/logout", (req, res) => {
   }
 });
 
+app.post("/api/joypoints/redeem", async (req, res) => {
+  try {
+    // 1️⃣ Make sure user is logged in
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not logged in" });
+    }
+
+    // 2️⃣ Get reward + cost from frontend
+    const { reward, cost } = req.body;
+
+    if (!reward || !cost) {
+      return res.status(400).json({ message: "Missing reward or cost" });
+    }
+
+    // 3️⃣ Find the user
+    const user = await User.findById(req.session.userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // 4️⃣ Check points
+    if (user.joyPoints < cost) {
+      return res.status(400).json({ message: "Not enough JoyPoints" });
+    }
+
+    // 5️⃣ Deduct + save
+    user.joyPoints -= cost;
+    user.rewards.push(reward);
+    await user.save();
+
+    // 6️⃣ Send updated balance back
+    res.json({
+      joyPoints: user.joyPoints,
+      rewards: user.rewards
+    });
+
+  } catch (err) {
+    console.error("JoyPoints redemption error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
 // ==================== ID VERIFICATION (CAMPAIGN-BOUND) ====================
 app.post("/api/verify-id", upload.any(), async (req, res) => {
   try {
@@ -4203,6 +4246,22 @@ app.get("/api/joydrop/current", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+
+app.get("/user/:id/points", async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).send("User not found");
+
+    res.send({
+      points: user.points,
+      badges: user.badges, // optional
+    });
+  } catch (err) {
+    res.status(500).send("Server error");
+  }
+});
+
 
 // ==================== STATIC FILES ====================
 app.use(express.static("public"));
