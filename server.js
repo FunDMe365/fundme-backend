@@ -226,7 +226,40 @@ app.get("/api/_debug/admin-env", (req, res) => {
   return res.json({ ok: true });
 });
 
+async function awardJoyPoints(userId, amount, reason) {
+  if (!userId || !amount || amount <= 0) {
+    throw new Error("Invalid JoyPoints award");
+  }
 
+  const now = new Date();
+
+  const result = await db.collection("Users").updateOne(
+    { _id: userId },
+    {
+      $inc: {
+        "joyPoints.balance": amount,
+        "joyPoints.lifetimeEarned": amount
+      },
+      $set: {
+        "joyPoints.lastUpdated": now
+      },
+      $push: {
+        joyPointsHistory: {
+          type: "earn",
+          amount: amount,
+          reason: reason,
+          createdAt: now
+        }
+      }
+    }
+  );
+
+  if (result.matchedCount === 0) {
+    throw new Error("User not found for JoyPoints award");
+  }
+
+  return true;
+}
 
 // ==================== CORS (must be before routes) ====================
 const allowedOrigins = [
@@ -1703,13 +1736,31 @@ app.post("/api/signup", async (req, res) => {
     const hashed = await bcrypt.hash(String(password), 10);
 
     const newUser = {
-      Name: cleanName,
-      Email: cleanEmail,
-      PasswordHash: hashed,
-      JoinDate: new Date()
-    };
+  Name: cleanName,
+  Email: cleanEmail,
+  PasswordHash: hashed, // make sure this matches your bcrypt variable
+  JoinDate: new Date(),
 
-    await collection.insertOne(newUser);
+  // 🎁 JoyPoints wallet (LOCKED FORMAT)
+  joyPoints: {
+    balance: 0,
+    lifetimeEarned: 0,
+    lastUpdated: new Date()
+  },
+
+  joyPointsHistory: []
+};
+
+   const result = await db.collection("Users").insertOne(newUser);
+   const userId = result.insertedId;
+
+	
+	// 🎁 Award signup JoyPoints
+await awardJoyPoints(
+  newUser._id,
+  25,
+  "Welcome to JoyFund"
+);
 	
 	await sendSubmissionEmails({
   type: "Signup",
@@ -2246,7 +2297,37 @@ app.get("/api/joyboost/momentum/:campaignId", async (req, res) => {
   }
 });
 
+//=====================Get JoyPoints for logged-in user=================
+app.get("/api/joypoints/me", requireLogin, async (req, res) => {
+  try {
+    const userId = req.user._id; // or req.session.userId if that's what you use
 
+    const user = await db.collection("Users").findOne(
+      { _id: userId },
+      {
+        projection: {
+          joyPoints: 1,
+          joyPointsHistory: 1
+        }
+      }
+    );
+
+    if (!user || !user.joyPoints) {
+      return res.status(404).json({ message: "JoyPoints wallet not found" });
+    }
+
+    res.json({
+      balance: user.joyPoints.balance,
+      lifetimeEarned: user.joyPoints.lifetimeEarned,
+      lastUpdated: user.joyPoints.lastUpdated,
+      history: user.joyPointsHistory
+    });
+
+  } catch (err) {
+    console.error("JoyPoints read error:", err);
+    res.status(500).json({ message: "Failed to load JoyPoints" });
+  }
+});
 
 //=====================DONATION SUMMARY============
 app.get("/api/dashboard/donations-summary", async (req, res) => {
