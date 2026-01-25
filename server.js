@@ -2054,31 +2054,49 @@ app.post("/api/signout", (req, res) => {
 // Check if the user is logged in
 app.get("/api/check-session", async (req, res) => {
   try {
+    // User is not logged in
     if (!req.session.user) {
       return res.json({
         loggedIn: false,
         user: null,
         identityVerified: false,
-        identityStatus: "Not Submitted"
+        identityStatus: "Not Submitted",
+        joyPoints: 0
       });
     }
 
+    // Check identity status
     const identityStatus = await getIdentityStatus(req.session.user.email);
     const identityVerified = identityStatus === "Approved";
 
+    // Fetch JoyPoints safely
+    let joyPoints = 0;
+    try {
+      joyPoints = await getJoyPoints(req.session.user.email);
+      // Ensure it's a number
+      if (typeof joyPoints !== "number") joyPoints = 0;
+    } catch (err) {
+      console.error("Error fetching JoyPoints:", err);
+      joyPoints = 0;
+    }
+
+    // Return full session info including JoyPoints
     return res.json({
       loggedIn: true,
       user: req.session.user,
       identityVerified,
-      identityStatus
+      identityStatus,
+      joyPoints
     });
+
   } catch (err) {
     console.error("check-session error:", err);
     return res.json({
       loggedIn: false,
       user: null,
       identityVerified: false,
-      identityStatus: "Not Submitted"
+      identityStatus: "Not Submitted",
+      joyPoints: 0
     });
   }
 });
