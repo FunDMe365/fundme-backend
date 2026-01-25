@@ -95,7 +95,7 @@ db.once("open", () => {
 const { MongoClient } = require("mongodb");
 
 // Replace this with your actual MongoDB connection string
-const uri = process.env.MONGO_URI || "your-mongo-uri-here"; 
+const uri = process.env.MONGO_URI || "mongodb+srv://fundasmile:JoyFund123@joyfund.gvihjsw.mongodb.net/joyfund?retryWrites=true&w=majority"; 
 const client = new MongoClient(uri);
 
 let usersCollection;
