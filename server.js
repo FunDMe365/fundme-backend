@@ -2063,12 +2063,28 @@ app.get("/api/check-session", async (req, res) => {
       });
     }
 
-    const identityStatus = await getIdentityStatus(req.session.user.email);
+    // Fetch fresh user data from DB
+    const userFromDB = await User.findOne({ email: req.session.user.email }).lean();
+
+    if (!userFromDB) {
+      return res.json({
+        loggedIn: false,
+        user: null,
+        identityVerified: false,
+        identityStatus: "Not Submitted"
+      });
+    }
+
+    const identityStatus = await getIdentityStatus(userFromDB.email);
     const identityVerified = identityStatus === "Approved";
 
+    // Return user with joyPoints included
     return res.json({
       loggedIn: true,
-      user: req.session.user,
+      user: {
+        ...req.session.user,           // keep the session info
+        joyPoints: userFromDB.joyPoints || 0   // add joyPoints
+      },
       identityVerified,
       identityStatus
     });
