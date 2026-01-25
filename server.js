@@ -28,6 +28,7 @@ const cloudinary = require("cloudinary").v2;
 const cors = require("cors");
 const fs = require("fs");
 const { ObjectId } = require("mongodb");
+const User = require("./models/User"); // Adjust the path if your User model is elsewhere
 const cron = require("node-cron");
 const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
