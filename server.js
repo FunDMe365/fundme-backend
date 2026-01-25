@@ -91,6 +91,41 @@ db.on("error", console.error.bind(console, "MongoDB connection error:"));
 db.once("open", () => {
   console.log("✅ MongoDB native db ready");
   
+  // ----------------- MongoDB Setup -----------------
+const { MongoClient } = require("mongodb");
+
+// Replace this with your actual MongoDB connection string
+const uri = process.env.MONGO_URI || "your-mongo-uri-here"; 
+const client = new MongoClient(uri);
+
+let usersCollection;
+
+async function initDB() {
+  try {
+    await client.connect();
+    const db = client.db("JoyFundDB"); // <-- replace with your DB name
+    usersCollection = db.collection("users"); // <-- your users collection
+    console.log("MongoDB connected and users collection ready.");
+  } catch (err) {
+    console.error("MongoDB connection error:", err);
+  }
+}
+
+// Initialize DB connection immediately
+initDB();
+
+// ----------------- getJoyPoints Function -----------------
+async function getJoyPoints(email) {
+  try {
+    const user = await usersCollection.findOne({ Email: email }); // match your DB field
+    return user?.joyPoints?.balance || 0; // returns the points balance or 0
+  } catch (err) {
+    console.error("Error in getJoyPoints:", err);
+    return 0;
+  }
+}
+
+  
   // ==================== CAMPAIGN EXPIRATION CRON ====================
 // Runs daily at 2:15 AM server time
 cron.schedule("15 2 * * *", async () => {
@@ -2054,7 +2089,6 @@ app.post("/api/signout", (req, res) => {
 // Check if the user is logged in
 app.get("/api/check-session", async (req, res) => {
   try {
-    // User is not logged in
     if (!req.session.user) {
       return res.json({
         loggedIn: false,
@@ -2065,22 +2099,17 @@ app.get("/api/check-session", async (req, res) => {
       });
     }
 
-    // Check identity status
     const identityStatus = await getIdentityStatus(req.session.user.email);
     const identityVerified = identityStatus === "Approved";
 
-    // Fetch JoyPoints safely
     let joyPoints = 0;
     try {
       joyPoints = await getJoyPoints(req.session.user.email);
-      // Ensure it's a number
-      if (typeof joyPoints !== "number") joyPoints = 0;
     } catch (err) {
       console.error("Error fetching JoyPoints:", err);
       joyPoints = 0;
     }
 
-    // Return full session info including JoyPoints
     return res.json({
       loggedIn: true,
       user: req.session.user,
