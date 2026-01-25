@@ -234,20 +234,18 @@ async function awardJoyPoints(userId, amount, reason) {
   const now = new Date();
 
   const result = await db.collection("Users").updateOne(
-    { _id: userId },
+    { _id: new ObjectId(userId) },
     {
       $inc: {
         "joyPoints.balance": amount,
         "joyPoints.lifetimeEarned": amount
       },
-      $set: {
-        "joyPoints.lastUpdated": now
-      },
+      $set: { "joyPoints.lastUpdated": now },
       $push: {
         joyPointsHistory: {
           type: "earn",
-          amount: amount,
-          reason: reason,
+          amount,
+          reason,
           createdAt: now
         }
       }
@@ -2300,16 +2298,11 @@ app.get("/api/joyboost/momentum/:campaignId", async (req, res) => {
 //=====================Get JoyPoints for logged-in user=================
 app.get("/api/joypoints/me", requireLogin, async (req, res) => {
   try {
-    const userId = req.user._id; // or req.session.userId if that's what you use
+    const userId = new ObjectId(req.user._id);
 
     const user = await db.collection("Users").findOne(
       { _id: userId },
-      {
-        projection: {
-          joyPoints: 1,
-          joyPointsHistory: 1
-        }
-      }
+      { projection: { joyPoints: 1, joyPointsHistory: 1 } }
     );
 
     if (!user || !user.joyPoints) {
@@ -2322,7 +2315,6 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
       lastUpdated: user.joyPoints.lastUpdated,
       history: user.joyPointsHistory
     });
-
   } catch (err) {
     console.error("JoyPoints read error:", err);
     res.status(500).json({ message: "Failed to load JoyPoints" });
