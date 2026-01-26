@@ -2332,21 +2332,23 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
 });
 
 // GET /api/joypoints/balance
-app.get("/api/joypoints/balance", (req, res) => {
-    // 1️⃣ Check if user is logged in via session
-    if (!req.session || !req.session.user) {
-        return res.status(401).json({ error: "Not logged in" });
+app.get("/api/joypoints/balance", async (req, res) => {
+  try {
+    if (!req.session.userId) {
+      return res.status(401).json({ error: "Not logged in" });
     }
 
-    // 2️⃣ Get the logged-in user info
-    const user = req.session.user; // e.g., { name, email, joinDate }
+    const user = await db.collection("users").findOne({ _id: new ObjectId(req.session.userId) });
 
-    // 3️⃣ Fetch their JoyPoints from your database
-    // Replace this with your actual DB query
-    const joyPoints = getJoyPointsForUser(user.email); 
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
-    // 4️⃣ Return JSON
-    res.json({ joyPoints: joyPoints ?? 0 });
+    res.json({ joyPoints: user.joyPoints || 0 });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Internal Server Error");
+  }
 });
 
 //=====================DONATION SUMMARY============
