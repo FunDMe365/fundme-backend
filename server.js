@@ -2346,7 +2346,7 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
       },
       history: user.joyPointsHistory || []
     });
-  } catch (err) {
+   catch (err) {
     console.error("JoyPoints read error:", err);
     res.status(500).json({ success: false, message: "Failed to load JoyPoints" });
   }
