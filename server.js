@@ -2298,29 +2298,23 @@ app.get("/api/joyboost/momentum/:campaignId", async (req, res) => {
 // ===================== Get JoyPoints for logged-in user =====================
 app.get("/api/joypoints/me", requireLogin, async (req, res) => {
   try {
-    const { userId, email } = getSessionUserLookup(req);
+    // 🔐 Use session (NOT req.user)
+    const userId = req.session?.userId;
 
-    let user = null;
-
-    if (userId && ObjectId.isValid(userId)) {
-      user = await db.collection("Users").findOne(
-        { _id: new ObjectId(userId) },
-        { projection: { joyPoints: 1, joyPointsHistory: 1 } }
-      );
+    if (!userId || !ObjectId.isValid(userId)) {
+      return res.status(401).json({ success: false, message: "Not authenticated" });
     }
 
-    if (!user && email) {
-      const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
-      user = await db.collection("Users").findOne(
-        { $or: [{ Email: emailRegex }, { email: emailRegex }] },
-        { projection: { joyPoints: 1, joyPointsHistory: 1 } }
-      );
-    }
+    const user = await db.collection("Users").findOne(
+      { _id: new ObjectId(userId) },
+      { projection: { joyPoints: 1, joyPointsHistory: 1 } }
+    );
 
     if (!user || !user.joyPoints) {
       return res.status(404).json({ success: false, message: "JoyPoints wallet not found" });
     }
 
+    // ✅ Return shape frontend can read
     res.json({
       success: true,
       joyPoints: {
@@ -2330,7 +2324,7 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
       },
       history: user.joyPointsHistory || []
     });
-  } catch (err) {
+   catch (err) {
     console.error("JoyPoints read error:", err);
     res.status(500).json({ success: false, message: "Failed to load JoyPoints" });
   }
@@ -2346,7 +2340,7 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
       },
       history: user.joyPointsHistory || []
     });
-   catch (err) {
+  } catch (err) {
     console.error("JoyPoints read error:", err);
     res.status(500).json({ success: false, message: "Failed to load JoyPoints" });
   }
