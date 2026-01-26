@@ -2332,23 +2332,21 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
 });
 
 // GET /api/joypoints/balance
-app.get('/api/joypoints/balance', async (req, res) => {
-  try {
-    // Assume you have user info stored in req.session.userId
-    const userId = req.session.userId;
-    if (!userId) return res.status(401).json({ error: 'Not logged in' });
+app.get("/api/joypoints/balance", (req, res) => {
+    // 1️⃣ Check if user is logged in via session
+    if (!req.session || !req.session.user) {
+        return res.status(401).json({ error: "Not logged in" });
+    }
 
-    // Fetch the user from your database (example: MongoDB)
-    const user = await User.findById(userId);
+    // 2️⃣ Get the logged-in user info
+    const user = req.session.user; // e.g., { name, email, joinDate }
 
-    if (!user) return res.status(404).json({ error: 'User not found' });
+    // 3️⃣ Fetch their JoyPoints from your database
+    // Replace this with your actual DB query
+    const joyPoints = getJoyPointsForUser(user.email); 
 
-    // Send the JoyPoints balance
-    res.json({ joyPoints: user.joyPoints || 0 });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
+    // 4️⃣ Return JSON
+    res.json({ joyPoints: joyPoints ?? 0 });
 });
 
 //=====================DONATION SUMMARY============
