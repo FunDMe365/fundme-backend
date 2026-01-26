@@ -2295,29 +2295,38 @@ app.get("/api/joyboost/momentum/:campaignId", async (req, res) => {
   }
 });
 
-//=====================Get JoyPoints for logged-in user=================
+// ===================== Get JoyPoints for logged-in user =====================
 app.get("/api/joypoints/me", requireLogin, async (req, res) => {
   try {
-    const userId = new ObjectId(req.user._id);
+    // 🔐 Use session (NOT req.user)
+    const userId = req.session?.userId;
+
+    if (!userId || !ObjectId.isValid(userId)) {
+      return res.status(401).json({ success: false, message: "Not authenticated" });
+    }
 
     const user = await db.collection("Users").findOne(
-      { _id: userId },
+      { _id: new ObjectId(userId) },
       { projection: { joyPoints: 1, joyPointsHistory: 1 } }
     );
 
     if (!user || !user.joyPoints) {
-      return res.status(404).json({ message: "JoyPoints wallet not found" });
+      return res.status(404).json({ success: false, message: "JoyPoints wallet not found" });
     }
 
+    // ✅ Return shape frontend can read
     res.json({
-      balance: user.joyPoints.balance,
-      lifetimeEarned: user.joyPoints.lifetimeEarned,
-      lastUpdated: user.joyPoints.lastUpdated,
-      history: user.joyPointsHistory
+      success: true,
+      joyPoints: {
+        balance: user.joyPoints.balance || 0,
+        lifetimeEarned: user.joyPoints.lifetimeEarned || 0,
+        lastUpdated: user.joyPoints.lastUpdated || null
+      },
+      history: user.joyPointsHistory || []
     });
   } catch (err) {
     console.error("JoyPoints read error:", err);
-    res.status(500).json({ message: "Failed to load JoyPoints" });
+    res.status(500).json({ success: false, message: "Failed to load JoyPoints" });
   }
 });
 
