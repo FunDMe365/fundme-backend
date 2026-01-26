@@ -2331,6 +2331,26 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
   }
 });
 
+// GET /api/joypoints/balance
+app.get('/api/joypoints/balance', async (req, res) => {
+  try {
+    // Assume you have user info stored in req.session.userId
+    const userId = req.session.userId;
+    if (!userId) return res.status(401).json({ error: 'Not logged in' });
+
+    // Fetch the user from your database (example: MongoDB)
+    const user = await User.findById(userId);
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Send the JoyPoints balance
+    res.json({ joyPoints: user.joyPoints || 0 });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 //=====================DONATION SUMMARY============
 app.get("/api/dashboard/donations-summary", async (req, res) => {
   try {
