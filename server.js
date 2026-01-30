@@ -2343,6 +2343,42 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
   }
 });
 
+// POST /joypoints/share
+app.post('/joypoints/share', async (req, res) => {
+    try {
+        const { userId, campaignId } = req.body;
+
+        if (!userId || !campaignId) {
+            return res.status(400).json({ error: 'Missing userId or campaignId' });
+        }
+
+        // Find the user
+        const user = await Users.findById(userId);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        // Check if user already earned points for this campaign
+        user.sharedCampaigns = user.sharedCampaigns || []; // initialize if undefined
+        if (user.sharedCampaigns.includes(campaignId)) {
+            return res.json({ message: 'Already earned points for this campaign', joyPoints: user.joyPoints });
+        }
+
+        // Add points and mark campaign as shared
+        const POINTS_FOR_SHARE = 5; // adjust if needed
+        user.joyPoints = (user.joyPoints || 0) + POINTS_FOR_SHARE;
+        user.sharedCampaigns.push(campaignId);
+        await user.save();
+
+        return res.json({
+            message: 'Points added for sharing!',
+            joyPoints: user.joyPoints
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+
 // ===================== Get JoyPoints balance only =====================
 app.get("/api/joypoints/balance", async (req, res) => {
   try {
