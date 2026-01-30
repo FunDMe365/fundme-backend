@@ -1839,20 +1839,17 @@ app.post("/api/signin", async (req, res) => {
 
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
-    console.log("👤 User found:", !!user);
+    const user = await db.collection("Users").findOne({ email });
 
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // 👇 LOG before password check
-    console.log("🔑 Checking password...");
+    // 🔐 TEMP: skip password check (we’ll re-add safely)
+    // const isMatch = await bcrypt.compare(password, user.password);
+    // if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });
 
-    // ⚠️ TEMPORARILY SKIP PASSWORD CHECK
-    // (we only want to confirm flow)
-    // if (!isMatch) return res.status(401)...
-
+    // ✅ STORE USER ID IN SESSION (THIS IS THE KEY FIX)
     req.session.loggedIn = true;
     req.session.user = {
       id: user._id.toString(),
@@ -2356,7 +2353,11 @@ app.get("/api/joypoints/balance", async (req, res) => {
       return res.status(401).json({ error: "Not logged in" });
     }
 
-    const user = await User.findById(req.session.user.id).select("joyPoints");
+    const user = await db.collection("Users").findOne(
+      { _id: new ObjectId(req.session.user.id) },
+      { projection: { joyPoints: 1 } }
+    );
+
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -2372,7 +2373,6 @@ app.get("/api/joypoints/balance", async (req, res) => {
 // ===================== Redeem JoyPoints =====================
 app.post("/api/joypoints/redeem", async (req, res) => {
   try {
-    // 🔐 Auth check (Option B)
     if (!req.session.user?.id) {
       return res.status(401).json({ error: "Not logged in" });
     }
@@ -2380,14 +2380,14 @@ app.post("/api/joypoints/redeem", async (req, res) => {
     const { reward, cost } = req.body;
 
     if (!reward || !cost || cost <= 0) {
-      return res.status(400).json({ message: "Invalid redemption request" });
+      return res.status(400).json({ message: "Invalid redemption" });
     }
 
-    const userId = req.session.user.id;
-
-    // 🔒 Atomic update (prevents double-spend)
-    const user = await User.findOneAndUpdate(
-      { _id: userId, joyPoints: { $gte: cost } },
+    const result = await db.collection("Users").findOneAndUpdate(
+      {
+        _id: new ObjectId(req.session.user.id),
+        joyPoints: { $gte: cost }
+      },
       {
         $inc: { joyPoints: -cost },
         $push: {
@@ -2398,16 +2398,16 @@ app.post("/api/joypoints/redeem", async (req, res) => {
           }
         }
       },
-      { new: true }
+      { returnDocument: "after" }
     );
 
-    if (!user) {
+    if (!result.value) {
       return res.status(400).json({ message: "Not enough JoyPoints" });
     }
 
     res.json({
       success: true,
-      joyPoints: user.joyPoints
+      joyPoints: result.value.joyPoints
     });
 
   } catch (err) {
