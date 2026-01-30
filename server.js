@@ -26,11 +26,6 @@ function safeEqual(a, b) {
 const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
 const cors = require("cors");
-
-app.use(cors({
-  origin: "https://www.fundasmile.net", // <-- replace with your frontend URL
-  credentials: true
-}));
 const fs = require("fs");
 const { ObjectId } = require("mongodb");
 const cron = require("node-cron");
@@ -284,6 +279,10 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions)); // ✅ this is the fix
+app.use(cors({
+  origin: "https://www.fundasmile.net", // <-- replace with your frontend URL
+  credentials: true
+}));
 
 // ==================== BASIC BRUTE-FORCE PROTECTION ====================
 const resetLimiter = rateLimit({
