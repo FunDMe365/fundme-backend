@@ -2338,7 +2338,7 @@ app.get("/api/joypoints/balance", async (req, res) => {
       return res.status(401).json({ error: "Not logged in" });
     }
 
-    const user = await db.collection("users").findOne({ _id: new ObjectId(req.session.userId || req.session.user._id) });
+    const user = await db.collection("Users").findOne({ _id: new ObjectId(req.session.userId || req.session.user._id) });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
