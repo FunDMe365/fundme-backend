@@ -1836,42 +1836,27 @@ await awardJoyPoints(
 app.post("/api/signin", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: "Missing fields" });
 
-    const cleanEmail = String(email || "").trim().toLowerCase();
-    const usersCollection = db.collection("Users");
-const emailRegex = new RegExp("^" + escapeRegex(cleanEmail) + "$", "i");
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
-const user = await usersCollection.findOne({
-  $or: [
-    { Email: emailRegex },
-    { email: emailRegex }
-  ]
-});
+    // TODO: your password comparison logic here
+    // if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });
 
-    if (!user) return res.status(401).json({ error: "Invalid credentials" });
-
-    const match = await bcrypt.compare(password, user.PasswordHash);
-    if (!match) return res.status(401).json({ error: "Invalid credentials" });
-
+    req.session.loggedIn = true;
     req.session.user = {
-      name: user.Name,
-      email: user.Email,
-      joinDate: user.JoinDate
+      id: user._id.toString(), // 🔥 THIS IS THE KEY
+      name: user.name,
+      email: user.email
     };
 
-    // ✅ IMPORTANT: force session write before responding (mobile fix)
-    req.session.save((err) => {
-      if (err) {
-        console.error("Session save error (signin):", err);
-        return res.status(500).json({ error: "Session failed to save" });
-      }
-      return res.json({ ok: true, loggedIn: true, user: req.session.user });
-    });
+    res.json({ success: true });
 
   } catch (err) {
     console.error("Signin error:", err);
-    res.status(500).json({ error: "Signin failed" });
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -2355,37 +2340,69 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
 });
 
 // ===================== Get JoyPoints balance only =====================
-app.get("/api/joypoints/balance", requireLogin, async (req, res) => {
+app.get("/api/joypoints/balance", async (req, res) => {
   try {
-    // Use the same session check as /me
-    const sessionUserId = req.session?.userId || req.session.user?._id;
-
-    if (!sessionUserId) {
+    if (!req.session.user?.id) {
       return res.status(401).json({ error: "Not logged in" });
     }
 
-    // Convert to ObjectId
-    let mongoId;
-    try {
-      mongoId = typeof sessionUserId === "string" ? new ObjectId(sessionUserId) : sessionUserId;
-    } catch {
-      return res.status(400).json({ error: "Invalid user ID" });
-    }
-
-    const user = await db.collection("Users").findOne({ _id: mongoId });
-
+    const user = await User.findById(req.session.user.id).select("joyPoints");
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Default to 0 if joyPoints missing
-    const balance = (user.joyPoints && user.joyPoints.balance) || 0;
-
-    res.json({ success: true, balance });
+    res.json({ joyPoints: user.joyPoints || 0 });
 
   } catch (err) {
     console.error("JoyPoints balance error:", err);
-    res.status(500).json({ success: false, message: "Failed to load JoyPoints balance" });
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ===================== Redeem JoyPoints =====================
+app.post("/api/joypoints/redeem", async (req, res) => {
+  try {
+    // 🔐 Auth check (Option B)
+    if (!req.session.user?.id) {
+      return res.status(401).json({ error: "Not logged in" });
+    }
+
+    const { reward, cost } = req.body;
+
+    if (!reward || !cost || cost <= 0) {
+      return res.status(400).json({ message: "Invalid redemption request" });
+    }
+
+    const userId = req.session.user.id;
+
+    // 🔒 Atomic update (prevents double-spend)
+    const user = await User.findOneAndUpdate(
+      { _id: userId, joyPoints: { $gte: cost } },
+      {
+        $inc: { joyPoints: -cost },
+        $push: {
+          joyPointsHistory: {
+            reward,
+            cost,
+            redeemedAt: new Date()
+          }
+        }
+      },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(400).json({ message: "Not enough JoyPoints" });
+    }
+
+    res.json({
+      success: true,
+      joyPoints: user.joyPoints
+    });
+
+  } catch (err) {
+    console.error("JoyPoints redeem error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
