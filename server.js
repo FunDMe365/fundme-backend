@@ -2345,12 +2345,14 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
 // ===================== Get JoyPoints balance only =====================
 app.get("/api/joypoints/balance", requireLogin, async (req, res) => {
   try {
+    // Use the same session check as /me
     const sessionUserId = req.session?.userId || req.session.user?._id;
 
     if (!sessionUserId) {
       return res.status(401).json({ error: "Not logged in" });
     }
 
+    // Convert to ObjectId
     let mongoId;
     try {
       mongoId = typeof sessionUserId === "string" ? new ObjectId(sessionUserId) : sessionUserId;
@@ -2364,6 +2366,7 @@ app.get("/api/joypoints/balance", requireLogin, async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
+    // Default to 0 if joyPoints missing
     const balance = (user.joyPoints && user.joyPoints.balance) || 0;
 
     res.json({ success: true, balance });
