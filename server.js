@@ -2334,23 +2334,28 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
 // GET /api/joypoints/balance
 app.get("/api/joypoints/balance", async (req, res) => {
   try {
-    if (!req.session.userId) {
+    const userId = req.session?.userId || req.session?.user?._id;
+
+    if (!userId || !ObjectId.isValid(userId)) {
       return res.status(401).json({ error: "Not logged in" });
     }
 
-    const user = await db.collection("users").findOne({ _id: new ObjectId(req.session.userId) });
+    const user = await db.collection("Users").findOne(
+      { _id: new ObjectId(userId) },
+      { projection: { joyPoints: 1 } }
+    );
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
     res.json({
-  success: true,
-  balance: user.joyPoints?.balance ?? user.joyPoints ?? 0
-});
+      success: true,
+      balance: user.joyPoints?.balance ?? user.joyPoints ?? 0
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).send("Internal Server Error");
+    console.error("joypoints/balance error:", err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
