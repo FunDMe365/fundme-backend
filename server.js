@@ -1835,27 +1835,37 @@ await awardJoyPoints(
 // Sign in an existing user
 app.post("/api/signin", async (req, res) => {
   try {
+    console.log("🔐 Signin body:", req.body);
+
     const { email, password } = req.body;
 
     const user = await User.findOne({ email });
+    console.log("👤 User found:", !!user);
+
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // TODO: your password comparison logic here
-    // if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });
+    // 👇 LOG before password check
+    console.log("🔑 Checking password...");
+
+    // ⚠️ TEMPORARILY SKIP PASSWORD CHECK
+    // (we only want to confirm flow)
+    // if (!isMatch) return res.status(401)...
 
     req.session.loggedIn = true;
     req.session.user = {
-      id: user._id.toString(), // 🔥 THIS IS THE KEY
+      id: user._id.toString(),
       name: user.name,
       email: user.email
     };
 
+    console.log("✅ Session set:", req.session.user);
+
     res.json({ success: true });
 
   } catch (err) {
-    console.error("Signin error:", err);
+    console.error("❌ SIGNIN ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
