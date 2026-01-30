@@ -1835,34 +1835,31 @@ await awardJoyPoints(
 // Sign in an existing user
 app.post("/api/signin", async (req, res) => {
   try {
-    console.log("🔐 Signin body:", req.body);
-
     const { email, password } = req.body;
 
-    const user = await db.collection("Users").findOne({ email });
+    const user = await db.collection("Users").findOne({ Email: email });
 
-    if (!user) {
+    if (!user || !user.PasswordHash) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // 🔐 TEMP: skip password check (we’ll re-add safely)
-    // const isMatch = await bcrypt.compare(password, user.password);
-    // if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });
+    const isMatch = await bcrypt.compare(password, user.PasswordHash);
+    if (!isMatch) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
-    // ✅ STORE USER ID IN SESSION (THIS IS THE KEY FIX)
+    // ✅ SESSION SETUP (THIS FIXES JOYPOINTS)
     req.session.loggedIn = true;
     req.session.user = {
       id: user._id.toString(),
-      name: user.name,
-      email: user.email
+      name: user.Name,
+      email: user.Email
     };
-
-    console.log("✅ Session set:", req.session.user);
 
     res.json({ success: true });
 
   } catch (err) {
-    console.error("❌ SIGNIN ERROR:", err);
+    console.error("Signin error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
