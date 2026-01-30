@@ -2305,10 +2305,20 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
       return res.status(401).json({ success: false, message: "Not authenticated" });
     }
 
-    const user = await db.collection("Users").findOne(
-      { _id: new ObjectId(userId) },
-      { projection: { joyPoints: 1, joyPointsHistory: 1 } }
-    );
+    const sessionUserId =
+  req.session.userId ||
+  req.session.user?._id ||
+  req.session.user?.id;
+
+if (!sessionUserId) {
+  return res.status(401).json({ error: "Not logged in" });
+}
+
+const user = await db.collection("Users").findOne({
+  _id: typeof sessionUserId === "string"
+    ? new ObjectId(sessionUserId)
+    : sessionUserId
+});
 
     if (!user || !user.joyPoints) {
       return res.status(404).json({ success: false, message: "JoyPoints wallet not found" });
