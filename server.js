@@ -2687,6 +2687,88 @@ app.post("/api/admin/normalize-campaign-emails", async (req, res) => {
   }
 });
 
+//=====================ADMIN: JOYPOINTS============================
+// 1️⃣ Summary - total points awarded
+app.get("/api/joypoints/summary", async (req, res) => {
+  try {
+    const users = await Users.find({}, "joyPoints.balance");
+    const totalPoints = users.reduce((sum, user) => sum + (user.joyPoints.balance || 0), 0);
+    res.json({ totalPoints });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch JoyPoints summary" });
+  }
+});
+
+// 2️⃣ Get all users' JoyPoints
+app.get("/api/joypoints", async (req, res) => {
+  try {
+    const users = await Users.find({}, "name email joyPoints");
+    const formatted = users.map(u => ({
+      _id: u._id,
+      name: u.name,
+      email: u.email,
+      balance: u.joyPoints.balance || 0,
+      lifetimeEarned: u.joyPoints.lifetimeEarned || 0,
+      lastUpdated: u.joyPoints.lastUpdated || null
+    }));
+    res.json(formatted);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch JoyPoints" });
+  }
+});
+
+// 3️⃣ Get JoyPoints activity log
+app.get("/api/joypoints/activity", async (req, res) => {
+  try {
+    const logs = await JoyPointsActivity.find({}).sort({ date: -1 }); // newest first
+    const formatted = logs.map(log => ({
+      userName: log.userName,
+      change: log.change,
+      reason: log.reason,
+      date: log.date
+    }));
+    res.json(formatted);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch JoyPoints activity" });
+  }
+});
+
+// 4️⃣ Adjust points manually (admin)
+app.post("/api/joypoints/adjust", async (req, res) => {
+  const { userId, change } = req.body;
+  if (!userId || typeof change !== "number") {
+    return res.status(400).json({ error: "Missing or invalid parameters" });
+  }
+
+  try {
+    const user = await Users.findById(userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Update points
+    user.joyPoints.balance = (user.joyPoints.balance || 0) + change;
+    user.joyPoints.lifetimeEarned = (user.joyPoints.lifetimeEarned || 0) + (change > 0 ? change : 0);
+    user.joyPoints.lastUpdated = new Date();
+    await user.save();
+
+    // Log activity
+    await JoyPointsActivity.create({
+      userId,
+      userName: user.name,
+      change,
+      reason: "Admin Adjust",
+      date: new Date()
+    });
+
+    res.json({ success: true, balance: user.joyPoints.balance });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to adjust points" });
+  }
+});
+
 //======================ADMIN: GET EXPIRED CAMPAIGNS===============
 app.get("/api/admin/expired-campaigns", requireAdmin, async (req, res) => {
   try {
