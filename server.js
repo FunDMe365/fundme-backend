@@ -280,7 +280,15 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions)); // ✅ this is the fix
 app.use(cors({
-  origin: "https://www.fundasmile.net", // <-- replace with your frontend URL
+  origin: function(origin, callback){
+    const allowed = ["https://fundasmile.net", "https://www.fundasmile.net"];
+    if (!origin) return callback(null, true); // allow non-browser requests like Postman
+    if (allowed.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS not allowed"));
+    }
+  },
   credentials: true
 }));
 
