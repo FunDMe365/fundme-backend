@@ -26,6 +26,11 @@ function safeEqual(a, b) {
 const Stripe = require("stripe");
 const cloudinary = require("cloudinary").v2;
 const cors = require("cors");
+
+app.use(cors({
+  origin: "https://www.fundasmile.net", // <-- replace with your frontend URL
+  credentials: true
+}));
 const fs = require("fs");
 const { ObjectId } = require("mongodb");
 const cron = require("node-cron");
@@ -616,7 +621,7 @@ app.use(session({
 
   cookie: {
   secure: true,
-  sameSite: "lax",
+  sameSite: "none",
   httpOnly: true,
   path: "/",
   domain: ".fundasmile.net"
