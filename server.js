@@ -2344,7 +2344,10 @@ app.get("/api/joypoints/balance", async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    res.json({ joyPoints: user.joyPoints || 0 });
+    res.json({
+  success: true,
+  balance: user.joyPoints?.balance ?? user.joyPoints ?? 0
+});
   } catch (err) {
     console.error(err);
     res.status(500).send("Internal Server Error");
