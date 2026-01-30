@@ -2298,41 +2298,42 @@ app.get("/api/joyboost/momentum/:campaignId", async (req, res) => {
 // ===================== Get JoyPoints for logged-in user =====================
 app.get("/api/joypoints/me", requireLogin, async (req, res) => {
   try {
-    // 🔐 Use session (NOT req.user)
-    const userId = req.session?.userId;
+    // Grab userId from session
+    const sessionUserId = req.session?.userId || req.session.user?._id;
 
-    if (!userId || !ObjectId.isValid(userId)) {
-      return res.status(401).json({ success: false, message: "Not authenticated" });
+    if (!sessionUserId) {
+      return res.status(401).json({ error: "Not logged in" });
     }
 
-    const sessionUserId =
-  req.session.userId ||
-  req.session.user?._id ||
-  req.session.user?.id;
-
-if (!sessionUserId) {
-  return res.status(401).json({ error: "Not logged in" });
-}
-
-const user = await db.collection("Users").findOne({
-  _id: typeof sessionUserId === "string"
-    ? new ObjectId(sessionUserId)
-    : sessionUserId
-});
-
-    if (!user || !user.joyPoints) {
-      return res.status(404).json({ success: false, message: "JoyPoints wallet not found" });
+    // Ensure we have a proper ObjectId for Mongo
+    let mongoId;
+    try {
+      mongoId = typeof sessionUserId === "string" ? new ObjectId(sessionUserId) : sessionUserId;
+    } catch {
+      return res.status(400).json({ error: "Invalid user ID" });
     }
 
-    // ✅ Return shape frontend can read
+    // Find the user in the Users collection
+    const user = await db.collection("Users").findOne({ _id: mongoId });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Provide default joyPoints if missing
+    const joyPoints = user.joyPoints || {
+      balance: 0,
+      lifetimeEarned: 0,
+      lastUpdated: null
+    };
+
+    const history = user.joyPointsHistory || [];
+
+    // Return standardized response
     res.json({
       success: true,
-      joyPoints: {
-        balance: user.joyPoints.balance || 0,
-        lifetimeEarned: user.joyPoints.lifetimeEarned || 0,
-        lastUpdated: user.joyPoints.lastUpdated || null
-      },
-      history: user.joyPointsHistory || []
+      joyPoints,
+      history
     });
 
   } catch (err) {
@@ -2341,23 +2342,35 @@ const user = await db.collection("Users").findOne({
   }
 });
 
-// GET /api/joypoints/balance
-app.get("/api/joypoints/balance", async (req, res) => {
+// ===================== Get JoyPoints balance only =====================
+app.get("/api/joypoints/balance", requireLogin, async (req, res) => {
   try {
-    if (!req.session.userId && !req.session.user) {
+    const sessionUserId = req.session?.userId || req.session.user?._id;
+
+    if (!sessionUserId) {
       return res.status(401).json({ error: "Not logged in" });
     }
 
-    const user = await db.collection("Users").findOne({ _id: new ObjectId(req.session.userId || req.session.user._id) });
+    let mongoId;
+    try {
+      mongoId = typeof sessionUserId === "string" ? new ObjectId(sessionUserId) : sessionUserId;
+    } catch {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    const user = await db.collection("Users").findOne({ _id: mongoId });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    res.json({ success: true, balance: user.joyPoints || 0 });
+    const balance = (user.joyPoints && user.joyPoints.balance) || 0;
+
+    res.json({ success: true, balance });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).send("Internal Server Error");
+    console.error("JoyPoints balance error:", err);
+    res.status(500).json({ success: false, message: "Failed to load JoyPoints balance" });
   }
 });
 
