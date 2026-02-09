@@ -1203,7 +1203,7 @@ function tplObserver(name) {
         </p>
 
         <p>Thanks for being part of this journey 💙<br/>
-        <b>Corey</b><br/>Founder, JoyFund</p>
+        <b>The JoyFund Family</b>
       </div>
     `
   };
@@ -3309,19 +3309,19 @@ const approveIdVerificationHandler = async (req, res) => {
       if (!found) return null;
 
       await db.collection("Campaigns").updateOne(
-        { _id: found._id },
-        {
-          $set: {
-            Status: "Active",
-            status: "Active",
-            lifecycleStatus: "Active",
-            PublishedAt: found.PublishedAt || new Date(),
-            activatedAt: new Date(),
-            verificationStatus: "verified",
-            verificationUpdatedAt: new Date()
-          }
-        }
-      );
+  { _id: found._id },
+  {
+    $set: {
+      Status: "Approved",           // keep as Approved
+      status: "Approved",
+      lifecycleStatus: "Approved", // optional, keep it consistent
+      PublishedAt: found.PublishedAt || new Date(),
+      activatedAt: null,           // not yet active
+      verificationStatus: "needs_verification", // still waiting for goal
+      verificationUpdatedAt: null
+    }
+  }
+);
 
       return found;
     }
@@ -3941,7 +3941,32 @@ app.post("/api/donation", async (req, res) => {
     if (!name || !email || !amount) return res.status(400).json({ success: false });
 
     await db.collection("Donations").insertOne({ name, email, amount, campaignId, date: new Date() });
+	
+	// Get the campaign from DB
+const campaign = await db.collection("Campaigns").findOne({ _id: campaignId });
+if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found" });
 
+const donations = await db.collection("Donations").find({ campaignId }).toArray();
+const totalRaised = donations.reduce((sum, d) => sum + Number(d.amount || 0), 0);
+
+const goal = Number(campaign.Goal || campaign.goal || 0);
+
+if (totalRaised >= goal && (campaign.verificationStatus === "needs_verification" || !campaign.Status || campaign.Status !== "Active")) {
+  await db.collection("Campaigns").updateOne(
+    { _id: campaignId },
+    {
+      $set: {
+        Status: "Active",
+        status: "Active",
+        lifecycleStatus: "Active",
+        PublishedAt: campaign.PublishedAt || new Date(),
+        activatedAt: new Date(),
+        verificationStatus: "verified",
+        verificationUpdatedAt: new Date()
+      }
+    }
+  );
+}
 
     await sendSubmissionEmails({
       type: "Donation",
@@ -4260,139 +4285,6 @@ app.use((err, req, res, next) => {
     return res.status(400).json({ success: false, message: err.message || "Invalid upload" });
   }
   return next(err);
-});
-
-// ==================== JOYDROP: WEEKLY AUTO-PUBLISH ====================
-// Runs every Monday (NY time by default) and inserts a new JoyDrop into Postgres.
-//
-// IMPORTANT:
-// - This does NOT change your existing /api/joydrop/current endpoint.
-// - It only adds NEW rows to Postgres so "current" naturally updates.
-
-const JOYDROP_CRON_TZ = String(process.env.JOYDROP_CRON_TZ || "America/New_York").trim();
-
-// Edit these anytime (title/body/micro_action)
-const JOYDROP_LIBRARY = [
-  {
-    title: "JoyNow: One small win 💙",
-    body: "Pick one tiny thing you can finish today — even if it’s 2 minutes. A small win counts.",
-    micro_action: "Text yourself: “I did one thing today.”"
-  },
-  {
-    title: "JoyNow: Reset your nervous system 💗",
-    body: "When your mind is loud, your body needs a signal that you’re safe. Slow down on purpose.",
-    micro_action: "Do 4 slow breaths: in 4… out 6… (x4)."
-  },
-  {
-    title: "JoyNow: Kindness counts",
-    body: "Do one kind thing for yourself today — the same way you’d treat someone you love.",
-    micro_action: "Drink water and stand in sunlight for 30 seconds."
-  },
-  {
-    title: "JoyNow: Move it out",
-    body: "Emotions get stuck when we don’t move. You don’t need a workout — you need a release.",
-    micro_action: "Shake your arms + shoulders for 20 seconds."
-  }
-];
-
-// Simple stable week-ish index so you rotate through the library
-function getWeekRotationIndex() {
-  const now = new Date();
-  const start = new Date(Date.UTC(2025, 0, 1)); // Jan 1, 2025 (arbitrary anchor)
-  const diffDays = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-  const weekNum = Math.floor(diffDays / 7);
-  return Math.abs(weekNum) % JOYDROP_LIBRARY.length;
-}
-
-async function getLatestJoyDrop() {
-  if (!pgPool) return null;
-  const r = await pgPool.query(
-    `SELECT id, created_at, title, body, micro_action
-     FROM joydrops
-     ORDER BY created_at DESC
-     LIMIT 1`
-  );
-  return r.rows?.[0] || null;
-}
-
-async function publishJoyDropIfNeeded({ force = false } = {}) {
-  try {
-    if (!pgPool) {
-      console.warn("⚠️ JoyDrop auto-publish skipped: Postgres not configured.");
-      return;
-    }
-
-    // Guard: if we already published within the last ~5 days, skip
-    // (prevents duplicates on restarts; weekly schedule means this is safe)
-    const latest = await getLatestJoyDrop();
-    if (!force && latest?.created_at) {
-      const ageMs = Date.now() - new Date(latest.created_at).getTime();
-      const ageDays = ageMs / (1000 * 60 * 60 * 24);
-      if (ageDays < 5) {
-        console.log("⏭️ JoyDrop auto-publish: latest is recent, skipping.");
-        return;
-      }
-    }
-
-    const idx = getWeekRotationIndex();
-    const pick = JOYDROP_LIBRARY[idx];
-
-    await pgPool.query(
-      `INSERT INTO joydrops (title, body, micro_action)
-       VALUES ($1, $2, $3)`,
-      [pick.title, pick.body, pick.micro_action || ""]
-    );
-
-    console.log("✅ JoyDrop auto-published:", pick.title);
-  } catch (err) {
-    console.error("❌ JoyDrop auto-publish error:", err);
-  }
-}
-
-// Every Monday at 9:00 AM New York time
-cron.schedule(
-  "0 9 * * 1",
-  async () => {
-    await publishJoyDropIfNeeded();
-  },
-  { timezone: JOYDROP_CRON_TZ }
-);
-
-// ==================== JOYDROP: GET CURRENT ====================
-app.get("/api/joydrop/current", async (req, res) => {
-  try {
-    if (!pgPool) {
-      return res.status(500).json({ success: false, message: "JoyDrop DB not configured" });
-    }
-
-    const result = await pgPool.query(
-      `SELECT id, created_at, title, body, micro_action
-       FROM joydrops
-       ORDER BY created_at DESC
-       LIMIT 1`
-    );
-
-    const row = result.rows?.[0] || null;
-
-    // If none exist yet, return a friendly default instead of error
-    if (!row) {
-      return res.json({
-        success: true,
-        joydrop: {
-          id: null,
-          created_at: new Date().toISOString(),
-          title: "Your first JoyDrop is coming 💙",
-          body: "Check back soon — we’ll have a fresh drop here weekly.",
-          micro_action: "Take one slow breath in… and one slow breath out."
-        }
-      });
-    }
-
-    return res.json({ success: true, joydrop: row });
-  } catch (err) {
-    console.error("GET /api/joydrop/current error:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
 });
 
 // ==================== STATIC FILES ====================
