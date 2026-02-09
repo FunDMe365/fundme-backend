@@ -3756,9 +3756,6 @@ await sendSubmissionEmails({
   }
 });
 
-// After creating campaign
-res.redirect(`/dashboard?new_campaign=true&id=${campaign._id}`);
-
 
 app.get("/api/public-campaigns", async (req, res) => {
   try {
