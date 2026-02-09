@@ -3953,7 +3953,7 @@ const goal = Number(campaign.Goal || campaign.goal || 0);
 
 if (totalRaised >= goal && (campaign.verificationStatus === "needs_verification" || !campaign.Status || campaign.Status !== "Active")) {
   await db.collection("Campaigns").updateOne(
-    { _id: campaignId },
+    { _id: new ObjectId(campaignId) }, // <- must match Mongo ObjectId
     {
       $set: {
         Status: "Active",
