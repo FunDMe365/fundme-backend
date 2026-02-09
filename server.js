@@ -1560,52 +1560,40 @@ app.post("/api/admin/test-monthly-emails", async (req, res) => {
 
 // ==================== EMAIL HELPERS: CAMPAIGN APPROVAL FLOW ====================
 async function sendCampaignApprovalIdentityEmail({ toEmail, campaignTitle, campaignId }) {
-  console.log("📧 Campaign approved (needs ID) email sending to:", toEmail);
+  console.log("📧 Campaign approved email sending to:", toEmail);
   const base = PUBLIC_BASE_URL;
   const safeCampaignId = String(campaignId || "").trim();
-  const verifyUrl = safeCampaignId
-    ? `${base}/identityverification.html?campaignId=${encodeURIComponent(safeCampaignId)}`
-    : `${base}/identityverification.html`;
   const dashboardUrl = `${base}/dashboard.html`;
 
   return sendMailjet({
     toEmail,
     toName: "",
-    subject: "Your campaign was approved — quick identity verification needed",
-    text: `Good news — your campaign "${campaignTitle}" was approved.
+    subject: "Your campaign was approved — share it with supporters!",
+    text: `Good news — your campaign "${campaignTitle}" was approved!
 
-Before it can go live, we need a quick identity verification.
+You can now share it with friends and supporters to start raising funds.
 
-1) Open: ${verifyUrl}
-2) Upload a clear photo of your ID
+Access your campaign here: ${dashboardUrl}
 
-You can also access this from your dashboard: ${dashboardUrl}
+Thank you for helping bring joy to others! 🎉
 
 — JoyFund`,
     html: `
       <div style="font-family:Arial,sans-serif;line-height:1.5;">
         <h2 style="margin:0 0 10px 0;">✅ Your campaign was approved</h2>
         <p style="margin:0 0 10px 0;">
-          Great news — <strong>${escapeHtml(String(campaignTitle || "your campaign"))}</strong> was approved.
+          Great news — <strong>${escapeHtml(String(campaignTitle || "your campaign"))}</strong> was approved!
         </p>
         <p style="margin:0 0 10px 0;">
-          Before it can go live, we need a quick identity verification:
+          You can now share your campaign with friends and supporters to start raising funds:
         </p>
-        <ol style="margin:0 0 12px 20px;padding:0;">
-          <li>Open the verification page</li>
-          <li>Upload a clear photo of your ID</li>
-        </ol>
         <p style="margin:0 0 14px 0;">
-          <a href="${verifyUrl}" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#111;color:#fff;text-decoration:none;">
-            Upload ID for Verification
+          <a href="${dashboardUrl}" style="display:inline-block;padding:10px 14px;border-radius:10px;background:#111;color:#fff;text-decoration:none;">
+            View Your Campaign Dashboard
           </a>
         </p>
-        <p style="margin:0 0 8px 0;color:#555;">
-          Or open your dashboard:
-          <a href="${dashboardUrl}">${dashboardUrl}</a>
-        </p>
         <p style="margin:14px 0 0 0;color:#777;font-size:12px;">
-          If you didn’t request this, you can ignore this email.
+          Thank you for helping bring joy to others! 🎉
         </p>
       </div>
     `
