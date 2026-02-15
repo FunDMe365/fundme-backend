@@ -394,8 +394,9 @@ app.post('/api/check-access', async (req, res) => {
 
     const emailLower = email.toLowerCase();
 
-    const volunteer = await Volunteers.findOne({ email: emailLower });
-    const streetMember = await StreetTeam.findOne({ email: emailLower });
+    const volunteer = await Volunteers.findOne({ email: { $regex: new RegExp(`^${email}$`, 'i') } });
+const streetMember = await StreetTeam.findOne({ email: { $regex: new RegExp(`^${email}$`, 'i') } });
+
 
     if (volunteer || streetMember) {
       return res.json({ allowed: true });
