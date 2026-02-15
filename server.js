@@ -377,6 +377,38 @@ async function requireIdentityIfDenied(req, res, next) {
   }
 }
 
+// Define your collections
+const volunteerSchema = new mongoose.Schema({ email: String });
+const streetTeamSchema = new mongoose.Schema({ email: String });
+
+const Volunteers = mongoose.model('Volunteers', volunteerSchema);
+const StreetTeam = mongoose.model('StreetTeam', streetTeamSchema);
+
+// -------------------
+// New route for exclusive shop access
+// -------------------
+app.post('/api/check-access', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ allowed: false, message: "Email required" });
+
+    const emailLower = email.toLowerCase();
+
+    const volunteer = await Volunteers.findOne({ email: emailLower });
+    const streetMember = await StreetTeam.findOne({ email: emailLower });
+
+    if (volunteer || streetMember) {
+      return res.json({ allowed: true });
+    } else {
+      return res.json({ allowed: false });
+    }
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ allowed: false, message: "Server error" });
+  }
+});
+
 // ==================== JOYBOOST HELPERS ====================
 const JOYBOOST_REQUESTS = "JoyBoost_Requests";
 const JOYBOOST_SETTINGS = "JoyBoost_Settings"; // per-campaign
