@@ -140,37 +140,6 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://fundasmile.net";
 
 // Public base URL used in emails/links (defaults to FRONTEND_URL)
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || FRONTEND_URL || "https://fundasmile.net").trim();
-// ==================== POSTGRES (JOYDROPS) ====================
-const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
-
-const pgPool = DATABASE_URL
-  ? new Pool({
-      connectionString: DATABASE_URL,
-      // Render "Internal Database URL" usually does NOT need SSL.
-      // If you ever use an external URL that requires SSL, set PGSSLMODE or toggle below.
-      ssl: false
-    })
-  : null;
-
-async function ensureJoyDropsTable() {
-  if (!pgPool) {
-    console.warn("⚠️ Postgres not configured (missing DATABASE_URL). JoyDrops disabled.");
-    return;
-  }
-
-  // Create table if it doesn't exist
-  await pgPool.query(`
-    CREATE TABLE IF NOT EXISTS joydrops (
-      id BIGSERIAL PRIMARY KEY,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      micro_action TEXT DEFAULT ''
-    );
-  `);
-
-  console.log("✅ Postgres joydrops table ready");
-}
 
 // Escape a string for safe use inside a RegExp constructor
 function escapeRegex(str) {
@@ -4360,10 +4329,6 @@ app.use(express.static("public"));
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
-});
-
-ensureJoyDropsTable().catch((e) => {
-  console.error("❌ ensureJoyDropsTable failed:", e);
 });
 
 // ==================== MONTHLY AUTOMATIC EMAIL SCHEDULE (NODE-CRON) ====================
