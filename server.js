@@ -381,8 +381,8 @@ async function requireIdentityIfDenied(req, res, next) {
 const volunteerSchema = new mongoose.Schema({ email: String });
 const streetTeamSchema = new mongoose.Schema({ email: String });
 
-const Volunteers = mongoose.model('Volunteers', volunteerSchema);
-const StreetTeam = mongoose.model('StreetTeam', streetTeamSchema);
+const Volunteers = mongoose.model('Volunteers', volunteerSchema, 'Volunteers');
+const StreetTeam = mongoose.model('StreetTeam', streetTeamSchema, 'StreetTeam');
 
 // -------------------
 // New route for exclusive shop access
