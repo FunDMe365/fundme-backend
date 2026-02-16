@@ -2175,6 +2175,38 @@ if (existing) {
   }
 });
 
+// EXCLUSIVE CART CHECKOUT
+app.post('/api/create-checkout-session', async (req, res) => {
+  try {
+    const { items } = req.body; // items = [{ name, price, quantity }]
+
+    // Map items to Stripe line items
+    const line_items = items.map(item => ({
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name: item.name + (item.size ? ` (${item.size})` : ''),
+        },
+        unit_amount: item.price * 100, // Stripe expects cents
+      },
+      quantity: item.quantity,
+    }));
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items,
+      mode: 'payment',
+      success_url: 'https://yourdomain.com/success.html',
+      cancel_url: 'https://yourdomain.com/cancel.html',
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create checkout session' });
+  }
+});
+
 // ==================== JOYBOOST: APPLY ====================
 app.post("/api/joyboost/apply", async (req, res) => {
   try {
