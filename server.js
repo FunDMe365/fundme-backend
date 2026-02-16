@@ -392,12 +392,15 @@ app.post('/api/check-access', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ allowed: false, message: "Email required" });
 
-    const emailLower = email.toLowerCase();
+    const emailTrim = email.trim();
 
-    const volunteer = await Volunteers.findOne({ email: { $regex: new RegExp(`^${email}$`, 'i') } });
-const streetMember = await StreetTeam.findOne({ email: { $regex: new RegExp(`^${email}$`, 'i') } });
+    // Case-insensitive search in Volunteers collection
+    const volunteer = await Volunteers.findOne({ email: { $regex: `^${emailTrim}$`, $options: 'i' } });
 
+    // Case-insensitive search in StreetTeam collection
+    const streetMember = await StreetTeam.findOne({ email: { $regex: `^${emailTrim}$`, $options: 'i' } });
 
+    // If the email is in either collection, allow access
     if (volunteer || streetMember) {
       return res.json({ allowed: true });
     } else {
@@ -405,7 +408,7 @@ const streetMember = await StreetTeam.findOne({ email: { $regex: new RegExp(`^${
     }
 
   } catch (err) {
-    console.error(err);
+    console.error("Error in check-access:", err);
     return res.status(500).json({ allowed: false, message: "Server error" });
   }
 });
