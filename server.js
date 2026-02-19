@@ -1804,7 +1804,7 @@ await awardJoyPoints(
   `,
 });
 
-    // ✅ Store user id in session (needed for JoyPoints + auth-protected routes)
+    // ✅ JoyPoints fix: ensure session includes the Mongo user id (used by JoyPoints endpoints)
     req.session.userId = newUser._id.toString();
     req.session.user = {
       id: newUser._id.toString(),
@@ -2430,30 +2430,11 @@ app.get("/api/joypoints/balance", async (req, res) => {
     }
 
     // DB format: joyPoints: { balance, lifetimeEarned, lastUpdated }
-    res.json({ joyPoints: user.joyPoints || { balance: 0 } });
+    return res.json({ joyPoints: user.joyPoints || { balance: 0 } });
 
   } catch (err) {
     console.error("JoyPoints balance error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-    }
-
-    const user = await db.collection("Users").findOne(
-      { _id: new ObjectId(req.session.user.id) },
-      { projection: { joyPoints: 1 } }
-    );
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    res.json({ joyPoints: user.joyPoints || 0 });
-
-  } catch (err) {
-    console.error("JoyPoints balance error:", err);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -2471,91 +2452,43 @@ app.post("/api/joypoints/redeem", async (req, res) => {
 
     const { reward, cost } = req.body;
 
-    if (!reward || !cost || Number(cost) <= 0) {
+    const parsedCost = Number(cost);
+    if (!reward || !Number.isFinite(parsedCost) || parsedCost <= 0) {
       return res.status(400).json({ message: "Invalid redemption" });
     }
 
-    const costNum = Number(cost);
-
-    // Ensure enough balance (object-based joyPoints)
-    const result = await db.collection("Users").findOneAndUpdate(
+    // ✅ Object-based JoyPoints (joyPoints.balance)
+    const updated = await db.collection("Users").findOneAndUpdate(
       {
         _id: new ObjectId(String(sessionUserId)),
-        "joyPoints.balance": { $gte: costNum }
+        "joyPoints.balance": { $gte: parsedCost }
       },
       {
-        $inc: {
-          "joyPoints.balance": -costNum
-        },
+        $inc: { "joyPoints.balance": -parsedCost },
+        $set: { "joyPoints.lastUpdated": new Date() },
         $push: {
           joyPointsHistory: {
-            type: "redeem",
             reward,
-            cost: costNum,
-            date: new Date()
+            cost: parsedCost,
+            redeemedAt: new Date()
           }
-        },
-        $set: {
-          "joyPoints.lastUpdated": new Date()
         }
       },
-      { returnDocument: "after", projection: { joyPoints: 1 } }
+      { returnDocument: "after", projection: { joyPoints: 1, joyPointsHistory: 1 } }
     );
 
-    const updated = result?.value;
-    if (!updated) {
+    if (!updated?.value) {
       return res.status(400).json({ message: "Not enough JoyPoints" });
     }
 
     return res.json({
       success: true,
-      joyPoints: updated.joyPoints || { balance: 0 }
+      joyPoints: updated.value.joyPoints || { balance: 0 }
     });
 
   } catch (err) {
     console.error("Redeem JoyPoints error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-    }
-
-    const { reward, cost } = req.body;
-
-    if (!reward || !cost || cost <= 0) {
-      return res.status(400).json({ message: "Invalid redemption" });
-    }
-
-    const result = await db.collection("Users").findOneAndUpdate(
-      {
-        _id: new ObjectId(req.session.user.id),
-        joyPoints: { $gte: cost }
-      },
-      {
-        $inc: { joyPoints: -cost },
-        $push: {
-          joyPointsHistory: {
-            reward,
-            cost,
-            redeemedAt: new Date()
-          }
-        }
-      },
-      { returnDocument: "after" }
-    );
-
-    if (!result.value) {
-      return res.status(400).json({ message: "Not enough JoyPoints" });
-    }
-
-    res.json({
-      success: true,
-      joyPoints: result.value.joyPoints
-    });
-
-  } catch (err) {
-    console.error("JoyPoints redeem error:", err);
-    res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
