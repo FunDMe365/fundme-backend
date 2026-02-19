@@ -1804,7 +1804,11 @@ await awardJoyPoints(
   `,
 });
 
+    // ✅ Store user id in session (needed for JoyPoints + auth-protected routes)
+    req.session.userId = newUser._id.toString();
     req.session.user = {
+      id: newUser._id.toString(),
+      _id: newUser._id.toString(),
       name: newUser.Name,
       email: newUser.Email,
       joinDate: newUser.JoinDate
@@ -2407,8 +2411,33 @@ app.post('/joypoints/share', async (req, res) => {
 // ===================== Get JoyPoints balance only =====================
 app.get("/api/joypoints/balance", async (req, res) => {
   try {
-    if (!req.session.user?.id) {
+    const sessionUserId =
+      req.session?.userId ||
+      req.session?.user?.id ||
+      req.session?.user?._id;
+
+    if (!sessionUserId) {
       return res.status(401).json({ error: "Not logged in" });
+    }
+
+    const user = await db.collection("Users").findOne(
+      { _id: new ObjectId(String(sessionUserId)) },
+      { projection: { joyPoints: 1 } }
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // DB format: joyPoints: { balance, lifetimeEarned, lastUpdated }
+    res.json({ joyPoints: user.joyPoints || { balance: 0 } });
+
+  } catch (err) {
+    console.error("JoyPoints balance error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
     }
 
     const user = await db.collection("Users").findOne(
@@ -2431,8 +2460,64 @@ app.get("/api/joypoints/balance", async (req, res) => {
 // ===================== Redeem JoyPoints =====================
 app.post("/api/joypoints/redeem", async (req, res) => {
   try {
-    if (!req.session.user?.id) {
+    const sessionUserId =
+      req.session?.userId ||
+      req.session?.user?.id ||
+      req.session?.user?._id;
+
+    if (!sessionUserId) {
       return res.status(401).json({ error: "Not logged in" });
+    }
+
+    const { reward, cost } = req.body;
+
+    if (!reward || !cost || Number(cost) <= 0) {
+      return res.status(400).json({ message: "Invalid redemption" });
+    }
+
+    const costNum = Number(cost);
+
+    // Ensure enough balance (object-based joyPoints)
+    const result = await db.collection("Users").findOneAndUpdate(
+      {
+        _id: new ObjectId(String(sessionUserId)),
+        "joyPoints.balance": { $gte: costNum }
+      },
+      {
+        $inc: {
+          "joyPoints.balance": -costNum
+        },
+        $push: {
+          joyPointsHistory: {
+            type: "redeem",
+            reward,
+            cost: costNum,
+            date: new Date()
+          }
+        },
+        $set: {
+          "joyPoints.lastUpdated": new Date()
+        }
+      },
+      { returnDocument: "after", projection: { joyPoints: 1 } }
+    );
+
+    const updated = result?.value;
+    if (!updated) {
+      return res.status(400).json({ message: "Not enough JoyPoints" });
+    }
+
+    return res.json({
+      success: true,
+      joyPoints: updated.joyPoints || { balance: 0 }
+    });
+
+  } catch (err) {
+    console.error("Redeem JoyPoints error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
     }
 
     const { reward, cost } = req.body;
