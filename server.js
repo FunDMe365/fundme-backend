@@ -228,6 +228,36 @@ async function awardJoyPoints(userId, amount, reason) {
   return true;
 }
 
+
+// Award JoyPoints once per unique key (idempotent)
+async function awardJoyPointsOnce({ key, userId, amount, reason, meta = {} }) {
+  if (!key) throw new Error("Missing JoyPoints award key");
+  if (!userId) throw new Error("Missing userId for JoyPoints award");
+  if (!amount || amount <= 0) throw new Error("Invalid JoyPoints amount");
+
+  // Upsert a "receipt" so webhook retries / repeated actions don't double-award
+  const receipt = await db.collection("JoyPoints_Awards").updateOne(
+    { key },
+    {
+      $setOnInsert: {
+        key,
+        userId: String(userId),
+        amount,
+        reason: String(reason || "JoyPoints"),
+        meta,
+        createdAt: new Date()
+      }
+    },
+    { upsert: true }
+  );
+
+  // Only award if we created the receipt just now
+  if (receipt.upsertedCount === 1) {
+    await awardJoyPoints(userId, amount, reason);
+    return { awarded: true };
+  }
+  return { awarded: false };
+}
 // ==================== CORS (must be before routes) ====================
 const allowedOrigins = [
   "https://fundasmile.net",
@@ -546,6 +576,29 @@ if (supporterEmail) {
             createdAt: new Date(),
             source: "stripe_webhook"
           });
+
+          // ✅ JoyPoints: award points for completed donation (idempotent per Stripe session)
+          try {
+            const donorEmail = (email || "").toString().trim().toLowerCase();
+            if (donorEmail) {
+              const emailRegex = new RegExp("^" + escapeRegex(donorEmail) + "$", "i");
+              const userDoc = await db.collection("Users").findOne({ $or: [{ Email: emailRegex }, { email: emailRegex }] });
+              if (userDoc && userDoc._id) {
+                // 1 point per $1 donated (rounded down), minimum 1 point
+                const donationAmount = Number(originalAmount ?? chargedAmount) || 0;
+                const pts = Math.max(1, Math.floor(donationAmount));
+                await awardJoyPointsOnce({
+                  key: `donation:${session.id}`,
+                  userId: userDoc._id.toString(),
+                  amount: pts,
+                  reason: "Donation made",
+                  meta: { stripeSessionId: session.id, campaignId, amount: donationAmount }
+                });
+              }
+            }
+          } catch (e) {
+            console.error("JoyPoints (donation webhook) award error:", e);
+          }
 
           console.log("✅ Donation recorded via webhook:", session.id);
         } else {
@@ -1845,19 +1898,29 @@ app.post("/api/signin", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // ✅ SESSION SETUP (THIS FIXES JOYPOINTS)
+    // ✅ SESSION SETUP (JOYPOINTS RELIES ON userId/_id)
     req.session.loggedIn = true;
+    req.session.userId = user._id.toString();
     req.session.user = {
       id: user._id.toString(),
+      _id: user._id.toString(),
       name: user.Name,
-      email: user.Email
+      email: user.Email,
+      joinDate: user.JoinDate
     };
 
-    res.json({ success: true });
+    // ✅ IMPORTANT: force session write before responding (mobile fix)
+    req.session.save((err) => {
+      if (err) {
+        console.error("Session save error (signin):", err);
+        return res.status(500).json({ error: "Session failed to save" });
+      }
+      return res.json({ success: true, loggedIn: true, user: req.session.user });
+    });
 
   } catch (err) {
     console.error("Signin error:", err);
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -2372,41 +2435,63 @@ app.get("/api/joypoints/me", requireLogin, async (req, res) => {
   }
 });
 
-// POST /joypoints/share
-app.post('/joypoints/share', async (req, res) => {
-    try {
-        const { userId, campaignId } = req.body;
 
-        if (!userId || !campaignId) {
-            return res.status(400).json({ error: 'Missing userId or campaignId' });
-        }
+// ===================== JoyPoints: award for share (once per campaign) =====================
+app.post("/api/joypoints/share", requireLogin, async (req, res) => {
+  try {
+    const sessionUserId = req.session?.userId || req.session?.user?._id || req.session?.user?.id;
+    if (!sessionUserId) return res.status(401).json({ error: "Not logged in" });
 
-        // Find the user
-        const user = await Users.findById(userId);
-        if (!user) return res.status(404).json({ error: 'User not found' });
+    const campaignId = String(req.body?.campaignId || "").trim();
+    if (!campaignId) return res.status(400).json({ error: "Missing campaignId" });
 
-        // Check if user already earned points for this campaign
-        user.sharedCampaigns = user.sharedCampaigns || []; // initialize if undefined
-        if (user.sharedCampaigns.includes(campaignId)) {
-            return res.json({ message: 'Already earned points for this campaign', joyPoints: user.joyPoints });
-        }
+    const key = `share:${String(sessionUserId)}:${campaignId}`;
+    const POINTS_FOR_SHARE = 5;
 
-        // Add points and mark campaign as shared
-        const POINTS_FOR_SHARE = 5; // adjust if needed
-        user.joyPoints = (user.joyPoints || 0) + POINTS_FOR_SHARE;
-        user.sharedCampaigns.push(campaignId);
-        await user.save();
+    const result = await awardJoyPointsOnce({
+      key,
+      userId: String(sessionUserId),
+      amount: POINTS_FOR_SHARE,
+      reason: "Shared a campaign",
+      meta: { campaignId }
+    });
 
-        return res.json({
-            message: 'Points added for sharing!',
-            joyPoints: user.joyPoints
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Server error' });
-    }
+    return res.json({ success: true, awarded: result.awarded, points: POINTS_FOR_SHARE });
+  } catch (err) {
+    console.error("POST /api/joypoints/share error:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
+  }
 });
 
+// ===================== JoyPoints: daily check-in (once per day) =====================
+app.post("/api/joypoints/daily-checkin", requireLogin, async (req, res) => {
+  try {
+    const sessionUserId = req.session?.userId || req.session?.user?._id || req.session?.user?.id;
+    if (!sessionUserId) return res.status(401).json({ error: "Not logged in" });
+
+    const now = new Date();
+    const yyyy = now.getUTCFullYear();
+    const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(now.getUTCDate()).padStart(2, "0");
+    const dayKey = `${yyyy}-${mm}-${dd}`;
+
+    const key = `daily_checkin:${String(sessionUserId)}:${dayKey}`;
+    const POINTS_DAILY = 1;
+
+    const result = await awardJoyPointsOnce({
+      key,
+      userId: String(sessionUserId),
+      amount: POINTS_DAILY,
+      reason: "Daily check-in",
+      meta: { dayKey }
+    });
+
+    return res.json({ success: true, awarded: result.awarded, points: POINTS_DAILY, dayKey });
+  } catch (err) {
+    console.error("POST /api/joypoints/daily-checkin error:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
+  }
+});
 
 // ===================== Get JoyPoints balance only =====================
 app.get("/api/joypoints/balance", async (req, res) => {
@@ -3769,6 +3854,24 @@ doc.expiredOutcome = "";
 
 
     await db.collection("Campaigns").insertOne(doc);
+
+    // ✅ JoyPoints: creating a campaign (award once per campaign)
+    try {
+      const uid = req.session?.userId || req.session?.user?._id || req.session?.user?.id;
+      if (uid) {
+        await awardJoyPointsOnce({
+          key: `create_campaign:${String(uid)}:${String(doc.Id)}`,
+          userId: String(uid),
+          amount: 15,
+          reason: "Created a campaign",
+          meta: { campaignId: doc.Id, title: doc.title }
+        });
+      }
+    } catch (e) {
+      console.error("JoyPoints (create-campaign) award error:", e);
+      // fail open (do not block campaign creation)
+    }
+
 
 console.log("📧 Campaign submission email sending:", { email, from: FROM_EMAIL, admin: ADMIN_EMAIL });
 
