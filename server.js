@@ -394,7 +394,10 @@ app.post('/api/check-access', async (req, res) => {
     const emailTrim = email.trim();
 
     // Case-insensitive search in Volunteers collection
-    const volunteer = await Volunteers.findOne({ email: { $regex: `^${emailTrim}$`, $options: 'i' } });
+    const volunteer = await db.collection("Volunteers").findOne({
+  email: { $regex: `^${escapeRegex(emailTrim)}$`, $options: "i" },
+  status: "Approved"
+});
 
     // Case-insensitive search in StreetTeam collection
     const streetMember = await StreetTeam.findOne({ email: { $regex: `^${emailTrim}$`, $options: 'i' } });
@@ -2978,14 +2981,153 @@ app.get("/api/admin/volunteers", requireAdmin, async (req, res) => {
   try {
     const volunteers = await db.collection("Volunteers")
       .find({})
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, _id: -1 })
       .limit(1000)
       .toArray();
 
-    return res.json({ success: true, volunteers });
+    const normalized = volunteers.map(v => ({
+      _id: String(v._id),
+      name: v.name || "—",
+      email: v.email || "—",
+      role: v.role || "Volunteer",
+      reason: v.reason || "—",
+      status: v.status || "Pending",
+      reviewedAt: v.reviewedAt || null,
+      reviewedBy: v.reviewedBy || null,
+      rejectionReason: v.rejectionReason || "",
+      adminNotes: v.adminNotes || "",
+      createdAt: v.createdAt || null,
+      updatedAt: v.updatedAt || null
+    }));
+
+    return res.json({ success: true, volunteers: normalized });
   } catch (err) {
     console.error("GET /api/admin/volunteers error:", err);
     return res.status(500).json({ success: false, message: "Failed to load volunteers" });
+  }
+});
+
+app.patch("/api/admin/volunteers/:id/status", requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const statusRaw = String(req.body?.status || "").trim();
+    const adminNotes = String(req.body?.adminNotes || "").trim();
+    const rejectionReason = String(req.body?.rejectionReason || "").trim();
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid volunteer id" });
+    }
+
+    const allowed = ["Approved", "Rejected", "Pending"];
+    if (!allowed.includes(statusRaw)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    const update = {
+      status: statusRaw,
+      adminNotes,
+      updatedAt: new Date()
+    };
+
+    if (statusRaw === "Approved") {
+      update.reviewedAt = new Date();
+      update.reviewedBy = "Admin";
+      update.rejectionReason = "";
+    }
+
+    if (statusRaw === "Rejected") {
+      update.reviewedAt = new Date();
+      update.reviewedBy = "Admin";
+      update.rejectionReason = rejectionReason;
+    }
+
+    if (statusRaw === "Pending") {
+      update.reviewedAt = null;
+      update.reviewedBy = null;
+      update.rejectionReason = "";
+    }
+
+    const result = await db.collection("Volunteers").findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: update },
+      { returnDocument: "after" }
+    );
+
+    if (!result.value) {
+      return res.status(404).json({ success: false, message: "Volunteer not found" });
+    }
+
+    return res.json({ success: true, volunteer: result.value });
+  } catch (err) {
+    console.error("PATCH /api/admin/volunteers/:id/status error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+app.patch("/api/admin/volunteers/:id/approve", requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const adminNotes = String(req.body?.adminNotes || "").trim();
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid volunteer id" });
+    }
+
+    const result = await db.collection("Volunteers").findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          status: "Approved",
+          adminNotes,
+          rejectionReason: "",
+          reviewedAt: new Date(),
+          reviewedBy: "Admin",
+          updatedAt: new Date()
+        }
+      },
+      { returnDocument: "after" }
+    );
+
+    if (!result.value) {
+      return res.status(404).json({ success: false, message: "Volunteer not found" });
+    }
+
+    return res.json({ success: true, volunteer: result.value });
+  } catch (err) {
+    console.error("PATCH /api/admin/volunteers/:id/approve error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+app.patch("/api/admin/volunteers/:id/reject", requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const adminNotes = String(req.body?.adminNotes || "").trim();
+    const rejectionReason = String(req.body?.rejectionReason || "").trim();
+
+    const result = await db.collection("Volunteers").findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          status: "Rejected",
+          adminNotes,
+          rejectionReason,
+          reviewedAt: new Date(),
+          reviewedBy: "Admin",
+          updatedAt: new Date()
+        }
+      },
+      { returnDocument: "after" }
+    );
+
+    if (!result.value) {
+      return res.status(404).json({ success: false, message: "Volunteer not found" });
+    }
+
+    return res.json({ success: true, volunteer: result.value });
+  } catch (err) {
+    console.error("PATCH /api/admin/volunteers/:id/reject error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
@@ -4188,7 +4330,22 @@ app.post("/api/volunteer", async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
-    const row = { name, email, role: role || "Volunteer", reason, createdAt: new Date() };
+    const row = {
+  name: String(name || "").trim(),
+  email: String(email || "").trim().toLowerCase(),
+  role: String(role || "Volunteer").trim(),
+  reason: String(reason || "").trim(),
+
+  // new review fields
+  status: "Pending",
+  reviewedAt: null,
+  reviewedBy: null,
+  rejectionReason: "",
+  adminNotes: "",
+
+  createdAt: new Date(),
+  updatedAt: new Date()
+};
     await db.collection("Volunteers").insertOne(row);
 
     await sendSubmissionEmails({
