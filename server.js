@@ -3948,7 +3948,7 @@ app.get("/api/campaigns", async (req, res) => {
 // ==================== CAMPAIGNS ====================
 app.post("/api/create-campaign", requireIdentityIfDenied, upload.single("image"), async (req, res) => {
   try {
-    const { title, email, description, category, city, state, agreeRules } = req.body;
+    const { title, description, category, city, state, agreeRules } = req.body;
 
 const sessionEmail = req.session?.user?.email;
 if (!sessionEmail) {
