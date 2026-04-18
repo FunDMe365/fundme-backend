@@ -1816,7 +1816,7 @@ app.post("/api/signup", async (req, res) => {
 	
 	// 🎁 Award signup JoyPoints
 await awardJoyPoints(
-  newUser._id,
+  userId,
   25,
   "Welcome to JoyFund"
 );
@@ -1861,14 +1861,14 @@ await awardJoyPoints(
 });
 
     // ✅ JoyPoints fix: ensure session includes the Mongo user id (used by JoyPoints endpoints)
-    req.session.userId = newUser._id.toString();
-    req.session.user = {
-      id: newUser._id.toString(),
-      _id: newUser._id.toString(),
-      name: newUser.Name,
-      email: newUser.Email,
-      joinDate: newUser.JoinDate
-    };
+req.session.userId = userId.toString();
+req.session.user = {
+  id: userId.toString(),
+  _id: userId.toString(),
+  name: newUser.Name,
+  email: newUser.Email,
+  joinDate: newUser.JoinDate
+};
 
     // ✅ IMPORTANT: force session write before responding (mobile fix)
     req.session.save((err) => {
@@ -1945,7 +1945,7 @@ app.post("/api/request-reset-password", resetLimiter, async (req, res) => {
     if (!emailRaw) return res.status(400).json({ success: false, message: "Missing email" });
 
     const collection = db.collection("Users");
-    const user = await usersCollection.findOne({ Email: { $regex: `^${emailRaw}$`, $options: "i" } });
+    const user = await collection.findOne({ Email: { $regex: `^${emailRaw}$`, $options: "i" } });
 
     // Always return success (prevents attackers from checking what emails exist)
     if (!user) {
@@ -2010,7 +2010,7 @@ app.post("/api/reset-password", resetLimiter, async (req, res) => {
     const collection = db.collection("Users");
     const tokenHash = hashResetToken(tokenRaw);
 
-    const user = await usersCollection.findOne({
+    const user = await collection.findOne({
       Email: { $regex: `^${emailRaw}$`, $options: "i" },
       resetTokenHash: tokenHash,
       resetTokenExpiresAt: { $gt: new Date() }
@@ -2249,9 +2249,9 @@ app.post('/api/create-checkout-session', async (req, res) => {
 // ==================== JOYBOOST: APPLY ====================
 app.post("/api/joyboost/apply", async (req, res) => {
   try {
-    const { name, email, campaignId, goal, joy, notes } = req.body || {};
+    const { name, email, campaignId, joy, notes } = req.body || {};
 
-    if (!name || !email || !campaignId || !goal || !joy) {
+    if (!name || !email || !campaignId || !joy) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
@@ -2259,7 +2259,6 @@ app.post("/api/joyboost/apply", async (req, res) => {
       name: String(name).trim(),
       email: safeLower(email),
       campaignId: String(campaignId).trim(),
-      goal: String(goal).trim(),
       joy: String(joy).trim(),
       notes: String(notes || "").trim(),
       status: "Pending",
@@ -3949,7 +3948,7 @@ app.get("/api/campaigns", async (req, res) => {
 // ==================== CAMPAIGNS ====================
 app.post("/api/create-campaign", requireIdentityIfDenied, upload.single("image"), async (req, res) => {
   try {
-    const { title, goal, description, category } = req.body;
+    const { title, email, description, category, city, state, agreeRules } = req.body;
 
 const sessionEmail = req.session?.user?.email;
 if (!sessionEmail) {
@@ -3957,7 +3956,7 @@ if (!sessionEmail) {
 }
 const email = String(sessionEmail).trim().toLowerCase();
 
-if (!title || !goal || !description || !category || !req.file) {
+if (!title || !email || !description || !category || !req.file) {
   return res.status(400).json({ success: false, message: "Missing fields" });
 }
 
@@ -3971,16 +3970,18 @@ if (!title || !goal || !description || !category || !req.file) {
     });
 
     const doc = {
-      Id: String(Date.now()),
-      title: String(title).trim(),
-      Email: String(email).trim().toLowerCase(),
-      Goal: String(goal).trim(),
-      Description: String(description).trim(),
-      Category: String(category).trim(),
-      Status: "Pending",
-      CreatedAt: new Date().toISOString(),
-      ImageURL: cloudRes.secure_url
-    };
+  Id: String(Date.now()),
+  title: String(title).trim(),
+  Email: String(email).trim().toLowerCase(),
+  Description: String(description).trim(),
+  Category: String(category).trim(),
+  City: String(city || "").trim(),
+  State: String(state || "").trim().toUpperCase(),
+  AgreeRules: String(agreeRules || "true"),
+  Status: "Pending",
+  CreatedAt: new Date().toISOString(),
+  ImageURL: cloudRes.secure_url
+};
 	
 	const createdAt = new Date();
 const expiresAt = addDays(createdAt, CAMPAIGN_ACTIVE_DAYS);
@@ -4024,10 +4025,12 @@ await sendSubmissionEmails({
   adminSubject: "New Campaign Submitted",
   userSubject: "Your JoyFund campaign is under review",
   adminHtml: `
-    <h2>New Campaign Submitted</h2>
-    <p><b>Title:</b> ${title}</p>
-    <p><b>Email:</b> ${email}</p>
-    <p><b>Goal:</b> ${goal}</p>
+  <h2>New Campaign Submitted</h2>
+  <p><b>Title:</b> ${title}</p>
+  <p><b>Email:</b> ${email}</p>
+  <p><b>Category:</b> ${category}</p>
+  <p><b>City:</b> ${city || ""}</p>
+  <p><b>State:</b> ${state || ""}</p>
   `,
   userHtml: `
     <h2>Your campaign was submitted 💙💗</h2>
@@ -4149,11 +4152,10 @@ async function updateCampaignHandler(req, res) {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ success: false, message: "Missing id" });
 
-    const { title, goal, description, category, imageUrl } = req.body || {};
+    const { title, description, category, imageUrl } = req.body || {};
 
     const $set = {};
     if (typeof title === "string") $set.title = title.trim();
-    if (typeof goal === "string" || typeof goal === "number") $set.Goal = String(goal).trim();
     if (typeof description === "string") $set.Description = description.trim();
     if (typeof category === "string") $set.Category = category.trim();
     if (typeof imageUrl === "string" && imageUrl.trim()) $set.ImageURL = imageUrl.trim();
