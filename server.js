@@ -2147,67 +2147,75 @@ app.get("/api/check-session", async (req, res) => {
   }
 });
 
-//===================== JOYBOOST SUPPORTER TIERS CHECKOUT =====================
+// ===================== JOYBOOST SUPPORTER TIERS CHECKOUT =====================
 // This is for "Support JoyBoost" (supporters), NOT applicants needing help.
-// Frontend sends: { tier: "bronze" | "silver" | "gold" | "diamond", email?: "" }
+// Frontend sends: { tier: "bronze" | "silver" | "gold" | "platinum", email?: "" }
 
-app.post("/api/joyboost/supporter/checkout", requireLogin, async (req, res) => {
+app.post("/api/joyboost/supporter/checkout", async (req, res) => {
   try {
     const tierRaw = String(req.body?.tier || "").trim().toLowerCase();
-    // Use the logged-in user email first (most reliable)
+
+    // Use logged-in email first, otherwise allow guest email from frontend
     const sessionEmail = String(req.session?.user?.email || "").trim().toLowerCase();
     const email = sessionEmail || String(req.body?.email || "").trim().toLowerCase();
-    if (!email) return res.status(400).json({ error: "Missing supporter email" });
 
-    // ✅ Must be a real JoyFund user
-            const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
-    const userDoc = await db.collection("Users").findOne({ $or: [ { Email: emailRegex }, { email: emailRegex } ] });
-    if (!userDoc) return res.status(403).json({ error: "Please log in with a valid JoyFund account to support JoyBoost." });
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
 
     const tierMap = {
-  bronze: process.env.JOYBOOST_SUPPORTER_BRONZE_PRICE_ID,
-  silver: process.env.JOYBOOST_SUPPORTER_SILVER_PRICE_ID,
-  gold: process.env.JOYBOOST_SUPPORTER_GOLD_PRICE_ID,
-  platinum: process.env.JOYBOOST_SUPPORTER_PLATINUM_PRICE_ID
-};
+      bronze: process.env.JOYBOOST_SUPPORTER_BRONZE_PRICE_ID,
+      silver: process.env.JOYBOOST_SUPPORTER_SILVER_PRICE_ID,
+      gold: process.env.JOYBOOST_SUPPORTER_GOLD_PRICE_ID,
+      platinum: process.env.JOYBOOST_SUPPORTER_PLATINUM_PRICE_ID
+    };
 
     const priceId = tierMap[tierRaw];
-    if (!priceId) return res.status(400).json({ error: "Invalid tier" });
-	
-	// ❌ Block duplicate active subscriptions
-const existing = await db.collection("JoyBoost_Supporters").findOne({
-  supporterEmail: email,
-  status: { $in: ["active", "canceling"] }
-});
+    if (!priceId) {
+      return res.status(400).json({ error: "Invalid tier" });
+    }
 
-if (existing) {
-  return res.status(400).json({
-    error: "You already have an active JoyBoost subscription."
-  });
-}
+    // Block duplicate active or canceling subscriptions for this email
+    const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
 
+    const existing = await db.collection("JoyBoost_Supporters").findOne({
+      supporterEmail: emailRegex,
+      status: { $in: ["active", "canceling"] }
+    });
 
-    // 🔐 STRIPE IDEMPOTENCY KEY (this is the real fix)
-    const baseKey = `${email || "anon"}-${tierRaw}`;
+    if (existing) {
+      return res.status(400).json({
+        error: "You already have an active JoyBoost subscription."
+      });
+    }
+
+    // Stripe idempotency key to reduce accidental duplicate sessions
+    const baseKey = `${email}-${tierRaw}`;
     const timeBucket = Math.floor(Date.now() / 60000); // 60-second window
-    const idemKey = crypto.createHash("sha256")
+    const idemKey = crypto
+      .createHash("sha256")
       .update(baseKey + timeBucket)
       .digest("hex");
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      payment_method_types: ["card"],
-      line_items: [{ price: priceId, quantity: 1 }],
-      customer_email: email || undefined,
-      metadata: { type: "joyboost_supporter", tier: tierRaw },
-      success_url: `${FRONTEND_URL}/dashboard.html?jb_supporter=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${FRONTEND_URL}/joyboost.html?support_canceled=1`
-    }, {
-      idempotencyKey: idemKey
-    });
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: "subscription",
+        payment_method_types: ["card"],
+        line_items: [{ price: priceId, quantity: 1 }],
+        customer_email: email,
+        metadata: {
+          type: "joyboost_supporter",
+          tier: tierRaw
+        },
+        success_url: `${FRONTEND_URL}/dashboard.html?jb_supporter=success&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${FRONTEND_URL}/joyboost.html?support_canceled=1`
+      },
+      {
+        idempotencyKey: idemKey
+      }
+    );
 
     return res.json({ url: session.url });
-
   } catch (err) {
     console.error("JoyBoost supporter checkout error:", err);
     return res.status(500).json({ error: err.message || "Stripe error" });
