@@ -684,25 +684,50 @@ app.post("/api/joyboost/supporter/portal", async (req, res) => {
 
     const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
 
-    const supporter = await db.collection("JoyBoost_Supporters").findOne({
+    // First try Mongo
+    let supporter = await db.collection("JoyBoost_Supporters").findOne({
       supporterEmail: emailRegex,
       status: { $in: ["active", "canceling"] }
     });
 
-    if (!supporter) {
-      return res.status(404).json({ error: "No active JoyBoost subscription found for that email." });
-    }
+    let stripeCustomerId = String(supporter?.stripeCustomerId || "").trim();
 
-    let stripeCustomerId = String(supporter.stripeCustomerId || "").trim();
-
-    // Fallback: if customer ID wasn't saved, try to recover it from Stripe subscription
-    if (!stripeCustomerId && supporter.stripeSubscriptionId) {
+    // Fallback 1: recover from saved subscription id
+    if (!stripeCustomerId && supporter?.stripeSubscriptionId) {
       const subscription = await stripe.subscriptions.retrieve(supporter.stripeSubscriptionId);
       stripeCustomerId = String(subscription?.customer || "").trim();
     }
 
+    // Fallback 2: search Stripe customers directly by email
     if (!stripeCustomerId) {
-      return res.status(400).json({ error: "Missing Stripe customer record for this subscription." });
+      const customers = await stripe.customers.list({
+        email,
+        limit: 10
+      });
+
+      const customer = customers.data.find(c => String(c.email || "").trim().toLowerCase() === email);
+      if (customer?.id) {
+        stripeCustomerId = customer.id;
+      }
+    }
+
+    if (!stripeCustomerId) {
+      return res.status(404).json({ error: "No active JoyBoost subscription found for that email." });
+    }
+
+    const subs = await stripe.subscriptions.list({
+      customer: stripeCustomerId,
+      status: "all",
+      limit: 20
+    });
+
+    const activeSub = subs.data.find(sub =>
+      ["active", "trialing", "past_due", "unpaid"].includes(String(sub.status || "").toLowerCase()) ||
+      sub.cancel_at_period_end === true
+    );
+
+    if (!activeSub) {
+      return res.status(404).json({ error: "No active JoyBoost subscription found for that email." });
     }
 
     const portalSession = await stripe.billingPortal.sessions.create({
