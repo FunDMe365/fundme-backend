@@ -2278,7 +2278,7 @@ app.post("/api/joyboost/supporter/checkout", async (req, res) => {
           type: "joyboost_supporter",
           tier: tierRaw
         },
-        success_url: `${FRONTEND_URL}/dashboard.html?jb_supporter=success&session_id={CHECKOUT_SESSION_ID}`,
+        success_url: `${FRONTEND_URL}/thankyou.html?jb_supporter=success&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${FRONTEND_URL}/joyboost.html?support_canceled=1`
       },
       {
