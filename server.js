@@ -541,6 +541,56 @@ if (supporterEmail) {
 }
         console.log("✅ JoyBoost supporter activated (upsert):", supporterEmail, "tier:", tier);
       }
+	  
+	  
+	  // ===================== JOYBOOST SUPPORTER PORTAL =====================
+// Allows a supporter to manage or cancel their Stripe subscription
+// Works for both dashboard users and guest subscribers
+
+app.post("/api/joyboost/supporter/portal", async (req, res) => {
+  try {
+    const bodyEmail = String(req.body?.email || "").trim().toLowerCase();
+    const sessionEmail = String(req.session?.user?.email || "").trim().toLowerCase();
+    const email = sessionEmail || bodyEmail;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
+
+    const supporter = await db.collection("JoyBoost_Supporters").findOne({
+      supporterEmail: emailRegex,
+      status: { $in: ["active", "canceling"] }
+    });
+
+    if (!supporter) {
+      return res.status(404).json({ error: "No active JoyBoost subscription found for that email." });
+    }
+
+    let stripeCustomerId = String(supporter.stripeCustomerId || "").trim();
+
+    // Fallback: if customer ID wasn't saved, try to recover it from Stripe subscription
+    if (!stripeCustomerId && supporter.stripeSubscriptionId) {
+      const subscription = await stripe.subscriptions.retrieve(supporter.stripeSubscriptionId);
+      stripeCustomerId = String(subscription?.customer || "").trim();
+    }
+
+    if (!stripeCustomerId) {
+      return res.status(400).json({ error: "Missing Stripe customer record for this subscription." });
+    }
+
+    const portalSession = await stripe.billingPortal.sessions.create({
+      customer: stripeCustomerId,
+      return_url: `${FRONTEND_URL}/joyboost.html`
+    });
+
+    return res.json({ url: portalSession.url });
+  } catch (err) {
+    console.error("JoyBoost supporter portal error:", err);
+    return res.status(500).json({ error: err.message || "Could not open supporter portal" });
+  }
+});
 
 
       // ================== DONATION RECORDING ==================
