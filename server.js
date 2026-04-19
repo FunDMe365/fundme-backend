@@ -2155,13 +2155,9 @@ app.post("/api/joyboost/supporter/checkout", async (req, res) => {
   try {
     const tierRaw = String(req.body?.tier || "").trim().toLowerCase();
 
-    // Use logged-in email first, otherwise allow guest email from frontend
+    // Use logged-in email if available, otherwise let Stripe collect it
     const sessionEmail = String(req.session?.user?.email || "").trim().toLowerCase();
     const email = sessionEmail || String(req.body?.email || "").trim().toLowerCase();
-
-    if (!email) {
-      return res.status(400).json({ error: "Email is required" });
-    }
 
     const tierMap = {
       bronze: process.env.JOYBOOST_SUPPORTER_BRONZE_PRICE_ID,
@@ -2175,23 +2171,24 @@ app.post("/api/joyboost/supporter/checkout", async (req, res) => {
       return res.status(400).json({ error: "Invalid tier" });
     }
 
-    // Block duplicate active or canceling subscriptions for this email
-    const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
+    // Only check for duplicate subscriptions if we actually know the email
+    if (email) {
+      const emailRegex = new RegExp("^" + escapeRegex(email) + "$", "i");
 
-    const existing = await db.collection("JoyBoost_Supporters").findOne({
-      supporterEmail: emailRegex,
-      status: { $in: ["active", "canceling"] }
-    });
-
-    if (existing) {
-      return res.status(400).json({
-        error: "You already have an active JoyBoost subscription."
+      const existing = await db.collection("JoyBoost_Supporters").findOne({
+        supporterEmail: emailRegex,
+        status: { $in: ["active", "canceling"] }
       });
+
+      if (existing) {
+        return res.status(400).json({
+          error: "You already have an active JoyBoost subscription."
+        });
+      }
     }
 
-    // Stripe idempotency key to reduce accidental duplicate sessions
-    const baseKey = `${email}-${tierRaw}`;
-    const timeBucket = Math.floor(Date.now() / 60000); // 60-second window
+    const baseKey = `${email || "guest"}-${tierRaw}`;
+    const timeBucket = Math.floor(Date.now() / 60000);
     const idemKey = crypto
       .createHash("sha256")
       .update(baseKey + timeBucket)
@@ -2202,7 +2199,7 @@ app.post("/api/joyboost/supporter/checkout", async (req, res) => {
         mode: "subscription",
         payment_method_types: ["card"],
         line_items: [{ price: priceId, quantity: 1 }],
-        customer_email: email,
+        customer_email: email || undefined,
         metadata: {
           type: "joyboost_supporter",
           tier: tierRaw
