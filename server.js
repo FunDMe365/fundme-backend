@@ -1061,7 +1061,7 @@ app.post("/api/veterans/donation/checkout", async (req, res) => {
   }
 });
 
-app.post("/api/veterans/request", upload.none(), async (req, res) => {
+app.post("/api/veterans/request", upload.single("verificationUpload"), async (req, res) => {
   try {
     const veteranName = String(req.body?.veteranName || "").trim();
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -1072,6 +1072,28 @@ app.post("/api/veterans/request", upload.none(), async (req, res) => {
     const experienceDescription = String(req.body?.experienceDescription || "").trim();
     const whyItMatters = String(req.body?.whyItMatters || "").trim();
     const estimatedCost = String(req.body?.estimatedCost || "").trim();
+	
+	let verificationUploadUrl = "";
+let verificationUploadPublicId = "";
+
+if (req.file) {
+  const cloudRes = await new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: "joyfund/veterans-verifications",
+        resource_type: "auto",
+        use_filename: true,
+        unique_filename: true
+      },
+      (err, result) => (err ? reject(err) : resolve(result))
+    );
+
+    stream.end(req.file.buffer);
+  });
+
+  verificationUploadUrl = cloudRes.secure_url || "";
+  verificationUploadPublicId = cloudRes.public_id || "";
+}
 
     if (!veteranName || !email || !location || !experienceType || !verificationMethod || !experienceDescription || !whyItMatters) {
       return res.status(400).json({
@@ -1088,7 +1110,9 @@ app.post("/api/veterans/request", upload.none(), async (req, res) => {
       location,
       experienceType,
       verificationMethod,
-      experienceDescription,
+      verificationUploadUrl,
+      verificationUploadPublicId,
+	  experienceDescription,
       whyItMatters,
       estimatedCost,
       certifyVeteran: req.body?.certifyVeteran === "on",
@@ -3151,6 +3175,87 @@ app.get("/api/admin/expired-campaigns", requireAdmin, async (req, res) => {
   }
 });
 
+// ==================== ADMIN: VETERANS REQUESTS ====================
+app.get("/api/admin/veterans/requests", requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection("Veterans_Requests")
+      .find({})
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(1000)
+      .toArray();
+
+    const requests = rows.map(r => ({
+      _id: String(r._id),
+      program: r.program || "veterans_initiative",
+      veteranName: r.veteranName || "",
+      email: r.email || "",
+      phone: r.phone || "",
+      location: r.location || "",
+      experienceType: r.experienceType || "",
+      verificationMethod: r.verificationMethod || "",
+      verificationUploadUrl: r.verificationUploadUrl || "",
+      experienceDescription: r.experienceDescription || "",
+      whyItMatters: r.whyItMatters || "",
+      estimatedCost: r.estimatedCost || "",
+      certifyVeteran: !!r.certifyVeteran,
+      understandNoCash: !!r.understandNoCash,
+      status: r.status || "Pending Review",
+      adminNotes: r.adminNotes || "",
+      denialReason: r.denialReason || "",
+      createdAt: r.createdAt || null,
+      updatedAt: r.updatedAt || null,
+      reviewedAt: r.reviewedAt || null
+    }));
+
+    return res.json({ success: true, requests });
+  } catch (err) {
+    console.error("GET /api/admin/veterans/requests error:", err);
+    return res.status(500).json({ success: false, message: "Failed to load veterans requests" });
+  }
+});
+
+app.patch("/api/admin/veterans/requests/:id/status", requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const status = String(req.body?.status || "").trim();
+    const adminNotes = String(req.body?.adminNotes || "").trim();
+    const denialReason = String(req.body?.denialReason || "").trim();
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid Veterans request id" });
+    }
+
+    const allowed = ["Pending Review", "Approved", "Denied"];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
+
+    const update = {
+      status,
+      adminNotes,
+      updatedAt: new Date(),
+      reviewedAt: new Date()
+    };
+
+    if (status === "Denied") update.denialReason = denialReason;
+    if (status === "Approved") update.denialReason = "";
+
+    const result = await db.collection("Veterans_Requests").findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: update },
+      { returnDocument: "after" }
+    );
+
+    if (!result?.value) {
+      return res.status(404).json({ success: false, message: "Veterans request not found" });
+    }
+
+    return res.json({ success: true, request: result.value });
+  } catch (err) {
+    console.error("PATCH /api/admin/veterans/requests/:id/status error:", err);
+    return res.status(500).json({ success: false, message: "Failed to update Veterans request" });
+  }
+});
 
 // ==================== ADMIN: USERS LIST ====================
 app.get("/api/admin/users", requireAdmin, async (req, res) => {
