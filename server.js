@@ -3271,8 +3271,45 @@ app.patch("/api/admin/veterans/requests/:id/status", requireAdmin, async (req, r
     );
 
     if (!result?.value) {
-      return res.status(404).json({ success: false, message: "Veterans request not found" });
-    }
+  return res.status(404).json({ success: false, message: "Veterans request not found" });
+}
+
+const updatedRequest = result.value;
+
+if (status === "Approved") {
+  const existingCampaign = await db.collection("Campaigns").findOne({
+    sourceVeteranRequestId: String(updatedRequest._id)
+  });
+
+  if (!existingCampaign) {
+    const createdAt = new Date();
+
+    await db.collection("Campaigns").insertOne({
+      Id: `veteran-${updatedRequest._id}`,
+      title: `Veterans Initiative: ${updatedRequest.experienceType || "Family Experience"}`,
+      Description:
+        `${updatedRequest.experienceDescription || ""}\n\nWhy it matters:\n${updatedRequest.whyItMatters || ""}`,
+      Category: "Veterans Initiative",
+      City: updatedRequest.location || "",
+      State: "",
+      Email: updatedRequest.email || "",
+      Status: "Active",
+      status: "Active",
+      verificationStatus: "verified",
+      lifecycleStatus: "Active",
+      program: "veterans_initiative",
+      isVeteranRequest: true,
+      veteranTag: "Veterans Initiative",
+      sourceVeteranRequestId: String(updatedRequest._id),
+      CreatedAt: createdAt.toISOString(),
+      createdAt,
+      expiresAt: addDays(createdAt, CAMPAIGN_ACTIVE_DAYS),
+      ImageURL: "https://fundasmile.net/JoyFund-logo.png"
+    });
+  }
+}
+
+return res.json({ success: true, request: updatedRequest });
 
     return res.json({ success: true, request: result.value });
   } catch (err) {
