@@ -1061,7 +1061,18 @@ app.post("/api/veterans/donation/checkout", async (req, res) => {
   }
 });
 
-app.post("/api/veterans/request", upload.single("verificationUpload"), async (req, res) => {
+app.post("/api/veterans/request", (req, res, next) => {
+  upload.single("verificationUpload")(req, res, function (err) {
+    if (err) {
+      console.error("Veterans multer upload error:", err.message);
+      return res.status(400).json({
+        success: false,
+        message: err.message || "Upload failed. Please use a JPG, PNG, GIF, or WEBP image under 5MB."
+      });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     const veteranName = String(req.body?.veteranName || "").trim();
     const email = String(req.body?.email || "").trim().toLowerCase();
