@@ -3264,17 +3264,17 @@ app.patch("/api/admin/veterans/requests/:id/status", requireAdmin, async (req, r
     if (status === "Denied") update.denialReason = denialReason;
     if (status === "Approved") update.denialReason = "";
 
-    const result = await db.collection("Veterans_Requests").findOneAndUpdate(
-      { _id: new ObjectId(id) },
-      { $set: update },
-      { returnDocument: "after" }
-    );
+   const result = await db.collection("Veterans_Requests").findOneAndUpdate(
+  { _id: new ObjectId(id) },
+  { $set: update },
+  { returnDocument: "after" }
+);
 
-    if (!result?.value) {
+const updatedRequest = result?.value || result;
+
+if (!updatedRequest || !updatedRequest._id) {
   return res.status(404).json({ success: false, message: "Veterans request not found" });
 }
-
-const updatedRequest = result.value;
 
 if (status === "Approved") {
   const existingCampaign = await db.collection("Campaigns").findOne({
@@ -3309,7 +3309,7 @@ if (status === "Approved") {
   }
 }
 
-return res.json({ success: true, request: updatedRequest });
+return res.json({ success: true, request: updatedRequest }); 
 
     return res.json({ success: true, request: result.value });
   } catch (err) {
