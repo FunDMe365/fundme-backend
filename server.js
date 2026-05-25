@@ -988,6 +988,153 @@ const upload = multer({
   }
 });
 
+// ==================== VETERANS INITIATIVE ====================
+// Frontend endpoints used by veterans-initiative.html:
+// POST /api/veterans/donation/checkout
+// POST /api/veterans/request
+
+app.post("/api/veterans/donation/checkout", async (req, res) => {
+  try {
+    const successUrlRaw = String(req.body?.successUrl || "").trim();
+    const cancelUrlRaw = String(req.body?.cancelUrl || "").trim();
+
+    const safeSuccessUrl = successUrlRaw.startsWith(FRONTEND_URL)
+      ? successUrlRaw
+      : `${FRONTEND_URL}/thankyou.html?program=veterans`;
+
+    const safeCancelUrl = cancelUrlRaw.startsWith(FRONTEND_URL)
+      ? cancelUrlRaw
+      : `${FRONTEND_URL}/veterans-initiative.html`;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [{
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: "JoyFund Veterans Initiative Donation",
+            description: "Donation supporting JoyFund veteran-focused experiences."
+          },
+          const donationAmount = Number(req.body.amount);
+
+if (!donationAmount || donationAmount < 1) {
+  return res.status(400).json({
+    success: false,
+    message: "Invalid donation amount."
+  });
+}
+
+unit_amount: Math.round(donationAmount * 100)
+        },
+        quantity: 1
+      }],
+      success_url: `${safeSuccessUrl}${safeSuccessUrl.includes("?") ? "&" : "?"}session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: safeCancelUrl,
+      metadata: {
+        donationType: "veterans_initiative",
+        program: "veterans_initiative",
+        campaignId: "veterans_initiative",
+        campaignTitle: "JoyFund Veterans Initiative",
+        originalDonation: donationAmount.toFixed(2)
+      }
+    });
+
+    return res.json({ url: session.url });
+  } catch (err) {
+    console.error("Veterans donation checkout error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Could not create Veterans Initiative checkout session."
+    });
+  }
+});
+
+app.post("/api/veterans/request", upload.none(), async (req, res) => {
+  try {
+    const veteranName = String(req.body?.veteranName || "").trim();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const phone = String(req.body?.phone || "").trim();
+    const location = String(req.body?.location || "").trim();
+    const experienceType = String(req.body?.experienceType || "").trim();
+    const verificationMethod = String(req.body?.verificationMethod || "").trim();
+    const experienceDescription = String(req.body?.experienceDescription || "").trim();
+    const whyItMatters = String(req.body?.whyItMatters || "").trim();
+    const estimatedCost = String(req.body?.estimatedCost || "").trim();
+
+    if (!veteranName || !email || !location || !experienceType || !verificationMethod || !experienceDescription || !whyItMatters) {
+      return res.status(400).json({
+        success: false,
+        message: "Please complete all required fields."
+      });
+    }
+
+    const doc = {
+      program: "veterans_initiative",
+      veteranName,
+      email,
+      phone,
+      location,
+      experienceType,
+      verificationMethod,
+      experienceDescription,
+      whyItMatters,
+      estimatedCost,
+      certifyVeteran: req.body?.certifyVeteran === "on",
+      understandNoCash: req.body?.understandNoCash === "on",
+      status: "Pending Review",
+      createdFromPage: req.body?.createdFromPage || "veterans-initiative.html",
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    const result = await db.collection("Veterans_Requests").insertOne(doc);
+
+    await sendSubmissionEmails({
+      type: "Veterans Initiative Request",
+      userEmail: email,
+      userName: veteranName,
+      adminSubject: "New Veterans Initiative Request",
+      userSubject: "We received your Veterans Initiative request",
+      adminHtml: `
+        <h2>New Veterans Initiative Request</h2>
+        <p><b>Name:</b> ${veteranName}</p>
+        <p><b>Email:</b> ${email}</p>
+        <p><b>Phone:</b> ${phone || "—"}</p>
+        <p><b>Location:</b> ${location}</p>
+        <p><b>Experience Type:</b> ${experienceType}</p>
+        <p><b>Verification Method:</b> ${verificationMethod}</p>
+        <p><b>Experience Requested:</b></p>
+        <p>${experienceDescription}</p>
+        <p><b>Why It Matters:</b></p>
+        <p>${whyItMatters}</p>
+        <p><b>Estimated Cost / Details:</b></p>
+        <p>${estimatedCost || "—"}</p>
+        <p><b>Mongo ID:</b> ${result.insertedId}</p>
+      `,
+      userHtml: `
+        <h2>We received your Veterans Initiative request 💙</h2>
+        <p>Hi ${veteranName},</p>
+        <p>Thank you for submitting a request through JoyFund’s Veterans Initiative.</p>
+        <p>We received your information and will review it. If we need additional verification or details, we will contact you by email.</p>
+        <p>— JoyFund Team</p>
+      `
+    });
+
+    return res.json({
+      success: true,
+      message: "Your Veterans Initiative request was submitted successfully.",
+      requestId: String(result.insertedId)
+    });
+  } catch (err) {
+    console.error("Veterans request error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong submitting the Veterans Initiative request."
+    });
+  }
+});
+
 // ==================== STRIPE CHECKOUT (CAMPAIGN DONATIONS + MISSION GENERAL) ====================
 app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
   try {
