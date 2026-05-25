@@ -1078,14 +1078,6 @@ let verificationUploadPublicId = "";
 
 if (req.file) {
   try {
-    if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
-      console.error("Cloudinary env vars missing.");
-      return res.status(500).json({
-        success: false,
-        message: "Verification upload is not configured correctly."
-      });
-    }
-
     const cloudRes = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
         {
@@ -1105,12 +1097,12 @@ if (req.file) {
 
     verificationUploadUrl = cloudRes.secure_url || "";
     verificationUploadPublicId = cloudRes.public_id || "";
+
   } catch (uploadErr) {
-    console.error("Veterans verification upload error:", uploadErr);
-    return res.status(500).json({
-      success: false,
-      message: "The verification image could not be uploaded. Please try a smaller JPG or PNG."
-    });
+    console.error("Veterans verification upload failed, continuing without upload:", uploadErr.message);
+
+    verificationUploadUrl = "";
+    verificationUploadPublicId = "";
   }
 }
 
