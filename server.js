@@ -4997,6 +4997,57 @@ cron.schedule(
   }
 );
 
+// Admin - Veteran stats
+app.get("/api/admin/veterans/stats", async (req, res) => {
+  try {
+    const totalRequests = await VeteranRequest.countDocuments();
+    const pendingRequests = await VeteranRequest.countDocuments({ status: "pending" });
+    const approvedRequests = await VeteranRequest.countDocuments({ status: "approved" });
+    const deniedRequests = await VeteranRequest.countDocuments({ status: "denied" });
+
+    res.json({
+      success: true,
+      totalRequests,
+      pendingRequests,
+      approvedRequests,
+      deniedRequests
+    });
+  } catch (err) {
+    console.error("Veteran stats error:", err);
+    res.status(500).json({ success: false, message: "Failed to load veteran stats." });
+  }
+});
+
+// Admin - Get one veteran request
+app.get("/api/admin/veterans/requests/:id", async (req, res) => {
+  try {
+    const request = await VeteranRequest.findById(req.params.id);
+
+    if (!request) {
+      return res.status(404).json({ success: false, message: "Veteran request not found." });
+    }
+
+    res.json({ success: true, request });
+  } catch (err) {
+    console.error("Veteran request detail error:", err);
+    res.status(500).json({ success: false, message: "Failed to load veteran request." });
+  }
+});
+
+// Admin - List all veteran requests
+app.get("/api/admin/veterans/requests", async (req, res) => {
+  try {
+    const requests = await VeteranRequest.find().sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      requests
+    });
+  } catch (err) {
+    console.error("Veteran requests list error:", err);
+    res.status(500).json({ success: false, message: "Failed to load veteran requests." });
+  }
+});
 // ==================== START SERVER ====================
 app.listen(PORT, () => console.log(`JoyFund backend running on port ${PORT}`));
 
