@@ -3304,7 +3304,7 @@ if (status === "Approved") {
       CreatedAt: createdAt.toISOString(),
       createdAt,
       expiresAt: addDays(createdAt, CAMPAIGN_ACTIVE_DAYS),
-      ImageURL: "https://fundasmile.net/JoyFund-logo.png"
+      ImageURL: "https://fundasmile.net/assets/images/veteranphoto.jpg"
     });
   }
 }
