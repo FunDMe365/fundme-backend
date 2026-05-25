@@ -1015,6 +1015,17 @@ app.post("/api/veterans/donation/checkout", async (req, res) => {
       ? cancelUrlRaw
       : `${FRONTEND_URL}/veterans-initiative.html`;
 
+    const donation = Math.round(donationAmount * 100) / 100;
+
+    const joyfundFeeRate = 0.06;
+    const stripePercent = 0.029;
+    const stripeFixed = 0.30;
+
+    const totalCharge =
+      (donation * (1 + joyfundFeeRate) + stripeFixed) / (1 - stripePercent);
+
+    const unitAmount = Math.max(50, Math.ceil(totalCharge * 100));
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
@@ -1025,7 +1036,7 @@ app.post("/api/veterans/donation/checkout", async (req, res) => {
             name: "JoyFund Veterans Initiative Donation",
             description: "Donation supporting JoyFund veteran-focused experiences."
           },
-          unit_amount: Math.round(donationAmount * 100)
+          unit_amount: unitAmount
         },
         quantity: 1
       }],
@@ -1036,7 +1047,7 @@ app.post("/api/veterans/donation/checkout", async (req, res) => {
         program: "veterans_initiative",
         campaignId: "veterans_initiative",
         campaignTitle: "JoyFund Veterans Initiative",
-        originalDonation: donationAmount.toFixed(2)
+        originalDonation: donation.toFixed(2)
       }
     });
 
