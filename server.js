@@ -5000,10 +5000,10 @@ cron.schedule(
 // Admin - Veteran stats
 app.get("/api/admin/veterans/stats", async (req, res) => {
   try {
-    const totalRequests = await VeteranRequest.countDocuments();
-    const pendingRequests = await VeteranRequest.countDocuments({ status: "pending" });
-    const approvedRequests = await VeteranRequest.countDocuments({ status: "approved" });
-    const deniedRequests = await VeteranRequest.countDocuments({ status: "denied" });
+    const totalRequests = await db.collection("Veterans_Requests").countDocuments({});
+    const pendingRequests = await db.collection("Veterans_Requests").countDocuments({ status: "Pending Review" });
+    const approvedRequests = await db.collection("Veterans_Requests").countDocuments({ status: "Approved" });
+    const deniedRequests = await db.collection("Veterans_Requests").countDocuments({ status: "Denied" });
 
     res.json({
       success: true,
@@ -5018,34 +5018,54 @@ app.get("/api/admin/veterans/stats", async (req, res) => {
   }
 });
 
+// Admin - List all veteran requests
+app.get("/api/admin/veterans/requests", async (req, res) => {
+  try {
+    const requests = await db.collection("Veterans_Requests")
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json({
+      success: true,
+      requests: requests.map(r => ({
+        ...r,
+        _id: String(r._id)
+      }))
+    });
+  } catch (err) {
+    console.error("Veteran requests list error:", err);
+    res.status(500).json({ success: false, message: "Failed to load veteran requests." });
+  }
+});
+
 // Admin - Get one veteran request
 app.get("/api/admin/veterans/requests/:id", async (req, res) => {
   try {
-    const request = await VeteranRequest.findById(req.params.id);
+    const id = String(req.params.id || "").trim();
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: "Invalid veteran request ID." });
+    }
+
+    const request = await db.collection("Veterans_Requests").findOne({
+      _id: new ObjectId(id)
+    });
 
     if (!request) {
       return res.status(404).json({ success: false, message: "Veteran request not found." });
     }
 
-    res.json({ success: true, request });
+    res.json({
+      success: true,
+      request: {
+        ...request,
+        _id: String(request._id)
+      }
+    });
   } catch (err) {
     console.error("Veteran request detail error:", err);
     res.status(500).json({ success: false, message: "Failed to load veteran request." });
-  }
-});
-
-// Admin - List all veteran requests
-app.get("/api/admin/veterans/requests", async (req, res) => {
-  try {
-    const requests = await VeteranRequest.find().sort({ createdAt: -1 });
-
-    res.json({
-      success: true,
-      requests
-    });
-  } catch (err) {
-    console.error("Veteran requests list error:", err);
-    res.status(500).json({ success: false, message: "Failed to load veteran requests." });
   }
 });
 // ==================== START SERVER ====================
