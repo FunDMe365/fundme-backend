@@ -1081,7 +1081,7 @@ if (req.file) {
     const stream = cloudinary.uploader.upload_stream(
       {
         folder: "joyfund/veterans-verifications",
-        resource_type: "auto",
+        resource_type: "image",
         use_filename: true,
         unique_filename: true
       },
