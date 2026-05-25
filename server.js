@@ -1062,7 +1062,7 @@ app.post("/api/veterans/donation/checkout", async (req, res) => {
 });
 
 app.post("/api/veterans/request", (req, res, next) => {
-  upload.single("verificationUpload")(req, res, function (err) {
+  upload.any()(req, res, function (err) {
     if (err) {
       console.error("Veterans multer upload error:", err.message);
       return res.status(400).json({
@@ -1087,7 +1087,9 @@ app.post("/api/veterans/request", (req, res, next) => {
 	let verificationUploadUrl = "";
 let verificationUploadPublicId = "";
 
-if (req.file) {
+const uploadedFile = req.file || (req.files && req.files[0]);
+
+if (uploadedFile) {
   try {
     const cloudRes = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
@@ -1103,7 +1105,7 @@ if (req.file) {
         }
       );
 
-      stream.end(req.file.buffer);
+      stream.end(uploadedFile.buffer);
     });
 
     verificationUploadUrl = cloudRes.secure_url || "";
