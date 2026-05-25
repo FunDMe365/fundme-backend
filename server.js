@@ -1077,22 +1077,41 @@ app.post("/api/veterans/request", upload.single("verificationUpload"), async (re
 let verificationUploadPublicId = "";
 
 if (req.file) {
-  const cloudRes = await new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        folder: "joyfund/veterans-verifications",
-        resource_type: "image",
-        use_filename: true,
-        unique_filename: true
-      },
-      (err, result) => (err ? reject(err) : resolve(result))
-    );
+  try {
+    if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+      console.error("Cloudinary env vars missing.");
+      return res.status(500).json({
+        success: false,
+        message: "Verification upload is not configured correctly."
+      });
+    }
 
-    stream.end(req.file.buffer);
-  });
+    const cloudRes = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          folder: "joyfund/veterans-verifications",
+          resource_type: "image",
+          use_filename: true,
+          unique_filename: true
+        },
+        (err, result) => {
+          if (err) return reject(err);
+          resolve(result);
+        }
+      );
 
-  verificationUploadUrl = cloudRes.secure_url || "";
-  verificationUploadPublicId = cloudRes.public_id || "";
+      stream.end(req.file.buffer);
+    });
+
+    verificationUploadUrl = cloudRes.secure_url || "";
+    verificationUploadPublicId = cloudRes.public_id || "";
+  } catch (uploadErr) {
+    console.error("Veterans verification upload error:", uploadErr);
+    return res.status(500).json({
+      success: false,
+      message: "The verification image could not be uploaded. Please try a smaller JPG or PNG."
+    });
+  }
 }
 
     if (!veteranName || !email || !location || !experienceType || !verificationMethod || !experienceDescription || !whyItMatters) {
