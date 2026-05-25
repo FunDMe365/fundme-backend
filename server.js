@@ -995,6 +995,15 @@ const upload = multer({
 
 app.post("/api/veterans/donation/checkout", async (req, res) => {
   try {
+    const donationAmount = Number(req.body.amount);
+
+    if (!donationAmount || donationAmount < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid donation amount."
+      });
+    }
+
     const successUrlRaw = String(req.body?.successUrl || "").trim();
     const cancelUrlRaw = String(req.body?.cancelUrl || "").trim();
 
@@ -1016,16 +1025,7 @@ app.post("/api/veterans/donation/checkout", async (req, res) => {
             name: "JoyFund Veterans Initiative Donation",
             description: "Donation supporting JoyFund veteran-focused experiences."
           },
-          const donationAmount = Number(req.body.amount);
-
-if (!donationAmount || donationAmount < 1) {
-  return res.status(400).json({
-    success: false,
-    message: "Invalid donation amount."
-  });
-}
-
-unit_amount: Math.round(donationAmount * 100)
+          unit_amount: Math.round(donationAmount * 100)
         },
         quantity: 1
       }],
