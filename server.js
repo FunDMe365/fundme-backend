@@ -3304,7 +3304,7 @@ if (status === "Approved") {
       CreatedAt: createdAt.toISOString(),
       createdAt,
       expiresAt: addDays(createdAt, CAMPAIGN_ACTIVE_DAYS),
-      ImageURL: "/assets/images/veteranphoto.jpg"
+      ImageURL: "/veteranphoto.jpg"
     });
   }
 }
