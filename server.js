@@ -1195,7 +1195,7 @@ if (uploadedFile) {
 });
 
 const checkoutLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
   max: 5,
   message: {
     error: "Too many donation attempts. Please try again later."
