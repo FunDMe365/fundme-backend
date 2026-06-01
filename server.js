@@ -1194,8 +1194,18 @@ if (uploadedFile) {
   }
 });
 
+const checkoutLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  message: {
+    error: "Too many donation attempts. Please try again later."
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // ==================== STRIPE CHECKOUT (CAMPAIGN DONATIONS + MISSION GENERAL) ====================
-app.post("/api/create-checkout-session/:campaignId", async (req, res) => {
+app.post("/api/create-checkout-session/:campaignId", checkoutLimiter, async (req, res) => {
   try {
     const campaignId = String(req.params.campaignId || "").trim();
     const rawAmount = Number(req.body.amount);
