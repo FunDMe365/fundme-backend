@@ -997,10 +997,10 @@ app.post("/api/veterans/donation/checkout", async (req, res) => {
   try {
     const donationAmount = Number(req.body.amount);
 
-    if (!donationAmount || donationAmount < 1) {
+    if (!donationAmount || donationAmount < 5) {
       return res.status(400).json({
         success: false,
-        message: "Invalid donation amount."
+        message: "Minimum donation is $5."
       });
     }
 
@@ -1215,8 +1215,8 @@ app.post("/api/create-checkout-session/:campaignId", checkoutLimiter, async (req
       return res.status(400).json({ error: "Missing campaignId" });
     }
 
-    if (!target || !isFinite(target) || target < 1) {
-      return res.status(400).json({ error: "Invalid donation amount" });
+    if (!target || !isFinite(target) || target < 5) {
+      return res.status(400).json({ error: "Minimum donation is $5" });
     }
 
     // ✅ Default info (MISSION general donation)
