@@ -3852,32 +3852,32 @@ app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
       });
     }
 
-    // Update campaign fields
-    let verificationStatus = campaign.verificationStatus ?? "";
-    if (status === "Approved") verificationStatus = "needs_verification";
-    if (status === "Denied") verificationStatus = "denied";
-    if (status === "Active") verificationStatus = "verified";
+ // Update campaign fields
+let verificationStatus = campaign.verificationStatus ?? "";
 
-    const update = {
-      Status: status,
-      ReviewedAt: new Date(),
-      ReviewedBy: "admin",
-      verificationStatus,
-      verificationUpdatedAt: new Date()
-    };
+if (status === "Approved") verificationStatus = "verified";
+if (status === "Denied") verificationStatus = "denied";
+if (status === "Active") verificationStatus = "verified";
 
-    // Keep lifecycleStatus consistent
-    if (status === "Active") {
-      update.lifecycleStatus = "Active";
-      if (!campaign.PublishedAt) update.PublishedAt = new Date();
-      update.activatedAt = new Date();
-    }
+const update = {
+  Status: status === "Approved" ? "Active" : status,
+  lifecycleStatus: status === "Approved" ? "Active" : status,
+  ReviewedAt: new Date(),
+  ReviewedBy: "admin",
+  verificationStatus,
+  verificationUpdatedAt: new Date()
+};
 
-    const result = await db.collection("Campaigns").findOneAndUpdate(
-      { _id: campaign._id },
-      { $set: update },
-      { returnDocument: "after" }
-    );
+if (status === "Approved" || status === "Active") {
+  update.PublishedAt = new Date();
+  update.activatedAt = new Date();
+}
+
+const result = await db.collection("Campaigns").findOneAndUpdate(
+  { _id: campaign._id },
+  { $set: update },
+  { returnDocument: "after" }
+);
 
     // EMAILS (await + log)
     const title = String(result?.value?.title ?? result?.value?.Title ?? "your campaign");
