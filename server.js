@@ -469,6 +469,156 @@ function normalizeJoyBoostSetting(doc) {
 // ==================== STRIPE ====================
 const stripe = Stripe(STRIPE_SECRET_KEY);
 
+// ==================== COMMUNITY SPONSOR STRIPE HELPERS ====================
+const COMMUNITY_SPONSOR_TIERS = {
+  "Community Supporter": {
+    amount: 10,
+    label: "Community Supporter"
+  },
+  "Featured Sponsor": {
+    amount: 50,
+    label: "Featured Sponsor"
+  },
+  "Mission Sponsor": {
+    amount: 100,
+    label: "Mission Sponsor"
+  }
+};
+
+function getCommunitySponsorTier(tierRaw) {
+  const tier = String(tierRaw || "").trim();
+
+  if (COMMUNITY_SPONSOR_TIERS[tier]) {
+    return COMMUNITY_SPONSOR_TIERS[tier];
+  }
+
+  // fallback support if the form sends old/alternate names
+  const lower = tier.toLowerCase();
+
+  if (lower.includes("supporter") || lower.includes("starter") || lower.includes("standard")) {
+    return COMMUNITY_SPONSOR_TIERS["Community Supporter"];
+  }
+
+  if (lower.includes("featured")) {
+    return COMMUNITY_SPONSOR_TIERS["Featured Sponsor"];
+  }
+
+  if (lower.includes("mission") || lower.includes("premium") || lower.includes("experience")) {
+    return COMMUNITY_SPONSOR_TIERS["Mission Sponsor"];
+  }
+
+  return null;
+}
+
+async function createCommunitySponsorCheckoutSession(sponsor) {
+  const tierInfo = getCommunitySponsorTier(sponsor?.tier);
+
+  if (!tierInfo) {
+    throw new Error("Invalid or unsupported sponsor tier.");
+  }
+
+  const sponsorId = String(sponsor._id || sponsor.id || "").trim();
+  const email = String(sponsor.email || "").trim().toLowerCase();
+  const businessName = String(sponsor.businessName || "Community Sponsor").trim();
+
+  if (!sponsorId) throw new Error("Missing sponsor ID.");
+  if (!email) throw new Error("Missing sponsor email.");
+
+  const successUrl = `${FRONTEND_URL}/thankyou.html?type=community-sponsor&session_id={CHECKOUT_SESSION_ID}`;
+  const cancelUrl = `${FRONTEND_URL}/community-outreach.html#sponsor`;
+
+  const session = await stripe.checkout.sessions.create({
+    mode: "subscription",
+    payment_method_types: ["card"],
+    customer_email: email,
+    line_items: [
+      {
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: `JoyFund ${tierInfo.label}`,
+            description: `Monthly Community Sponsorship for ${businessName}`
+          },
+          unit_amount: Math.round(tierInfo.amount * 100),
+          recurring: {
+            interval: "month"
+          }
+        },
+        quantity: 1
+      }
+    ],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    metadata: {
+      type: "community_sponsor",
+      sponsorId,
+      tier: tierInfo.label,
+      businessName
+    },
+    subscription_data: {
+      metadata: {
+        type: "community_sponsor",
+        sponsorId,
+        tier: tierInfo.label,
+        businessName
+      }
+    }
+  });
+
+  return {
+    url: session.url,
+    sessionId: session.id,
+    tierLabel: tierInfo.label,
+    amount: tierInfo.amount
+  };
+}
+
+async function sendCommunitySponsorApprovalEmail({ sponsor, checkoutUrl, tierLabel, amount }) {
+  const toEmail = String(sponsor.email || "").trim().toLowerCase();
+  const toName = String(sponsor.contactName || "").trim();
+  const businessName = String(sponsor.businessName || "your business").trim();
+
+  await sendMailjet({
+    toEmail,
+    toName,
+    subject: "Your JoyFund sponsorship was approved 🎉",
+    html: `
+      <div style="font-family:Arial,Helvetica,sans-serif;line-height:1.55;color:#111;">
+        <h2>Your JoyFund Community Sponsorship was approved 🎉</h2>
+
+        <p>Hi ${escapeHtml(toName || "there")},</p>
+
+        <p>
+          Good news — <b>${escapeHtml(businessName)}</b> has been approved for JoyFund Community Sponsorship.
+        </p>
+
+        <p>
+          Selected tier: <b>${escapeHtml(tierLabel)}</b><br>
+          Monthly amount: <b>$${Number(amount).toFixed(2)} / month</b>
+        </p>
+
+        <p>
+          To activate your sponsorship, please complete your secure Stripe subscription here:
+        </p>
+
+        <p>
+          <a href="${checkoutUrl}" style="display:inline-block;padding:12px 16px;border-radius:10px;background:#111;color:#fff;text-decoration:none;">
+            Activate Sponsorship
+          </a>
+        </p>
+
+        <p>
+          Once your subscription is active, JoyFund will review the final listing details and prepare your placement.
+        </p>
+
+        <p>Thank you for supporting JoyFund’s mission 💙</p>
+
+        <p>— JoyFund Team</p>
+      </div>
+    `
+  });
+}
+
 // ==================== STRIPE WEBHOOK (REQUIRED FOR RELIABLE DONATION SAVES) ====================
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
