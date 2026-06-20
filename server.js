@@ -3360,6 +3360,7 @@ if (status === "Approved") {
     subscriptionStatus: "pending_payment"
   } : {})
 }
+      }
     );
 
     if (!result.matchedCount) {
