@@ -3142,6 +3142,67 @@ app.get("/api/admin/community-sponsors/:id", async (req, res) => {
   }
 });
 
+// Update sponsor inquiry status
+app.patch("/api/admin/community-sponsors/:id/status", async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const status = String(req.body?.status || "").trim();
+    const adminNote = String(req.body?.adminNote || "").trim();
+
+    const allowedStatuses = [
+      "Pending Review",
+      "Approved",
+      "Denied",
+      "Payment Sent",
+      "Active",
+      "Canceled"
+    ];
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid sponsor ID."
+      });
+    }
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid sponsor status."
+      });
+    }
+
+    const result = await db.collection("Community_Sponsor_Inquiries").updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          status,
+          adminNote,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    if (!result.matchedCount) {
+      return res.status(404).json({
+        success: false,
+        message: "Sponsor not found."
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Sponsor status updated."
+    });
+  } catch (err) {
+    console.error("PATCH sponsor status error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Could not update sponsor status."
+    });
+  }
+});
+
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
