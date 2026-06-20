@@ -3566,7 +3566,11 @@ function normalizeCampaign(doc) {
     // Media / other
     imageUrl: doc.ImageURL ?? doc.imageUrl ?? doc.ImageUrl ?? null,
     category: doc.Category ?? doc.category ?? null,
-    publicUrl: doc.publicUrl ?? doc.PublicUrl ?? doc.link ?? doc.Link ?? null
+    publicUrl: doc.publicUrl ?? doc.PublicUrl ?? doc.link ?? doc.Link ?? null,
+	adminEditHistory: Array.isArray(doc.adminEditHistory) ? doc.adminEditHistory : [],
+	adminEditedAt: doc.adminEditedAt ?? null,
+	adminEditedBy: doc.adminEditedBy ?? null,
+	adminEditNotice: !!doc.adminEditNotice
   };
 }
 // Normalize ID verification fields
