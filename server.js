@@ -3387,68 +3387,6 @@ app.patch("/api/admin/community-sponsors/:id/status", async (req, res) => {
   }
 });
 
-    const result = await db.collection("Community_Sponsor_Inquiries").updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-  status,
-  adminNote,
-  updatedAt: new Date(),
-  ...(checkoutInfo ? {
-    stripeCheckoutUrl: checkoutInfo.url,
-    stripeCheckoutSessionId: checkoutInfo.sessionId,
-    approvedAt: new Date(),
-    approvalEmailSentAt: new Date(),
-    subscriptionStatus: "pending_payment"
-  } : {})
-}
-      }
-    );
-
-    if (!result.matchedCount) {
-      return res.status(404).json({
-        success: false,
-        message: "Sponsor not found."
-      });
-    }
-
-    return res.json({
-      success: true,
-      message: "Sponsor status updated."
-    });
-  } catch (err) {
-    console.error("PATCH sponsor status error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Could not update sponsor status."
-    });
-  }
-});
-
-const adminLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  message: { success:false, message:"Too many attempts." }
-});
-
-// 🔒 Admin env sanity check (protected by ADMIN_KEY header)
-app.get("/api/admin/_envcheck", (req, res) => {
-  const key = req.headers["x-admin-key"];
-  if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
-    return res.status(404).send("Not found");
-  }
-
-  const u = String(process.env.ADMIN_USERNAME ?? "");
-  const p = String(process.env.ADMIN_PASSWORD ?? "");
-
-  return res.json({
-    ADMIN_USERNAME_set: !!u.trim(),
-    ADMIN_PASSWORD_set: !!p.trim(),
-    ADMIN_USERNAME_len: u.trim().length,
-    ADMIN_PASSWORD_len: p.trim().length
-  });
-});
-
 
 app.post("/api/admin-login", adminLimiter, (req, res) => {
   const username = String(req.body?.username ?? req.body?.email ?? req.body?.user ?? "").trim();
