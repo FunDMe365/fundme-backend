@@ -3799,6 +3799,150 @@ app.get("/api/admin/campaigns/:id", requireAdmin, async (req, res) => {
   }
 });
 
+// Edit campaign details as admin
+app.patch("/api/admin/campaigns/:id", requireAdmin, upload.single("image"), async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+    const reason = String(req.body?.adminEditReason || "").trim();
+
+    if (!reason) {
+      return res.status(400).json({
+        success: false,
+        message: "Admin edit reason is required."
+      });
+    }
+
+    const campaign = await findCampaignByAnyId(id);
+
+    if (!campaign) {
+      return res.status(404).json({
+        success: false,
+        message: "Campaign not found"
+      });
+    }
+
+    const editableFields = {
+      title: "title",
+      Title: "Title",
+      description: "Description",
+      Description: "Description",
+      category: "Category",
+      Category: "Category",
+      city: "City",
+      City: "City",
+      state: "State",
+      State: "State",
+      goal: "Goal",
+      Goal: "Goal",
+      estimatedCost: "estimatedCost",
+      location: "location",
+	  imageUrl: "ImageURL",
+	  ImageURL: "ImageURL",
+	  photo: "ImageURL",
+	  Photo: "ImageURL"
+    };
+
+    const updateFields = {
+      adminEditedAt: new Date(),
+      adminEditedBy: "admin",
+      adminEditNotice: true
+    };
+
+    const changes = [];
+
+    for (const [bodyKey, dbKey] of Object.entries(editableFields)) {
+      if (Object.prototype.hasOwnProperty.call(req.body, bodyKey)) {
+        const newValue = String(req.body[bodyKey] ?? "").trim();
+        const oldValue = campaign[dbKey] ?? "";
+
+        if (String(oldValue ?? "") !== newValue) {
+          updateFields[dbKey] = newValue;
+          changes.push({
+            field: dbKey,
+            oldValue,
+            newValue
+          });
+        }
+      }
+    }
+
+    if (req.file) {
+      const cloudRes = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: "joyfund/campaigns",
+            use_filename: true,
+            unique_filename: true
+          },
+          (err, result) => {
+            if (err) return reject(err);
+            resolve(result);
+          }
+        );
+
+        stream.end(req.file.buffer);
+      });
+
+      const oldValue = campaign.ImageURL || campaign.imageUrl || "";
+      const newValue = cloudRes.secure_url || "";
+
+      updateFields.ImageURL = newValue;
+      updateFields.imagePublicId = cloudRes.public_id || "";
+
+      changes.push({
+        field: "ImageURL",
+        oldValue,
+        newValue
+      });
+    }
+
+    if (!changes.length) {
+      return res.json({
+        success: true,
+        message: "No changes detected.",
+        campaign: normalizeCampaign(campaign)
+      });
+    }
+
+    const result = await db.collection("Campaigns").findOneAndUpdate(
+      { _id: campaign._id },
+      {
+        $set: updateFields,
+        $push: {
+          adminEditHistory: {
+            editedAt: new Date(),
+            editedBy: "admin",
+            reason,
+            changes
+          }
+        }
+      },
+      { returnDocument: "after" }
+    );
+
+    await db.collection("Admin_Edit_Logs").insertOne({
+      targetType: "Campaign",
+      targetCollection: "Campaigns",
+      targetId: String(campaign._id),
+      editedAt: new Date(),
+      editedBy: "admin",
+      reason,
+      changes
+    });
+
+    return res.json({
+      success: true,
+      campaign: normalizeCampaign(result.value)
+    });
+  } catch (err) {
+    console.error("PATCH /api/admin/campaigns/:id error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to edit campaign"
+    });
+  }
+});
+
 // Update campaign status (Approved/Denied/Closed/etc.)
 app.patch("/api/admin/campaigns/:id/status", requireAdmin, async (req, res) => {
   try {
