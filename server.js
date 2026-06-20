@@ -3321,29 +3321,71 @@ app.patch("/api/admin/community-sponsors/:id/status", async (req, res) => {
         message: "Invalid sponsor status."
       });
     }
-	
-	let checkoutInfo = null;
 
-if (status === "Approved") {
-  const sponsor = await db
-    .collection("Community_Sponsor_Inquiries")
-    .findOne({ _id: new ObjectId(id) });
+    let checkoutInfo = null;
 
-  if (!sponsor) {
-    return res.status(404).json({
+    if (status === "Approved") {
+      const sponsor = await db
+        .collection("Community_Sponsor_Inquiries")
+        .findOne({ _id: new ObjectId(id) });
+
+      if (!sponsor) {
+        return res.status(404).json({
+          success: false,
+          message: "Sponsor not found."
+        });
+      }
+
+      checkoutInfo = await createCommunitySponsorCheckoutSession(sponsor);
+
+      await sendCommunitySponsorApprovalEmail({
+        sponsor,
+        checkoutUrl: checkoutInfo.url,
+        tierLabel: checkoutInfo.tierLabel,
+        amount: checkoutInfo.amount
+      });
+    }
+
+    const result = await db.collection("Community_Sponsor_Inquiries").updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          status,
+          adminNote,
+          updatedAt: new Date(),
+          ...(checkoutInfo ? {
+            stripeCheckoutUrl: checkoutInfo.url,
+            stripeCheckoutSessionId: checkoutInfo.sessionId,
+            approvedAt: new Date(),
+            approvalEmailSentAt: new Date(),
+            subscriptionStatus: "pending_payment"
+          } : {})
+        }
+      }
+    );
+
+    if (!result.matchedCount) {
+      return res.status(404).json({
+        success: false,
+        message: "Sponsor not found."
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: checkoutInfo
+        ? "Sponsor approved and Stripe subscription link emailed."
+        : "Sponsor status updated.",
+      checkoutUrl: checkoutInfo?.url || null
+    });
+  } catch (err) {
+    console.error("PATCH sponsor status error:", err);
+    return res.status(500).json({
       success: false,
-      message: "Sponsor not found."
+      message: "Could not update sponsor status."
     });
   }
-
-  checkoutInfo = await createCommunitySponsorCheckoutSession(sponsor);
-
-  await sendCommunitySponsorApprovalEmail({
-    sponsor,
-    checkoutUrl: checkoutInfo.url,
-    tierLabel: checkoutInfo.tierLabel,
-    amount: checkoutInfo.amount
-  });
+});
 
     const result = await db.collection("Community_Sponsor_Inquiries").updateOne(
       { _id: new ObjectId(id) },
