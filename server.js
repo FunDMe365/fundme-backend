@@ -300,6 +300,14 @@ const resetLimiter = rateLimit({
   message: { success: false, message: "Too many attempts. Try again later." }
 });
 
+const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many admin login attempts. Try again later." }
+});
+
 async function getIdentityStatus(email) {
   if (!email) return "Not Submitted";
 
