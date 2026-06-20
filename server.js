@@ -1479,6 +1479,116 @@ async function sendSubmissionEmails({
 
   await Promise.allSettled(tasks);
 }
+app.post("/api/community-sponsor-inquiry", async (req, res) => {
+  try {
+    const {
+      businessName,
+      contactName,
+      email,
+      phone,
+      website,
+      city,
+      state,
+      tier,
+      message
+    } = req.body;
+
+    if (!businessName || !contactName || !email || !tier) {
+      return res.status(400).json({
+        success: false,
+        message: "Please complete all required fields."
+      });
+    }
+
+    const result = await db.collection("Community_Sponsor_Inquiries").insertOne({
+      businessName,
+      contactName,
+      email: String(email).trim().toLowerCase(),
+      phone: phone || "",
+      website: website || "",
+      city: city || "",
+      state: state || "",
+      tier,
+      message: message || "",
+      status: "Pending Review",
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    await sendSubmissionEmails({
+      type: "Community Sponsor Inquiry",
+      userEmail: email,
+      userName: contactName,
+      adminSubject: "New Community Sponsor Inquiry",
+      userSubject: "We received your JoyFund sponsorship inquiry",
+      adminHtml: `
+        <h2>New Community Sponsor Inquiry</h2>
+        <p><b>Business Name:</b> ${businessName}</p>
+        <p><b>Contact Name:</b> ${contactName}</p>
+        <p><b>Email:</b> ${email}</p>
+        <p><b>Phone:</b> ${phone || "—"}</p>
+        <p><b>Website:</b> ${website || "—"}</p>
+        <p><b>Location:</b> ${city || "—"}, ${state || "—"}</p>
+        <p><b>Requested Tier:</b> ${tier}</p>
+        <p><b>Message:</b></p>
+        <p>${message || "—"}</p>
+        <p><b>Mongo ID:</b> ${result.insertedId}</p>
+      `,
+      userHtml: `
+        <h2>We received your sponsorship inquiry 💙</h2>
+        <p>Hi ${contactName},</p>
+        <p>Thank you for your interest in becoming a JoyFund Community Sponsor.</p>
+        <p>We received your submission and will review it to make sure it aligns with JoyFund’s mission and website standards.</p>
+        <p>If approved, we will follow up with next steps and a direct Stripe payment link for the selected sponsorship level.</p>
+        <p>Please note that submitting this form does not guarantee approval or placement on our website.</p>
+        <p>— JoyFund Team</p>
+      `
+    });
+
+    return res.json({
+      success: true,
+      message: "Your sponsorship inquiry was submitted successfully."
+    });
+  } catch (err) {
+    console.error("Community sponsor inquiry error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong submitting your sponsorship inquiry."
+    });
+  }
+});
+
+  // Admin copy
+  tasks.push(
+    sendMailjet({
+      toEmail: ADMIN_EMAIL,
+      subject: adminSubject || `New ${type} submission`,
+      html: (adminHtml || "") + EMAIL_FOOTER,
+      headers: {
+        "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+      }
+    })
+  );
+
+  // User copy
+  if (userEmail) {
+    tasks.push(
+      sendMailjet({
+        toEmail: userEmail,
+        toName: userName || "",
+        subject: userSubject || `We received your ${type}`,
+        html: (userHtml || "") + EMAIL_FOOTER,
+        headers: {
+          "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+        }
+      })
+    );
+  }
+
+  await Promise.allSettled(tasks);
+}
 
 // ==================== MONTHLY STATUS-BASED EMAIL ENGINE ====================
 // Segments users by campaign activity and sends tailored monthly emails.
