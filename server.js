@@ -3344,7 +3344,6 @@ if (status === "Approved") {
     tierLabel: checkoutInfo.tierLabel,
     amount: checkoutInfo.amount
   });
-}
 
     const result = await db.collection("Community_Sponsor_Inquiries").updateOne(
       { _id: new ObjectId(id) },
