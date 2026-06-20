@@ -1584,11 +1584,10 @@ app.post("/api/community-sponsor-inquiry", async (req, res) => {
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
         }
       })
-    );
-  }
-
-  await Promise.allSettled(tasks);
+	  await Promise.allSettled(tasks);
 }
+    );
+ 
 
 // ==================== MONTHLY STATUS-BASED EMAIL ENGINE ====================
 // Segments users by campaign activity and sends tailored monthly emails.
