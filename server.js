@@ -3321,16 +3321,46 @@ app.patch("/api/admin/community-sponsors/:id/status", async (req, res) => {
         message: "Invalid sponsor status."
       });
     }
+	
+	let checkoutInfo = null;
+
+if (status === "Approved") {
+  const sponsor = await db
+    .collection("Community_Sponsor_Inquiries")
+    .findOne({ _id: new ObjectId(id) });
+
+  if (!sponsor) {
+    return res.status(404).json({
+      success: false,
+      message: "Sponsor not found."
+    });
+  }
+
+  checkoutInfo = await createCommunitySponsorCheckoutSession(sponsor);
+
+  await sendCommunitySponsorApprovalEmail({
+    sponsor,
+    checkoutUrl: checkoutInfo.url,
+    tierLabel: checkoutInfo.tierLabel,
+    amount: checkoutInfo.amount
+  });
+}
 
     const result = await db.collection("Community_Sponsor_Inquiries").updateOne(
       { _id: new ObjectId(id) },
       {
         $set: {
-          status,
-          adminNote,
-          updatedAt: new Date()
-        }
-      }
+  status,
+  adminNote,
+  updatedAt: new Date(),
+  ...(checkoutInfo ? {
+    stripeCheckoutUrl: checkoutInfo.url,
+    stripeCheckoutSessionId: checkoutInfo.sessionId,
+    approvedAt: new Date(),
+    approvalEmailSentAt: new Date(),
+    subscriptionStatus: "pending_payment"
+  } : {})
+}
     );
 
     if (!result.matchedCount) {
