@@ -1557,6 +1557,8 @@ app.post("/api/community-sponsor-inquiry", async (req, res) => {
     });
   }
 });
+
+
  
 
 // ==================== MONTHLY STATUS-BASED EMAIL ENGINE ====================
@@ -3080,6 +3082,65 @@ app.post("/api/internal/run-monthly-email-blast", requireCronKey, async (req, re
 // Protect ALL /api/admin/* routes by default
 app.use("/api/admin", requireAdmin);
 
+// ==================== ADMIN: COMMUNITY SPONSOR INQUIRIES ====================
+
+// Get all sponsor inquiries
+app.get("/api/admin/community-sponsors", async (req, res) => {
+  try {
+    const sponsors = await db
+      .collection("Community_Sponsor_Inquiries")
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json({
+      success: true,
+      sponsors
+    });
+  } catch (err) {
+    console.error("GET /api/admin/community-sponsors error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load sponsor inquiries."
+    });
+  }
+});
+
+// Get one sponsor inquiry
+app.get("/api/admin/community-sponsors/:id", async (req, res) => {
+  try {
+    const id = String(req.params.id || "").trim();
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid sponsor ID."
+      });
+    }
+
+    const sponsor = await db
+      .collection("Community_Sponsor_Inquiries")
+      .findOne({ _id: new ObjectId(id) });
+
+    if (!sponsor) {
+      return res.status(404).json({
+        success: false,
+        message: "Sponsor not found."
+      });
+    }
+
+    res.json({
+      success: true,
+      sponsor
+    });
+  } catch (err) {
+    console.error("GET sponsor detail error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error."
+    });
+  }
+});
 
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
