@@ -1557,23 +1557,6 @@ app.post("/api/community-sponsor-inquiry", async (req, res) => {
     });
   }
 });
-
-  // User copy
-  if (userEmail) {
-    tasks.push(
-      sendMailjet({
-        toEmail: userEmail,
-        toName: userName || "",
-        subject: userSubject || `We received your ${type}`,
-        html: (userHtml || "") + EMAIL_FOOTER,
-        headers: {
-          "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
-          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
-        }
-      })
-	  await Promise.allSettled(tasks);
-}
-    );
  
 
 // ==================== MONTHLY STATUS-BASED EMAIL ENGINE ====================
