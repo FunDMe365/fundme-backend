@@ -1558,19 +1558,6 @@ app.post("/api/community-sponsor-inquiry", async (req, res) => {
   }
 });
 
-  // Admin copy
-  tasks.push(
-    sendMailjet({
-      toEmail: ADMIN_EMAIL,
-      subject: adminSubject || `New ${type} submission`,
-      html: (adminHtml || "") + EMAIL_FOOTER,
-      headers: {
-        "List-Unsubscribe": "<mailto:admin@fundasmile.net?subject=unsubscribe>",
-        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
-      }
-    })
-  );
-
   // User copy
   if (userEmail) {
     tasks.push(
