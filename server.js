@@ -3607,13 +3607,6 @@ app.post("/api/joypoints/adjust", requireAdmin, async (req, res) => {
   }
 });
 
-    res.json({ success: true, balance: user.joyPoints.balance });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to adjust points" });
-  }
-});
-
 //======================ADMIN: GET EXPIRED CAMPAIGNS===============
 app.get("/api/admin/expired-campaigns", requireAdmin, async (req, res) => {
   try {
