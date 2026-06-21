@@ -2894,6 +2894,15 @@ app.post('/api/create-checkout-session', async (req, res) => {
 // ==================== JOYBOOST: APPLY ====================
 app.post("/api/joyboost/apply", async (req, res) => {
   try {
+	  
+	      if (
+      await blockIfSettingDisabled(
+        "enableJoyBoost",
+        res,
+        "JoyBoost applications are temporarily paused."
+      )
+    ) return;
+	
     const { name, email, campaignId, joy, notes } = req.body || {};
 
     if (!name || !email || !campaignId || !joy) {
