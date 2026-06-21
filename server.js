@@ -10,6 +10,76 @@ function addDays(date, days) {
   return d;
 }
 
+// ==================== GLOBAL ADMIN SETTINGS HELPERS ====================
+const ADMIN_SETTINGS_COLLECTION = "Admin_Settings";
+const ADMIN_SETTINGS_KEY = "global";
+
+const DEFAULT_ADMIN_SETTINGS = {
+  enableRequests: true,
+  enableDonations: true,
+  enableJoyBoost: true,
+  enableVeterans: true,
+  enableVolunteers: true,
+  enableSponsors: true,
+  publicRequests: true,
+  autoExpire: true,
+  minimumDonation: 5,
+  campaignActiveDays: CAMPAIGN_ACTIVE_DAYS,
+  bannerEnabled: false,
+  bannerText: ""
+};
+
+function normalizeAdminSettings(raw = {}) {
+  const merged = { ...DEFAULT_ADMIN_SETTINGS, ...(raw || {}) };
+
+  return {
+    enableRequests: merged.enableRequests !== false,
+    enableDonations: merged.enableDonations !== false,
+    enableJoyBoost: merged.enableJoyBoost !== false,
+    enableVeterans: merged.enableVeterans !== false,
+    enableVolunteers: merged.enableVolunteers !== false,
+    enableSponsors: merged.enableSponsors !== false,
+    publicRequests: merged.publicRequests !== false,
+    autoExpire: merged.autoExpire !== false,
+    minimumDonation: Math.max(1, Number(merged.minimumDonation || 5)),
+    campaignActiveDays: Math.max(1, Number(merged.campaignActiveDays || CAMPAIGN_ACTIVE_DAYS)),
+    bannerEnabled: merged.bannerEnabled === true,
+    bannerText: String(merged.bannerText || "").trim()
+  };
+}
+
+async function getAdminSettings() {
+  try {
+    const doc = await db.collection(ADMIN_SETTINGS_COLLECTION).findOne({ key: ADMIN_SETTINGS_KEY });
+    return normalizeAdminSettings(doc?.settings || doc || {});
+  } catch (err) {
+    console.error("getAdminSettings error:", err);
+    return { ...DEFAULT_ADMIN_SETTINGS };
+  }
+}
+
+async function getSettingValue(key) {
+  const settings = await getAdminSettings();
+  return settings[key];
+}
+
+async function getCampaignActiveDays() {
+  return Number(await getSettingValue("campaignActiveDays")) || CAMPAIGN_ACTIVE_DAYS;
+}
+
+async function getMinimumDonationAmount() {
+  return Number(await getSettingValue("minimumDonation")) || 5;
+}
+
+async function blockIfSettingDisabled(key, res, message) {
+  const enabled = await getSettingValue(key);
+  if (enabled === false) {
+    res.status(403).json({ success: false, message });
+    return true;
+  }
+  return false;
+}
+
 
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -95,6 +165,11 @@ db.once("open", () => {
 // Runs daily at 2:15 AM server time
 cron.schedule("15 2 * * *", async () => {
   try {
+	      const autoExpireEnabled = await getSettingValue("autoExpire");
+    if (autoExpireEnabled === false) {
+      console.log("⏸ Campaign auto-expire skipped by admin setting.");
+      return;
+    }
     const now = new Date();
 
     const result = await db.collection("Campaigns").updateMany(
@@ -1154,11 +1229,19 @@ const upload = multer({
 app.post("/api/veterans/donation/checkout", async (req, res) => {
   try {
     const donationAmount = Number(req.body.amount);
+	
+	    if (await blockIfSettingDisabled(
+      "enableDonations",
+      res,
+      "Donations are temporarily paused. Please check back soon."
+    )) return;
 
-    if (!donationAmount || donationAmount < 5) {
+    const minimumDonation = await getMinimumDonationAmount();
+
+       if (!donationAmount || donationAmount < minimumDonation) {
       return res.status(400).json({
         success: false,
-        message: "Minimum donation is $5."
+        message: `Minimum donation is $${minimumDonation}.`
       });
     }
 
@@ -1232,6 +1315,15 @@ app.post("/api/veterans/request", (req, res, next) => {
   });
 }, async (req, res) => {
   try {
+	  
+	      if (
+      await blockIfSettingDisabled(
+        "enableVeterans",
+        res,
+        "The Veterans Initiative is temporarily unavailable."
+      )
+    ) return;
+	
     const veteranName = String(req.body?.veteranName || "").trim();
     const email = String(req.body?.email || "").trim().toLowerCase();
     const phone = String(req.body?.phone || "").trim();
@@ -1368,13 +1460,23 @@ app.post("/api/create-checkout-session/:campaignId", checkoutLimiter, async (req
     const campaignId = String(req.params.campaignId || "").trim();
     const rawAmount = Number(req.body.amount);
     const target = Math.round(rawAmount * 100) / 100; // force 2 decimals
+	
+	    if (await blockIfSettingDisabled(
+      "enableDonations",
+      res,
+      "Donations are temporarily paused. Please check back soon."
+    )) return;
+
+    const minimumDonation = await getMinimumDonationAmount();
 
     if (!campaignId) {
       return res.status(400).json({ error: "Missing campaignId" });
     }
 
-    if (!target || !isFinite(target) || target < 5) {
-      return res.status(400).json({ error: "Minimum donation is $5" });
+        if (!target || !isFinite(target) || target < minimumDonation) {
+      return res.status(400).json({
+        error: `Minimum donation is $${minimumDonation}`
+      });
     }
 
     // ✅ Default info (MISSION general donation)
@@ -1639,6 +1741,15 @@ async function sendSubmissionEmails({
 }
 app.post("/api/community-sponsor-inquiry", async (req, res) => {
   try {
+	  
+	      if (
+      await blockIfSettingDisabled(
+        "enableSponsors",
+        res,
+        "Community sponsorship applications are temporarily paused."
+      )
+    ) return;
+	
     const {
       businessName,
       contactName,
@@ -4888,6 +4999,17 @@ if (status === "Approved") {
   }
 });
 
+// ==================== PUBLIC SETTINGS ====================
+app.get("/api/settings", async (req, res) => {
+  try {
+    const settings = await getAdminSettings();
+    return res.json({ success: true, settings });
+  } catch (err) {
+    console.error("GET /api/settings error:", err);
+    return res.status(500).json({ success: false, message: "Could not load settings" });
+  }
+});
+
 // ==================== PUBLIC: ACTIVE CAMPAIGNS (SEARCH/LIST) ====================
 app.get("/api/campaigns", async (req, res) => {
   try {
@@ -4925,6 +5047,14 @@ app.get("/api/campaigns", async (req, res) => {
 // ==================== CAMPAIGNS ====================
 app.post("/api/create-campaign", requireIdentityIfDenied, upload.single("image"), async (req, res) => {
   try {
+	      if (
+      await blockIfSettingDisabled(
+        "enableRequests",
+        res,
+        "New JoyFund requests are temporarily paused."
+      )
+    ) return;
+	
     const { title, description, category, city, state, agreeRules } = req.body;
 
 const sessionEmail = req.session?.user?.email;
@@ -4961,7 +5091,8 @@ if (!title || !email || !description || !category || !req.file) {
 };
 	
 	const createdAt = new Date();
-const expiresAt = addDays(createdAt, CAMPAIGN_ACTIVE_DAYS);
+const campaignActiveDays = await getCampaignActiveDays();
+const expiresAt = addDays(createdAt, campaignActiveDays);
 
 // attach expiration fields to the campaign document
 doc.createdAt = createdAt;
@@ -5027,6 +5158,14 @@ await sendSubmissionEmails({
 
 app.get("/api/public-campaigns", async (req, res) => {
   try {
+	      if (
+      await blockIfSettingDisabled(
+        "publicRequests",
+        res,
+        "Public campaigns are temporarily hidden."
+      )
+    ) return;
+	
     const rows = await db.collection("Campaigns").find({
       Status: "Active",
       verificationStatus: { $in: ["verified", "Verified"] },
@@ -5303,6 +5442,15 @@ app.get("/api/donations", async (req, res) => {
 
 app.post("/api/volunteer", async (req, res) => {
   try {
+	  
+	  if (
+      await blockIfSettingDisabled(
+        "enableVolunteers",
+        res,
+        "Volunteer applications are temporarily paused."
+      )
+    ) return;
+
     const { name, email, role, reason } = req.body;
 
     if (!name || !email || !reason) {
@@ -5684,35 +5832,41 @@ app.listen(PORT, () => console.log(`JoyFund backend running on port ${PORT}`));
 
 // ==================== ADMIN SETTINGS (READ/WRITE) ====================
 app.get("/api/admin/settings", requireAdmin, async (req, res) => {
-  const settings = await db.collection("Admin_Settings").findOne({ key: "global" });
-  res.json({ success: true, settings });
+  try {
+    const settings = await getAdminSettings();
+    return res.json({ success: true, settings });
+  } catch (err) {
+    console.error("GET /api/admin/settings error:", err);
+    return res.status(500).json({ success: false, message: "Could not load settings" });
+  }
 });
 
 app.put("/api/admin/settings", requireAdmin, async (req, res) => {
-  const allowed = [
-    "demoMode",
-    "visitorLogging",
-    "profanityFilter",
-    "requireCampaignApproval",
-    "autoDonationEmail",
-    "allowUserRegistration",
-    "acceptVolunteerApplications",
-    "publicCampaignVisibility",
-    "emailNotifications"
-  ];
+  try {
+    const incoming = req.body?.settings && typeof req.body.settings === "object"
+      ? req.body.settings
+      : req.body;
 
-  const update = {};
-  for (const k of allowed) {
-    if (typeof req.body[k] === "boolean") update[k] = req.body[k];
+    const settings = normalizeAdminSettings(incoming);
+    const now = new Date();
+
+    await db.collection(ADMIN_SETTINGS_COLLECTION).updateOne(
+      { key: ADMIN_SETTINGS_KEY },
+      {
+        $set: {
+          key: ADMIN_SETTINGS_KEY,
+          settings,
+          ...settings,
+          updatedAt: now
+        },
+        $setOnInsert: { createdAt: now }
+      },
+      { upsert: true }
+    );
+
+    return res.json({ success: true, settings });
+  } catch (err) {
+    console.error("PUT /api/admin/settings error:", err);
+    return res.status(500).json({ success: false, message: "Could not save settings" });
   }
-
-  update.updatedAt = new Date();
-
-  await db.collection("Admin_Settings").updateOne(
-    { key: "global" },
-    { $set: update },
-    { upsert: true }
-  );
-
-  res.json({ success: true, settings: update });
 });
