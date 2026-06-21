@@ -3482,79 +3482,130 @@ app.post("/api/admin/normalize-campaign-emails", async (req, res) => {
 });
 
 //=====================ADMIN: JOYPOINTS============================
-// 1️⃣ Summary - total points awarded
-app.get("/api/joypoints/summary", async (req, res) => {
+
+// 1) Summary - total points awarded
+app.get("/api/joypoints/summary", requireAdmin, async (req, res) => {
   try {
-    const users = await Users.find({}, "joyPoints.balance");
-    const totalPoints = users.reduce((sum, user) => sum + (user.joyPoints.balance || 0), 0);
-    res.json({ totalPoints });
+    const users = await db.collection("Users")
+      .find({}, { projection: { joyPoints: 1 } })
+      .toArray();
+
+    const totalPoints = users.reduce((sum, user) => {
+      return sum + Number(user?.joyPoints?.balance || 0);
+    }, 0);
+
+    return res.json({ totalPoints });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch JoyPoints summary" });
+    console.error("GET /api/joypoints/summary error:", err);
+    return res.status(500).json({ error: "Failed to fetch JoyPoints summary" });
   }
 });
 
-// 2️⃣ Get all users' JoyPoints
-app.get("/api/joypoints", async (req, res) => {
+// 2) Get all users' JoyPoints
+app.get("/api/joypoints", requireAdmin, async (req, res) => {
   try {
-    const users = await Users.find({}, "name email joyPoints");
+    const users = await db.collection("Users")
+      .find({}, { projection: { Name: 1, name: 1, Email: 1, email: 1, joyPoints: 1 } })
+      .toArray();
+
     const formatted = users.map(u => ({
-      _id: u._id,
-      name: u.name,
-      email: u.email,
-      balance: u.joyPoints.balance || 0,
-      lifetimeEarned: u.joyPoints.lifetimeEarned || 0,
-      lastUpdated: u.joyPoints.lastUpdated || null
+      _id: String(u._id),
+      name: u.Name || u.name || "—",
+      email: u.Email || u.email || "—",
+      balance: Number(u?.joyPoints?.balance || 0),
+      lifetimeEarned: Number(u?.joyPoints?.lifetimeEarned || 0),
+      lastUpdated: u?.joyPoints?.lastUpdated || null
     }));
-    res.json(formatted);
+
+    return res.json(formatted);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch JoyPoints" });
+    console.error("GET /api/joypoints error:", err);
+    return res.status(500).json({ error: "Failed to fetch JoyPoints" });
   }
 });
 
-// 3️⃣ Get JoyPoints activity log
-app.get("/api/joypoints/activity", async (req, res) => {
+// 3) Get JoyPoints activity log
+app.get("/api/joypoints/activity", requireAdmin, async (req, res) => {
   try {
-    const logs = await JoyPointsActivity.find({}).sort({ date: -1 }); // newest first
-    const formatted = logs.map(log => ({
-      userName: log.userName,
-      change: log.change,
-      reason: log.reason,
-      date: log.date
-    }));
-    res.json(formatted);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to fetch JoyPoints activity" });
-  }
-});
+    const users = await db.collection("Users")
+      .find(
+        { joyPointsHistory: { $exists: true, $ne: [] } },
+        { projection: { Name: 1, name: 1, Email: 1, email: 1, joyPointsHistory: 1 } }
+      )
+      .toArray();
 
-// 4️⃣ Adjust points manually (admin)
-app.post("/api/joypoints/adjust", async (req, res) => {
-  const { userId, change } = req.body;
-  if (!userId || typeof change !== "number") {
-    return res.status(400).json({ error: "Missing or invalid parameters" });
-  }
+    const logs = [];
 
-  try {
-    const user = await Users.findById(userId);
-    if (!user) return res.status(404).json({ error: "User not found" });
+    users.forEach(user => {
+      const history = Array.isArray(user.joyPointsHistory) ? user.joyPointsHistory : [];
 
-    // Update points
-    user.joyPoints.balance = (user.joyPoints.balance || 0) + change;
-    user.joyPoints.lifetimeEarned = (user.joyPoints.lifetimeEarned || 0) + (change > 0 ? change : 0);
-    user.joyPoints.lastUpdated = new Date();
-    await user.save();
-
-    // Log activity
-    await JoyPointsActivity.create({
-      userId,
-      userName: user.name,
-      change,
-      reason: "Admin Adjust",
-      date: new Date()
+      history.forEach(item => {
+        logs.push({
+          userName: user.Name || user.name || "—",
+          email: user.Email || user.email || "—",
+          change: item.amount || 0,
+          reason: item.reason || "JoyPoints",
+          date: item.createdAt || item.date || null
+        });
+      });
     });
+
+    logs.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+    return res.json(logs);
+  } catch (err) {
+    console.error("GET /api/joypoints/activity error:", err);
+    return res.status(500).json({ error: "Failed to fetch JoyPoints activity" });
+  }
+});
+
+// 4) Adjust points manually
+app.post("/api/joypoints/adjust", requireAdmin, async (req, res) => {
+  try {
+    const { userId, change, reason } = req.body;
+
+    const amount = Number(change);
+    if (!userId || !Number.isFinite(amount)) {
+      return res.status(400).json({ error: "Missing or invalid parameters" });
+    }
+
+    if (!ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: "Invalid userId" });
+    }
+
+    const now = new Date();
+
+    const result = await db.collection("Users").updateOne(
+      { _id: new ObjectId(userId) },
+      {
+        $inc: {
+          "joyPoints.balance": amount,
+          "joyPoints.lifetimeEarned": amount > 0 ? amount : 0
+        },
+        $set: {
+          "joyPoints.lastUpdated": now
+        },
+        $push: {
+          joyPointsHistory: {
+            type: amount >= 0 ? "earn" : "adjustment",
+            amount,
+            reason: reason || "Manual admin adjustment",
+            createdAt: now
+          }
+        }
+      }
+    );
+
+    if (!result.matchedCount) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("POST /api/joypoints/adjust error:", err);
+    return res.status(500).json({ error: "Failed to adjust JoyPoints" });
+  }
+});
 
     res.json({ success: true, balance: user.joyPoints.balance });
   } catch (err) {
