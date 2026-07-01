@@ -4597,6 +4597,96 @@ const result = await db.collection("Campaigns").findOneAndUpdate(
   }
 });
 
+// Complete a campaign / experience
+app.patch("/api/admin/campaigns/:id/complete", requireAdmin, async (req, res) => {
+  try {
+    console.log("✅ ADMIN complete campaign PATCH:", req.params.id, req.body);
+
+    const id = String(req.params.id || "").trim();
+    const adminNote = String(req.body?.adminNote || "Completed Experience").trim();
+
+    const campaign = await findCampaignByAnyId(id);
+
+    if (!campaign) {
+      return res.status(404).json({
+        success: false,
+        message: "Campaign not found"
+      });
+    }
+
+    const now = new Date();
+
+    const result = await db.collection("Campaigns").findOneAndUpdate(
+      { _id: campaign._id },
+      {
+        $set: {
+          Status: "Completed",
+          status: "Completed",
+          lifecycleStatus: "Completed",
+          completedAt: now,
+          completedBy: "admin",
+          completedAdminNote: adminNote,
+          updatedAt: now,
+          donationsClosed: true
+        },
+        $push: {
+          adminEditHistory: {
+            editedAt: now,
+            editedBy: "admin",
+            reason: "Completed Experience",
+            changes: [
+              {
+                field: "Status",
+                oldValue: campaign.Status || campaign.status || "",
+                newValue: "Completed"
+              },
+              {
+                field: "lifecycleStatus",
+                oldValue: campaign.lifecycleStatus || "",
+                newValue: "Completed"
+              }
+            ]
+          }
+        }
+      },
+      { returnDocument: "after" }
+    );
+
+    await db.collection("Admin_Edit_Logs").insertOne({
+      targetType: "Campaign",
+      targetCollection: "Campaigns",
+      targetId: String(campaign._id),
+      editedAt: now,
+      editedBy: "admin",
+      reason: "Completed Experience",
+      changes: [
+        {
+          field: "Status",
+          oldValue: campaign.Status || campaign.status || "",
+          newValue: "Completed"
+        },
+        {
+          field: "lifecycleStatus",
+          oldValue: campaign.lifecycleStatus || "",
+          newValue: "Completed"
+        }
+      ]
+    });
+
+    return res.json({
+      success: true,
+      message: "Campaign marked as completed.",
+      campaign: normalizeCampaign(result.value)
+    });
+  } catch (err) {
+    console.error("PATCH /api/admin/campaigns/:id/complete error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to complete campaign"
+    });
+  }
+});
+
 // ==================== ADMIN: ID VERIFICATIONS ====================
 
 // List ID verifications (default Pending)
