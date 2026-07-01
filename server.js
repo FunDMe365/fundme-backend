@@ -1631,7 +1631,10 @@ const Mailjet = require("node-mailjet");
 
 const mailjetClient =
   process.env.MAILJET_API_KEY && process.env.MAILJET_API_SECRET
-    ? Mailjet.connect(process.env.MAILJET_API_KEY, process.env.MAILJET_API_SECRET)
+    ? new Mailjet({
+        apiKey: process.env.MAILJET_API_KEY,
+        apiSecret: process.env.MAILJET_API_SECRET
+      })
     : null;
 
 const FROM_EMAIL =
